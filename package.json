@@ -1,0 +1,17 @@
+{
+  "name": "scientistone-codex-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Public source for the complete local-first ScientistOne Codex plugin.",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "test": "npm run test:plugin",
+    "test:plugin": "node --test plugins/scientistone/test/*.test.mjs",
+    "check": "node --check scripts/release-audit.mjs && node --check scripts/package-plugin.mjs",
+    "audit:release": "node scripts/release-audit.mjs",
+    "package:plugin": "node scripts/package-plugin.mjs"
+  }
+}

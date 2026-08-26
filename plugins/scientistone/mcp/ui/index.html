@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <meta name="theme-color" content="#f5f7f3">
+    <title>ScientistOne</title>
+    <link rel="stylesheet" href="./app.css">
+  </head>
+  <body>
+    <!--
+      THESIS: The intake should feel like briefing S1, not configuring software. The monitor should feel like following a research team. It refuses chat intake, dense dashboards, card-grid monitoring, and decorative paths that obscure the study sequence.
+      OWN-WORLD: A light laboratory work surface for intake and an orthogonal whiteboard map for the live study, using named team rectangles, precise connectors, nearby specialist orbits, ink text, ScientistOne green, fine rules, and quiet controls.
+      STORY: State the question, add the files, decide what evidence would answer it, send the request to S1, review the plan, then follow the research teams as they work.
+      FIRST VIEWPORT: One question leads with a quiet step count and no setup sidebar. In the monitor, the complete study path fits the whiteboard; selecting a team centers it and reveals its specialists and local explanation.
+      FORM: User-pinned complete redesign, seed 71fc7200. A one-question research briefing followed by a plain-language, pannable orthogonal team flowchart. Connectors stop outside nodes, and backward paths appear only when saved study history records an actual return.
+      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+    -->
+    <div id="app" aria-busy="true">
+      <div class="loading-shell" aria-label="Loading ScientistOne">
+        <div class="loading-mark"></div>
+        <div class="loading-line loading-line-wide"></div>
+        <div class="loading-line"></div>
+      </div>
+    </div>
+    <div id="announcer" class="sr-only" aria-live="polite"></div>
+    <noscript>ScientistOne needs JavaScript to run its local intake and study monitor.</noscript>
+    <script src="./app.js"></script>
+  </body>
+</html>

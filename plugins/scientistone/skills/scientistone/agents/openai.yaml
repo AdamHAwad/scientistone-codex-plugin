@@ -1,0 +1,7 @@
+interface:
+  display_name: "ScientistOne"
+  short_description: "Plan and run checked research studies"
+  icon_small: "./assets/logo.svg"
+  icon_large: "./assets/logo.svg"
+  brand_color: "#347DF5"
+  default_prompt: "Use $scientistone to plan and run a checked research study."

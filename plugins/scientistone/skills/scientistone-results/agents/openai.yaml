@@ -1,0 +1,7 @@
+interface:
+  display_name: "ScientistOne Results"
+  short_description: "Read verified ScientistOne findings and limits"
+  icon_small: "./assets/logo.svg"
+  icon_large: "./assets/logo.svg"
+  brand_color: "#347DF5"
+  default_prompt: "Use $scientistone-results to explain a verified ScientistOne study."

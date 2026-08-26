@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(spawn_agent|Agent)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/scripts/launch-scientistone-mcp\" \"${PLUGIN_ROOT}/hooks/enforce-role-launch.mjs\"",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\launch-scientistone-mcp.cmd\" \"%PLUGIN_ROOT%\\hooks\\enforce-role-launch.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,422 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scientistone.local/schemas/i1-verification-policy.schema.json",
+  "title": "ScientistOne frozen I1 verification policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "policy_id",
+    "mode",
+    "profile",
+    "freeze_stage",
+    "frozen_before_candidate_generation",
+    "result_blind_authoring",
+    "authored_by",
+    "bindings",
+    "metrics",
+    "decision_rule",
+    "variance_policy",
+    "verifier",
+    "verdicts"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "policy_id": { "type": "string", "minLength": 1 },
+    "mode": { "enum": ["research", "external_audit"] },
+    "profile": {
+      "enum": ["task_adaptive_v1", "adrs_legacy_v1"]
+    },
+    "freeze_stage": { "enum": ["pre_candidate", "pre_i1_execution_external"] },
+    "frozen_before_candidate_generation": { "type": "boolean" },
+    "result_blind_authoring": { "const": true },
+    "authored_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "launch_record_path", "launch_record_sha256"],
+      "properties": {
+        "role": { "const": "i1_verifier_builder" },
+        "launch_record_path": { "type": "string", "minLength": 1 },
+        "launch_record_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "study_plan",
+        "environment_bootstrap",
+        "input_manifest"
+      ],
+      "properties": {
+        "study_plan": { "$ref": "#/$defs/pathBinding" },
+        "environment_bootstrap": { "$ref": "#/$defs/pathBinding" },
+        "input_manifest": { "$ref": "#/$defs/pathBinding" },
+        "evaluator_contract": { "$ref": "#/$defs/pathBinding" },
+        "evaluator_manifest": { "$ref": "#/$defs/pathBinding" },
+        "source_bundle_manifest": { "$ref": "#/$defs/pathBinding" }
+      }
+    },
+    "metrics": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/metric" }
+    },
+    "decision_rule": { "$ref": "#/$defs/decisionRule" },
+    "variance_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["widens_equivalence_margin", "excess_noise_outcome", "rationale"],
+      "properties": {
+        "widens_equivalence_margin": { "type": "boolean" },
+        "excess_noise_outcome": { "const": "INCONCLUSIVE" },
+        "rationale": { "type": "string", "minLength": 1 }
+      }
+    },
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_path",
+        "source_root",
+        "fixtures_root",
+        "self_test_path",
+        "runtime_path",
+        "runtime_sha256",
+        "argv",
+        "network",
+        "allowed_input_classes",
+        "private_execution_root",
+        "safe_output_paths",
+        "determinism"
+      ],
+      "properties": {
+        "manifest_path": { "type": "string", "minLength": 1 },
+        "source_root": { "type": "string", "minLength": 1 },
+        "fixtures_root": { "type": "string", "minLength": 1 },
+        "self_test_path": { "type": "string", "minLength": 1 },
+        "runtime_path": { "type": "string", "minLength": 1 },
+        "runtime_sha256": { "$ref": "#/$defs/sha256" },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "network": { "const": false },
+        "allowed_input_classes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "paper_tex",
+              "paper_pdf",
+              "selected_snapshot",
+              "canonical_evaluation",
+              "evaluator_contract",
+              "evaluator_manifest",
+              "evaluator_only_input",
+              "approved_environment",
+              "frozen_extraction"
+            ]
+          }
+        },
+        "private_execution_root": { "const": "private/evaluator/i1-runs" },
+        "safe_output_paths": {
+          "type": "array",
+          "minItems": 4,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "determinism": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "canonical_json",
+            "fixed_locale",
+            "fixed_timezone",
+            "fixed_concurrency",
+            "stable_ordering",
+            "same_input_same_payload"
+          ],
+          "properties": {
+            "canonical_json": { "const": true },
+            "fixed_locale": { "type": "string", "minLength": 1 },
+            "fixed_timezone": { "type": "string", "minLength": 1 },
+            "fixed_concurrency": { "type": "integer", "minimum": 1 },
+            "stable_ordering": { "const": true },
+            "same_input_same_payload": { "const": true }
+          }
+        }
+      }
+    },
+    "verdicts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "research_required", "not_assessed_mode"],
+      "properties": {
+        "allowed": {
+          "const": ["PASS", "FAIL", "INCONCLUSIVE", "NOT_ASSESSED"]
+        },
+        "research_required": { "const": "PASS" },
+        "not_assessed_mode": { "const": "external_audit_only" }
+      }
+    },
+    "legacy": { "$ref": "#/$defs/legacy" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "mode": { "const": "research" } },
+        "required": ["mode"]
+      },
+      "then": {
+        "properties": {
+          "freeze_stage": { "const": "pre_candidate" },
+          "frozen_before_candidate_generation": { "const": true },
+          "bindings": { "required": ["evaluator_contract", "evaluator_manifest"] }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "mode": { "const": "external_audit" } },
+        "required": ["mode"]
+      },
+      "then": {
+        "properties": {
+          "bindings": { "required": ["source_bundle_manifest"] }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "freeze_stage": { "const": "pre_candidate" },
+              "frozen_before_candidate_generation": { "const": true }
+            }
+          },
+          {
+            "properties": {
+              "freeze_stage": { "const": "pre_i1_execution_external" },
+              "frozen_before_candidate_generation": { "const": false }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": { "profile": { "const": "task_adaptive_v1" } },
+        "required": ["profile"]
+      },
+      "then": {
+        "properties": {
+          "variance_policy": {
+            "properties": { "widens_equivalence_margin": { "const": false } }
+          }
+        },
+        "not": { "required": ["legacy"] }
+      }
+    },
+    {
+      "if": {
+        "properties": { "profile": { "const": "adrs_legacy_v1" } },
+        "required": ["profile"]
+      },
+      "then": {
+        "required": ["legacy"],
+        "properties": {
+          "metrics": { "maxItems": 1 },
+          "variance_policy": {
+            "properties": { "widens_equivalence_margin": { "const": true } }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "pathBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "claim_role",
+        "name",
+        "unit",
+        "direction",
+        "population",
+        "estimand",
+        "transformation",
+        "presentation",
+        "determinism_class",
+        "comparison_design",
+        "repetitions",
+        "randomness",
+        "equivalence_margin",
+        "uncertainty",
+        "hardware",
+        "failure_policy"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "claim_role": { "enum": ["primary", "constraint", "secondary"] },
+        "name": { "type": "string", "minLength": 1 },
+        "unit": { "type": "string", "minLength": 1 },
+        "direction": { "enum": ["maximize", "minimize", "target", "signed"] },
+        "population": { "type": "string", "minLength": 1 },
+        "estimand": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "definition"],
+          "properties": {
+            "type": {
+              "enum": [
+                "single_seed",
+                "mean",
+                "median",
+                "quantile",
+                "rate",
+                "ratio",
+                "paired_difference",
+                "aggregate"
+              ]
+            },
+            "definition": { "type": "string", "minLength": 1 },
+            "parameters": { "type": "object" }
+          }
+        },
+        "transformation": { "type": "string", "minLength": 1 },
+        "presentation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rounding", "digits", "lineage_rule"],
+          "properties": {
+            "rounding": { "enum": ["none", "half_even", "half_away_from_zero", "truncate"] },
+            "digits": { "type": "integer", "minimum": 0 },
+            "lineage_rule": { "type": "string", "minLength": 1 }
+          }
+        },
+        "determinism_class": {
+          "enum": ["deterministic", "seeded_stochastic", "irreducibly_stochastic", "hardware_sensitive"]
+        },
+        "comparison_design": { "enum": ["exact", "paired", "independent"] },
+        "repetitions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["canonical", "audit", "valid_required", "rationale"],
+          "properties": {
+            "canonical": { "type": "integer", "minimum": 1 },
+            "audit": { "type": "integer", "minimum": 1 },
+            "valid_required": { "type": "integer", "minimum": 1 },
+            "rationale": { "type": "string", "minLength": 1 }
+          }
+        },
+        "randomness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["seed_policy", "paired_keys", "resampling_seed"],
+          "properties": {
+            "seed_policy": { "type": "string", "minLength": 1 },
+            "paired_keys": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "resampling_seed": { "type": ["integer", "null"] }
+          }
+        },
+        "equivalence_margin": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "lower", "upper", "reference_scale", "rationale"],
+          "properties": {
+            "type": { "enum": ["exact", "absolute", "fixed_scale_relative", "asymmetric"] },
+            "lower": { "type": "number" },
+            "upper": { "type": "number" },
+            "reference_scale": { "type": ["number", "null"] },
+            "rationale": { "type": "string", "minLength": 1 }
+          }
+        },
+        "uncertainty": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method", "confidence_level", "noise_measure", "noise_ceiling"],
+          "properties": {
+            "method": {
+              "enum": ["none", "exact", "student_t", "welch_t", "bootstrap", "permutation", "binomial", "custom_frozen"]
+            },
+            "confidence_level": { "type": ["number", "null"], "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
+            "noise_measure": { "type": "string", "minLength": 1 },
+            "noise_ceiling": { "type": ["number", "null"] }
+          }
+        },
+        "hardware": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "requirements", "reference", "external_unavailable_outcome", "research_unavailable_outcome"],
+          "properties": {
+            "mode": { "enum": ["not_applicable", "exact_environment", "equivalence_class", "same_host_normalized"] },
+            "requirements": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "reference": { "type": ["string", "null"] },
+            "external_unavailable_outcome": { "const": "NOT_ASSESSED" },
+            "research_unavailable_outcome": { "const": "INCONCLUSIVE" }
+          }
+        },
+        "failure_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["missing_pair", "invalid_run", "operational_retry_limit", "exhausted_retry_outcome"],
+          "properties": {
+            "missing_pair": { "enum": ["fail", "inconclusive"] },
+            "invalid_run": { "enum": ["fail", "inconclusive"] },
+            "operational_retry_limit": { "type": "integer", "minimum": 0 },
+            "exhausted_retry_outcome": { "const": "INCONCLUSIVE" }
+          }
+        }
+      }
+    },
+    "decisionRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "primary_metric_ids", "constraint_metric_ids", "multiplicity_method"],
+      "properties": {
+        "type": { "enum": ["all", "primary_and_constraints", "multiplicity_controlled"] },
+        "primary_metric_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "constraint_metric_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "multiplicity_method": { "type": ["string", "null"] }
+      }
+    },
+    "legacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reruns", "standard_deviation", "relative_acceptance", "scope"],
+      "properties": {
+        "reruns": { "const": 5 },
+        "standard_deviation": { "const": "sample_n_minus_1" },
+        "relative_acceptance": { "const": "max(0.01, 3*sample_sd/abs(rerun_mean))" },
+        "scope": { "const": "ScientistOne paper ADRS audit reproduction only" }
+      }
+    }
+  }
+}

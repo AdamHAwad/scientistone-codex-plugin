@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "roles": {
+    "contract_auditor": { "tier": "strong", "reasoning_effort": "high" },
+    "literature_mapper": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "evidence_reader": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "evidence_synthesizer": { "tier": "strong", "reasoning_effort": "high" },
+    "protocol_auditor": { "tier": "strong", "reasoning_effort": "xhigh" },
+    "brief_writer": { "tier": "strong", "reasoning_effort": "high" },
+    "brief_critic": { "tier": "strong", "reasoning_effort": "high" },
+    "ideator": { "tier": "strong", "reasoning_effort": "xhigh" },
+    "idea_critic": { "tier": "strong", "reasoning_effort": "high" },
+    "candidate_developer": { "tier": "strong", "reasoning_effort": "xhigh" },
+    "evaluator": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "legitimacy_auditor": { "tier": "strong", "reasoning_effort": "high" },
+    "selection_analyst": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "selection_auditor": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "ablation_designer": { "tier": "strong", "reasoning_effort": "high" },
+    "ablation_implementer": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "ablation_analyst": { "tier": "strong", "reasoning_effort": "high" },
+    "writer": { "tier": "strong", "reasoning_effort": "high" },
+    "paper_critic": { "tier": "strong", "reasoning_effort": "high" },
+    "claim_verifier": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "i1_verifier_builder": { "tier": "strong", "reasoning_effort": "xhigh" },
+    "i1_score_auditor": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "i2_judge": { "tier": "strong", "reasoning_effort": "high" },
+    "i3_reference_auditor": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "i4_judge": { "tier": "strong", "reasoning_effort": "high" },
+    "claim_provenance_auditor": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "audit_reporter": { "tier": "efficient", "reasoning_effort": "xhigh" },
+    "reproduction_writer": { "tier": "efficient", "reasoning_effort": "xhigh" }
+  }
+}

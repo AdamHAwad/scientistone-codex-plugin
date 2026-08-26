@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use this Codex plugin, cite this software and the original ScientistOne paper."
+title: "ScientistOne for Codex"
+type: software
+version: 1.0.0
+authors:
+  - family-names: Awad
+    given-names: Adam H.
+repository-code: "https://github.com/AdamHAwad/scientistone-codex-plugin"
+license: Apache-2.0
+references:
+  - type: article
+    title: "ScientistOne: Towards Human-Level Autonomous Research via Chain-of-Evidence"
+    year: 2026
+    url: "https://arxiv.org/abs/2605.26340"
+    authors:
+      - family-names: Meng
+        given-names: Rui
+      - family-names: Mishra
+        given-names: Bhavana Dalvi
+      - family-names: Chen
+        given-names: Jiefeng
+      - family-names: Li
+        given-names: Chun-Liang
+      - family-names: Goyal
+        given-names: Palash
+      - family-names: Parmar
+        given-names: Mihir
+      - family-names: Song
+        given-names: Yiwen
+      - family-names: Song
+        given-names: Yale
+      - family-names: Sinha
+        given-names: Rajarishi
+      - family-names: Ranganathan
+        given-names: Parthasarathy
+      - family-names: Gokturk
+        given-names: Burak
+      - family-names: Yoon
+        given-names: Jinsung
+      - family-names: Pfister
+        given-names: Tomas

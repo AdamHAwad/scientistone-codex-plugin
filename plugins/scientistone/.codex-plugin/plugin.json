@@ -1,0 +1,35 @@
+{
+  "name": "scientistone",
+  "version": "1.0.0",
+  "description": "Turn a research question into a checked study with sources, code, results, and evidence links.",
+  "author": {
+    "name": "Adam H. Awad",
+    "url": "https://github.com/AdamHAwad"
+  },
+  "homepage": "https://github.com/AdamHAwad/scientistone-codex-plugin",
+  "repository": "https://github.com/AdamHAwad/scientistone-codex-plugin",
+  "license": "Apache-2.0",
+  "keywords": ["science", "research", "scientistone", "chain-of-evidence", "evidence-traceability"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "ScientistOne",
+    "shortDescription": "Turn a question into a checked research study",
+    "longDescription": "ScientistOne helps you turn a research question into a full study in Codex. You explain what you want to find out and approve the plan. Then nine teams of AI agents read the relevant research, test competing ideas with code, compare the results, and write a paper. Before the study can finish, ScientistOne checks that the numbers in the paper match the saved test results. It also checks that each important claim points to a source or saved result that supports it. If a check fails, the study returns to the step that needs fixing. You receive the paper with its sources, code, results, and check reports, so you can see how it reached its conclusions.",
+    "developerName": "Adam H. Awad",
+    "category": "Scientific Research",
+    "capabilities": ["Read", "Write"],
+    "websiteURL": "https://github.com/AdamHAwad/scientistone-codex-plugin",
+    "privacyPolicyURL": "https://github.com/AdamHAwad/scientistone-codex-plugin/blob/main/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/AdamHAwad/scientistone-codex-plugin/blob/main/TERMS.md",
+    "defaultPrompt": [
+      "ScientistOne, help me plan a study.",
+      "Resume my latest ScientistOne run.",
+      "Audit this research bundle with ScientistOne."
+    ],
+    "brandColor": "#347DF5",
+    "composerIcon": "./assets/logo.png",
+    "logo": "./assets/logo.png"
+  }
+}
