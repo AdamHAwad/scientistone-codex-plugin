@@ -58,9 +58,10 @@ The Contract Auditor recomputes every hash, runs the frozen self-test command,
 and checks that the policy answers all applicable scientific questions. Only a
 PASS contract may begin candidate work. Because policy and code are frozen
 before results, an unhandled later result type is not permission to improvise.
-Preserve the original bundle, invalidate from contract, and restart under a
-new audited contract. If the repair changes an approved scientific commitment,
-stop for researcher attention.
+Use a versioned same-run contract repair. If results already exist, archive the
+old contract and every successor, then rebuild and rerun them under a fresh
+audit. If the repair changes the researcher charter, obtain explicit approval
+for the amended plan before revising the contract.
 
 ## Required structured policy
 

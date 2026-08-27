@@ -1,0 +1,126 @@
+{
+  "input": "docs/protocols-io/scientistone-beginner-protocol.docx",
+  "fonts_by_char_count": {
+    "Calibri": 25913,
+    "Consolas": 813
+  },
+  "direct_run_formatting_runs": 649,
+  "direct_paragraph_formatting_paragraphs": 38,
+  "heading_like_paragraphs_not_heading_style": [
+    {
+      "para_index": 1,
+      "text": "BEGINNER PROTOCOL",
+      "style": "Normal"
+    },
+    {
+      "para_index": 2,
+      "text": "Run a checked research study\nwith ScientistOne in Codex",
+      "style": "Normal"
+    },
+    {
+      "para_index": 202,
+      "text": "On screen 3 of 7, the page asks What files should S1 use?",
+      "style": "Normal"
+    },
+    {
+      "para_index": 254,
+      "text": "Question: Is it the question you meant to ask?",
+      "style": "List Bullet"
+    },
+    {
+      "para_index": 255,
+      "text": "Purpose: Will the answer be useful for the reason you gave?",
+      "style": "List Bullet"
+    },
+    {
+      "para_index": 256,
+      "text": "Materials: Does it name the right files and units?",
+      "style": "List Bullet"
+    },
+    {
+      "para_index": 257,
+      "text": "Prior work: Does it include any paper that must be read?",
+      "style": "List Bullet"
+    },
+    {
+      "para_index": 258,
+      "text": "Evidence needed: Is the main comparison clear?",
+      "style": "List Bullet"
+    },
+    {
+      "para_index": 261,
+      "text": "What the study will produce: Does it save what you need?",
+      "style": "List Bullet"
+    },
+    {
+      "para_index": 262,
+      "text": "Full study plan: Do the steps answer the approved question?",
+      "style": "List Bullet"
+    },
+    {
+      "para_index": 456,
+      "text": "ScientistOne beginner protocol",
+      "style": "Header"
+    }
+  ],
+  "examples": {
+    "direct_paragraph_formatting": [
+      {
+        "para_index": 1,
+        "text": "BEGINNER PROTOCOL",
+        "style": "Normal"
+      },
+      {
+        "para_index": 2,
+        "text": "Run a checked research study\nwith ScientistOne in Codex",
+        "style": "Normal"
+      },
+      {
+        "para_index": 3,
+        "text": "From first sign-in to a checked practice study",
+        "style": "Normal"
+      },
+      {
+        "para_index": 4,
+        "text": "",
+        "style": "Normal"
+      },
+      {
+        "para_index": 5,
+        "text": "No coding experience is needed. You will review the plan and each important permission.",
+        "style": "Normal"
+      }
+    ],
+    "direct_run_formatting": [
+      {
+        "para_index": 1,
+        "run_text": "BEGINNER PROTOCOL",
+        "style": "Normal"
+      },
+      {
+        "para_index": 2,
+        "run_text": "Run a checked research study\nwith ScientistOne in Codex",
+        "style": "Normal"
+      },
+      {
+        "para_index": 3,
+        "run_text": "From first sign-in to a checked practice study",
+        "style": "Normal"
+      },
+      {
+        "para_index": 5,
+        "run_text": "No coding experience is needed. You will review the plan and each important perm",
+        "style": "Normal"
+      },
+      {
+        "para_index": 6,
+        "run_text": "Version 1.0  |  Checked August 27, 2026",
+        "style": "Normal"
+      }
+    ]
+  },
+  "notes": [
+    "Direct formatting is not always wrong, but it often causes inconsistent output when templates change.",
+    "Heading-like paragraphs not using Heading styles can break TOC and accessibility."
+  ]
+}

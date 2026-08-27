@@ -99,7 +99,7 @@ Do not create a second monitor when the main long-running task is already report
 
 ## Resume handoff
 
-When the researcher asks to resume, hand off to `scientistone` with the same absolute run path. Verify the receipt chain first, preserve failed or partial artifacts, and restart from the first invalid or incomplete phase. If the question, evaluator, held-out data, binding method, or scientific constraint changed, create a new run.
+When the researcher asks to resume, hand off to `scientistone` with the same absolute run path. Verify the receipt chain first, preserve failed or partial artifacts, and continue from the first invalid or incomplete phase. Generated evaluator, verifier, schema, path, hash, seed, or method-detail repairs stay in the same versioned run. A charter amendment requires explicit researcher approval. Create a separate run only for a different research question, changed permissions, or an intentional fork.
 
 ## Before ending a turn
 

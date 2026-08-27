@@ -26,13 +26,13 @@ Regular Codex is a capable general agent. ScientistOne adds a research protocol.
 
 ## What Codex adds
 
-Codex gives the workflow a local project, a terminal, file tools, native subagents, and web research when the researcher allows it. ScientistOne uses those tools. It does not ship a second agent runtime.
+Codex gives the workflow a local project, file and command tools, native subagents, and web research when the researcher allows it. ScientistOne uses those tools. It does not ship a second agent runtime.
 
 The lead agent coordinates the study. Each specialist gets declared inputs, outputs, and source permissions. Specialists write files for the next role to inspect. Chat is not the source of truth.
 
 This matters most for score verification. No single formula can cover a near-zero metric, a paired trial, a hardware benchmark, and a study with several outcomes. A fresh verifier-builder agent writes code and fixtures for the approved task. Then ScientistOne hashes and freezes the policy, code, runtime, inputs, and tolerances before any candidate result exists. A separate auditor later runs that exact verifier.
 
-The agents can adapt the code to the science. They cannot adapt the test to a result they have already seen. If the frozen verifier did not plan for a result type, the contract must restart.
+The agents can adapt the code to the science. They cannot adapt a test to rescue a result they have already seen. If the frozen verifier missed a valid result type, ScientistOne preserves the old work, revises and re-audits the test, and reruns every affected stage in the same study.
 
 ![Nine research stages move an approved question toward a checked study](docs/images/from-question-to-completed-study.png)
 
@@ -56,54 +56,50 @@ That chain does not make a claim true. It makes the support visible. A reviewer 
 
 ## Privacy model
 
-In Codex desktop, ScientistOne uses one MCP bundled with the plugin. It binds to `127.0.0.1`, opens the full browser workflow, and writes intake files only inside the active project. The same local page becomes the interactive study flowchart after approval. It reads progress from saved run files; it does not send questions, files, paths, citations, results, or study state to a ScientistOne server.
+In Codex desktop, ScientistOne uses one MCP bundled with the plugin. It binds to `127.0.0.1`, opens the full browser workflow, and writes intake files only inside the active project. The same local page becomes the interactive study flowchart after approval. It reads progress from saved run files; it does not send questions, files, paths, citations, results, or study state to a ScientistOne server. Codex still sends the prompts and content needed for the AI service to OpenAI. ScientistOne is not an offline tool.
 
 The publisher operates no ScientistOne backend. Read [Data flow and privacy](docs/data-flow-and-privacy.md) and [Privacy](PRIVACY.md) for the full record.
 
 ## Install and start
 
-ScientistOne is available through the Codex marketplace in this repository. Add the marketplace once, install the plugin, and then start a study in any project.
+ScientistOne is available through the Codex marketplace in this repository. You can add it from the Codex app.
 
-### 1. Check that Codex is installed
+### 1. Open Plugins
 
-Open **Terminal** on macOS or Linux. On Windows, open **PowerShell**. Run:
-
-```sh
-codex --version
-```
-
-If you see a version number, continue to the next step. If the command is not found, follow OpenAI's [Codex CLI installation guide](https://developers.openai.com/codex/cli/), sign in to Codex, and run the check again.
+1. Open the ChatGPT desktop app.
+2. Select **Codex** from the menu at the top left.
+3. Select **Plugins** at the top left of the Codex view.
 
 ### 2. Add the ScientistOne marketplace
 
-Copy this command into Terminal or PowerShell and press **Return** or **Enter**:
+1. Select the plus button at the top right.
+2. Select **Add from Marketplace**. Some app versions call this **Add a marketplace**.
+3. Paste this marketplace source into **Source**:
 
-```sh
-codex plugin marketplace add AdamHAwad/scientistone-codex-plugin --ref main
+```text
+AdamHAwad/scientistone-codex-plugin
 ```
 
-This tells Codex where to find ScientistOne. You only need to add the marketplace once.
+4. If you see **Git ref**, leave it empty.
+5. Select **Add** or **Add marketplace**.
+6. Wait for the marketplace to appear. You only need to add it once.
 
 ### 3. Install ScientistOne
 
-Run:
-
-```sh
-codex plugin add scientistone@scientistone
-```
-
-Wait for Codex to confirm that the plugin was installed. You do not need to install a separate package, database, browser extension, or companion app.
+1. Stay on the **Plugins** page.
+2. Search for `ScientistOne`.
+3. Open the ScientistOne result.
+4. Select **Install**.
+5. Wait for Codex to confirm the install.
 
 ### 4. Start a study
 
-1. Open the Codex desktop app.
-2. Open the folder where you want the study files to be saved.
-3. Start a new task.
-4. Say `ScientistOne, help me plan a study.`
+1. Select **Try now** on the ScientistOne page.
+2. Codex opens a new task with a ScientistOne example prompt in the message box.
+3. Choose the folder where you want the study files to be saved.
+4. Read the prompt. Change it if needed, then send it.
 
 ScientistOne opens a full-page setup guide in Codex's built-in browser. Explain what you want to study, add any files the study needs, choose the limits, and review the plan. After you approve the plan, the same page becomes a live flowchart that shows the study's progress.
-
-When the current Codex surface can start the bundled MCP and show the built-in browser, ScientistOne uses the full browser experience. Otherwise, it uses the same setup as a text conversation.
 
 A study may later need a project-specific tool, such as a Python library required by the approved method. Codex will ask before installing anything that needs your permission. That tool belongs to the study, not to ScientistOne itself.
 

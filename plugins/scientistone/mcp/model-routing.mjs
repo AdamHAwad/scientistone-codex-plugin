@@ -11,8 +11,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, "..");
 const POLICY_FILE = path.join(PLUGIN_ROOT, "skills", "scientistone", "references", "model-policy.json");
 const ROUTING_FILE = path.join("environment", "model-routing.json");
-const TOKEN_DIRECTORY = path.join(os.tmpdir(), "scientistone-role-launches");
 const TOKEN_PATTERN = /^s1_([a-z0-9_]+)__([0-9a-f]{32})$/;
+const LAUNCH_GRANT_TTL_MS = 10 * 60 * 1000;
 const TIERS = new Set(["strong", "efficient"]);
 const CURRENT_EFFICIENT_REASONING_EFFORT = "xhigh";
 const STRUCTURED_TIER_FIELDS = ["tier", "model_tier", "semantic_tier", "performance_tier", "capability_tier"];
@@ -44,6 +44,47 @@ function atomicJson(file, value, exclusive = false) {
   const temporary = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
   fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   fs.renameSync(temporary, file);
+}
+
+class LaunchAuthorizationError extends Error {
+  constructor(code, message) {
+    super(`[${code}] ${message}`);
+    this.name = "LaunchAuthorizationError";
+    this.code = code;
+  }
+}
+
+function launchStateHome(options = {}) {
+  const env = options.env ?? process.env;
+  const explicit = options.stateHome ?? env.SCIENTISTONE_STATE_HOME;
+  if (explicit) {
+    if (!path.isAbsolute(explicit)) throw new Error("SCIENTISTONE_STATE_HOME must be an absolute path.");
+    return path.resolve(explicit);
+  }
+  const home = options.home ?? os.homedir();
+  if (!home || !path.isAbsolute(home)) throw new Error("ScientistOne could not resolve a stable local state directory.");
+  const platform = options.platform ?? process.platform;
+  if (platform === "win32") return path.join(path.resolve(home), "AppData", "Local", "ScientistOne");
+  if (platform === "darwin") return path.join(path.resolve(home), "Library", "Caches", "ScientistOne");
+  return path.join(path.resolve(home), ".cache", "scientistone");
+}
+
+function launchGrantDirectory(options = {}) {
+  return path.join(launchStateHome(options), "role-launches");
+}
+
+function cleanupExpiredLaunchGrants(directory, now = Date.now()) {
+  if (!fs.existsSync(directory)) return;
+  for (const name of fs.readdirSync(directory)) {
+    if (!/^[0-9a-f]{32}\.json$/.test(name)) continue;
+    const file = path.join(directory, name);
+    try {
+      const grant = readJson(file);
+      if (Number.isFinite(Date.parse(grant.expires_at)) && Date.parse(grant.expires_at) < now) fs.unlinkSync(file);
+    } catch {
+      // Leave malformed files for an explicit authorization failure rather than deleting unknown data.
+    }
+  }
 }
 
 function assertObject(value, label) {
@@ -251,6 +292,10 @@ async function prepareRoleLaunch(args, options = {}) {
   assertObject(args, "prepare_role_launch arguments");
   const run = validateRunPath(args.run_path);
   if (typeof args.task_name !== "string" || !/^[a-z0-9_]{1,120}$/.test(args.task_name)) throw new Error("task_name must use 1-120 lowercase letters, digits, or underscores.");
+  const logicalTaskName = args.logical_task_name ?? args.task_name;
+  if (typeof logicalTaskName !== "string" || !/^[a-z0-9_]{1,120}$/.test(logicalTaskName)) throw new Error("logical_task_name must use 1-120 lowercase letters, digits, or underscores.");
+  const attempt = args.attempt ?? 1;
+  if (!Number.isInteger(attempt) || attempt < 1) throw new Error("attempt must be a positive integer.");
   if (typeof args.role !== "string" || !args.role) throw new Error("role is required.");
   const routing = await ensureRunRouting(run, options);
   const runtime = expectedRoleRuntime(run, args.role);
@@ -264,6 +309,8 @@ async function prepareRoleLaunch(args, options = {}) {
   const launch = {
     schema_version: 1,
     task_id: `native-${args.task_name}`,
+    logical_task_name: logicalTaskName,
+    attempt,
     role: args.role,
     fork_turns: "none",
     model_tier: runtime.tier,
@@ -281,16 +328,22 @@ async function prepareRoleLaunch(args, options = {}) {
     if (error.code === "EEXIST") throw new Error(`A launch record already exists for task ${args.task_name}; use a fresh task name.`);
     throw error;
   }
-  fs.mkdirSync(TOKEN_DIRECTORY, { recursive: true, mode: 0o700 });
+  const tokenDirectory = launchGrantDirectory(options);
+  fs.mkdirSync(tokenDirectory, { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(tokenDirectory, 0o700); } catch {}
+  const now = options.now ?? Date.now();
+  cleanupExpiredLaunchGrants(tokenDirectory, now);
   const token = randomBytes(16).toString("hex");
   const marker = `s1_${args.role}__${token}`;
-  atomicJson(path.join(TOKEN_DIRECTORY, `${token}.json`), {
+  atomicJson(path.join(tokenDirectory, `${token}.json`), {
     schema_version: 1,
     token,
     marker,
     run_path: run,
     launch_record: launchRelative,
-    expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    logical_task_name: logicalTaskName,
+    attempt,
+    expires_at: new Date(now + (options.grantTtlMs ?? LAUNCH_GRANT_TTL_MS)).toISOString(),
   }, true);
   return {
     task_name: marker,
@@ -298,41 +351,54 @@ async function prepareRoleLaunch(args, options = {}) {
     model: runtime.model,
     reasoning_effort: runtime.reasoning_effort,
     launch_record: launchRelative,
+    logical_task_name: logicalTaskName,
+    attempt,
     model_tier: runtime.tier,
   };
 }
 
-function consumeLaunchToken(marker) {
+function consumeLaunchToken(marker, options = {}) {
   if (typeof marker !== "string") return null;
   const match = TOKEN_PATTERN.exec(marker);
   if (!match) return null;
   const [, markerRole, token] = match;
-  const file = path.join(TOKEN_DIRECTORY, `${token}.json`);
+  const tokenDirectory = launchGrantDirectory(options);
+  const file = path.join(tokenDirectory, `${token}.json`);
+  const claimed = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.claimed`;
   let grant;
   try {
-    grant = readJson(file);
+    fs.renameSync(file, claimed);
   } catch (error) {
-    throw new Error(error.code === "ENOENT" ? "ScientistOne launch authorization is missing or was already used." : "ScientistOne launch authorization is invalid.");
+    throw new LaunchAuthorizationError(error.code === "ENOENT" ? "S1_LAUNCH_GRANT_NOT_FOUND" : "S1_LAUNCH_GRANT_MISMATCH", error.code === "ENOENT" ? "ScientistOne launch authorization is missing or was already used." : "ScientistOne launch authorization could not be claimed.");
   }
-  if (grant.schema_version !== 1 || grant.token !== token || grant.marker !== marker || !Number.isFinite(Date.parse(grant.expires_at)) || Date.parse(grant.expires_at) < Date.now()) throw new Error("ScientistOne launch authorization is invalid or expired.");
-  const run = validateRunPath(grant.run_path);
-  const runtimeRecord = readRunRouting(run);
-  const launchFile = path.join(run, normalizeRolePath(run, grant.launch_record, "launch_record"));
-  const launch = readJson(launchFile);
-  const runtime = expectedRoleRuntime(run, launch.role);
-  const cleanTaskName = path.basename(grant.launch_record, ".json");
-  if (markerRole !== launch.role || launch.task_id !== `native-${cleanTaskName}` || launch.fork_turns !== "none" || launch.model_tier !== runtime.tier || launch.model !== runtime.model || launch.reasoning_effort !== runtime.reasoning_effort || launch.model_routing_sha256 !== runtimeRecord.routing_sha256) throw new Error("ScientistOne launch authorization does not match the frozen role policy.");
-  fs.unlinkSync(file);
-  return { task_name: cleanTaskName, model: runtime.model, reasoning_effort: runtime.reasoning_effort };
+  try {
+    grant = readJson(claimed);
+    if (grant.schema_version !== 1 || grant.token !== token || grant.marker !== marker || !Number.isFinite(Date.parse(grant.expires_at))) throw new LaunchAuthorizationError("S1_LAUNCH_GRANT_MISMATCH", "ScientistOne launch authorization is malformed or does not match its marker.");
+    if (Date.parse(grant.expires_at) < (options.now ?? Date.now())) throw new LaunchAuthorizationError("S1_LAUNCH_GRANT_EXPIRED", "ScientistOne launch authorization expired before the specialist started.");
+    const run = validateRunPath(grant.run_path);
+    const runtimeRecord = readRunRouting(run);
+    const launchFile = path.join(run, normalizeRolePath(run, grant.launch_record, "launch_record"));
+    const launch = readJson(launchFile);
+    const runtime = expectedRoleRuntime(run, launch.role);
+    const cleanTaskName = path.basename(grant.launch_record, ".json");
+    const logicalTaskName = launch.logical_task_name ?? cleanTaskName;
+    const attempt = launch.attempt ?? 1;
+    if (markerRole !== launch.role || launch.task_id !== `native-${cleanTaskName}` || grant.logical_task_name !== logicalTaskName || grant.attempt !== attempt || launch.fork_turns !== "none" || launch.model_tier !== runtime.tier || launch.model !== runtime.model || launch.reasoning_effort !== runtime.reasoning_effort || launch.model_routing_sha256 !== runtimeRecord.routing_sha256) throw new LaunchAuthorizationError("S1_LAUNCH_POLICY_MISMATCH", "ScientistOne launch authorization does not match the frozen role policy or launch attempt.");
+    return { task_name: cleanTaskName, logical_task_name: logicalTaskName, attempt, model: runtime.model, reasoning_effort: runtime.reasoning_effort };
+  } finally {
+    try { fs.unlinkSync(claimed); } catch {}
+  }
 }
 
 export {
   TOKEN_PATTERN,
+  LaunchAuthorizationError,
   consumeLaunchToken,
   createRoutingRecord,
   ensureRunRouting,
   expectedRoleRuntime,
   loadModelPolicy,
+  launchGrantDirectory,
   normalizeCatalog,
   prepareRoleLaunch,
   readLiveCatalog,

@@ -17,9 +17,9 @@ Turn the researcher's setup into a study plan that states the question, inputs, 
 
 ## Request fidelity
 
-Keep the researcher's exact request beside the normalized plan. The plan may make a missing execution detail concrete. It may not change the question, named inputs, required or forbidden methods, evaluation intent, constraints, exclusions, or limits on interpretation.
+Keep the researcher's exact request beside the normalized plan. Only the research question is required in the browser. Blank purpose, prior-work, evaluation, limit, or deliverable fields are valid intake, not an error. Infer useful defaults from the question, approved files, and allowed project context, show those defaults in the editable plan, and let the researcher approve or change them before work begins.
 
-The researcher approves the full plan once in the editable browser review. A later clerical repair can fill a seed count, hash, path, or similar execution detail when it preserves those commitments. A different scientific commitment needs a new run.
+The approved question, named inputs, evaluation intent, constraints, exclusions, permissions, and limits on interpretation form the researcher charter. The generated evaluator, verifier, schemas, hashes, paths, seeds, and other implementation details form a versioned execution contract. Agents may repair and re-audit the execution contract in the same run when the charter remains intact. If a repair changes the charter, publish an amended plan in the browser and wait for explicit approval. Start a separate run only for a different research question, changed permissions, or an intentional fork that should coexist with the current study.
 
 ## Minimum study contract
 
@@ -36,7 +36,7 @@ Resolve these items from the intake and named project files:
 9. The search profile and hard ceilings.
 10. What counts as positive, negative, inconclusive, or complete with limits.
 
-If the main outcome is missing, propose one measurable outcome, comparison, and decision rule. Explain why it answers the question. Ask the researcher to approve it with the rest of the plan.
+If the main outcome is missing, propose one measurable outcome, comparison, and decision rule. Explain why it answers the question. Include it in the ordinary plan review; do not treat the missing intake field as a blocker.
 
 ## Search and stopping rules
 

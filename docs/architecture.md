@@ -36,7 +36,7 @@ The I1 score check changes with the task.
 4. Candidate roles build methods without access to evaluator-only inputs.
 5. A fresh score auditor runs the frozen verifier against the selected result and paper.
 
-The builder may choose a suitable exact or statistical check. It must declare the quantity being estimated, comparison design, uncertainty method, bounds, hardware conditions, and failure rules before results. Audit variance cannot widen the tolerance. Changing the verifier creates a new contract and invalidates later work.
+The builder may choose a suitable exact or statistical check. It must declare the quantity being estimated, comparison design, uncertainty method, bounds, hardware conditions, and failure rules before results. Audit variance cannot widen the tolerance. A verifier repair creates a new contract revision in the same run. If results already exist, ScientistOne archives and reruns every later stage under the repaired contract.
 
 ## Role separation
 

@@ -38,7 +38,7 @@ test("protocol freezes task-specific I1 policy and verifier before candidate res
     "i1-verification-policy.schema.json",
     "before candidate generation or any candidate result exists",
     "variance affects uncertainty but never widens",
-    "invalidating the contract and every successor",
+    "archive the contract and every successor",
   ]) assert.ok(normalized.includes(required.toLowerCase()), `missing protocol requirement: ${required}`);
 
   assert.doesNotMatch(protocol, /Before release, a scientific owner must confirm the tolerance formula/);

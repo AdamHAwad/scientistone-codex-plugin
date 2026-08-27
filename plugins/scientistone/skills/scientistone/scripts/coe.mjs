@@ -23,6 +23,11 @@ const I1_VERDICTS = ["PASS", "FAIL", "INCONCLUSIVE", "NOT_ASSESSED"];
 const I1_COMPONENTS = ["lineage", "reproducibility", "claim-semantics"];
 const I1_AUDIT_FILES = ["tex-extraction.json", "pdf-extraction.json", "input-manifest.json", "evidence-manifest.json", "execution-receipt.json", ...I1_COMPONENTS.map((name) => `${name}.json`)];
 const STOP_REASONS = new Set(["evidence_saturation", "no_additional_eligible_ideas", "stable_ranking", "exhausted_approved_compute", "repeated_operational_failure", "researcher_stop"]);
+const CONTRACT_REPAIR_CLASSES = new Set(["AUTOMATIC_REPAIR", "RESEARCHER_APPROVED_AMENDMENT"]);
+const CONTRACT_GENERATED_PATHS = ["contract/evaluator-contract.md", "contract/evaluator-manifest.json", "contract/i1-verification-policy.json", "contract/audit.md", "private/evaluator/i1-verifier"];
+const CONTRACT_ROLE_NAMES = new Set(["i1_verifier_builder", "contract_auditor"]);
+const CONTRACT_SUCCESSOR_ROOTS = ["evidence", "investigation", "discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"];
+const RESULT_AWARE_ROOTS = ["discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"];
 const PRIVATE_ROLES = new Set(["evaluator", "i1_verifier_builder", "i1_score_auditor", "i2_judge"]);
 const REQUIRED_OUTPUTS = {
   contract: ["contract/run-config.json", "contract/input-manifest.json", "contract/i1-verification-policy.json", "private/evaluator/i1-verifier", "contract/audit.md"],
@@ -254,6 +259,10 @@ function verifyRunRecord(run, { allowReceiptDrift = false } = {}) {
   if (!MODES.has(record.mode)) fail(`Invalid run mode at ${file}#/mode; expected ${[...MODES].join("|")}, received ${JSON.stringify(record.mode)}`);
   if (!PROFILES.has(record.search_profile)) fail(`Invalid search profile at ${file}#/search_profile; expected ${[...PROFILES].join("|")}, received ${JSON.stringify(record.search_profile)}`);
   if (!phasesFor(record).includes(record.phase)) fail(`Invalid run phase at ${file}#/phase; expected ${phasesFor(record).join("|")}, received ${JSON.stringify(record.phase)}`);
+  record.contract_revision ??= 1;
+  if (!Number.isInteger(record.contract_revision) || record.contract_revision < 1) fail(`Invalid contract revision at ${file}#/contract_revision`);
+  record.charter_revision ??= 1;
+  if (!Number.isInteger(record.charter_revision) || record.charter_revision < 1) fail(`Invalid charter revision at ${file}#/charter_revision`);
   const config = readJson(path.join(run, "contract", "run-config.json"));
   validateBudgets(config.budgets);
   if (config.search_profile !== "custom" && JSON.stringify(config.budgets) !== JSON.stringify(PROFILE_BUDGETS[config.search_profile])) fail(`${config.search_profile} budgets do not match the built-in profile`);
@@ -1509,7 +1518,7 @@ function verifyAuditPanels(run, record) {
 function verifyReceipt(run, record, phase, previousPhase, sequence) {
   const file = receiptFile(run, phase);
   const receipt = readJson(file);
-  if (receipt.schema_version !== 1 || receipt.phase !== phase || receipt.sequence !== sequence) fail(`Invalid ${phase} receipt metadata`);
+  if (receipt.schema_version !== 1 || receipt.phase !== phase || receipt.sequence !== sequence || (receipt.contract_revision ?? 1) !== record.contract_revision || (receipt.charter_revision ?? 1) !== record.charter_revision) fail(`Invalid ${phase} receipt metadata, contract revision, or charter revision`);
   if (phase === "complete" && receipt.outcome !== record.outcome) fail("Complete receipt does not bind the run outcome");
   if (!Array.isArray(receipt.inputs) || !Array.isArray(receipt.outputs)) fail(`Invalid ${phase} receipt entries`);
   if (phase === "contract") verifyInputManifest(run);
@@ -1663,6 +1672,8 @@ function init(runArg) {
     request_sha256: hashArtifact(run, "request.md"),
     study_plan_sha256: hashArtifact(run, "study-plan.md"),
     contract_parameters_sha256: hashArtifact(run, "contract/run-config.json"),
+    contract_revision: 1,
+    charter_revision: 1,
     last_checkpoint: null,
     invalidation_roots: [],
     checkpoints: {},
@@ -1724,6 +1735,8 @@ function checkpoint(runArg, phase, args) {
     schema_version: 1,
     phase,
     sequence: index,
+    contract_revision: record.contract_revision,
+    charter_revision: record.charter_revision,
     created_at: new Date().toISOString(),
     predecessor,
     inputs: inputs.sort().map((item) => entry(run, item)),
@@ -1747,23 +1760,106 @@ function checkpoint(runArg, phase, args) {
   process.stdout.write(`${receiptFile(run, phase)}\n`);
 }
 
-function invalidate(runArg, phase, reasonArg) {
-  const run = path.resolve(runArg || "");
-  const record = verifyRunRecord(run, { allowReceiptDrift: true });
+function contractRepairReason(run, reasonArg) {
+  const reason = entry(run, reasonArg);
+  const source = artifactPath(run, reason.path).target;
+  if (!fs.lstatSync(source).isFile() || path.extname(source) !== ".json") fail("Contract revision reason must be a regular JSON file");
+  const value = readJson(source);
+  exactKeys(value, ["schema_version", "classification", "charter_changed", "result_aware", "post_result_guard", "finding", "repair", "researcher_approval"], reason.path);
+  if (value.schema_version !== 1 || !CONTRACT_REPAIR_CLASSES.has(value.classification) || typeof value.charter_changed !== "boolean" || typeof value.result_aware !== "boolean" || !nonemptyString(value.finding) || !nonemptyString(value.repair)) fail(`Invalid contract revision reason at ${reason.path}`);
+  if (value.result_aware && value.post_result_guard !== "invalidate_and_rerun") fail(`Result-aware contract repair must invalidate and rerun every successor at ${reason.path}`);
+  if (!value.result_aware && value.post_result_guard !== null) fail(`Result-blind contract repair must use a null post_result_guard at ${reason.path}`);
+  if (value.classification === "AUTOMATIC_REPAIR") {
+    if (value.charter_changed || value.researcher_approval !== null) fail(`Automatic contract repair cannot change the researcher charter at ${reason.path}`);
+  } else {
+    if (!value.charter_changed || !value.researcher_approval) fail(`A researcher-approved amendment must identify its approval evidence at ${reason.path}`);
+    exactKeys(value.researcher_approval, ["path", "sha256"], `${reason.path}#/researcher_approval`);
+    const approvalPath = relativePath(value.researcher_approval.path);
+    if (value.researcher_approval.sha256 !== hashArtifact(run, approvalPath)) fail(`Researcher approval hash mismatch at ${reason.path}`);
+  }
+  return { reason, value };
+}
+
+function contractGeneratedPaths(run) {
+  const paths = new Set(CONTRACT_GENERATED_PATHS.filter((relative) => fs.existsSync(path.join(run, relative))));
+  const evaluatorManifest = path.join(run, "contract", "evaluator-manifest.json");
+  if (fs.existsSync(evaluatorManifest)) {
+    const manifest = readJson(evaluatorManifest);
+    if (!Array.isArray(manifest.files)) fail("Cannot revise a malformed evaluator manifest");
+    const frozenInputs = new Set(verifyInputManifest(run).files.map((item) => relativePath(item.frozen_path)));
+    for (const item of manifest.files) {
+      if (!item || !nonemptyString(item.path)) fail("Cannot revise a malformed evaluator manifest entry");
+      const relative = relativePath(item.path);
+      if (![...frozenInputs].some((input) => relative === input || relative.startsWith(`${input}/`)) && fs.existsSync(path.join(run, relative))) paths.add(relative);
+    }
+  }
+  const receiptRoot = path.join(run, "role-receipts");
+  if (fs.existsSync(receiptRoot)) {
+    for (const name of fs.readdirSync(receiptRoot).filter((item) => item.endsWith(".json"))) {
+      const relative = `role-receipts/${name}`;
+      const receipt = readJson(path.join(receiptRoot, name));
+      if (!CONTRACT_ROLE_NAMES.has(receipt.role)) continue;
+      paths.add(relative);
+      const launch = `role-launches/${path.basename(name, ".json")}.json`;
+      if (fs.existsSync(path.join(run, launch))) paths.add(launch);
+    }
+  }
+  return [...paths];
+}
+
+function contractSuccessorPaths(run) {
+  const paths = new Set(CONTRACT_SUCCESSOR_ROOTS.filter((relative) => fs.existsSync(path.join(run, relative))));
+  const protectedInputs = new Set(verifyInputManifest(run).files.map((item) => relativePath(item.frozen_path)));
+  const privateRoot = path.join(run, "private", "evaluator");
+  if (fs.existsSync(privateRoot)) {
+    const pending = [privateRoot];
+    while (pending.length) {
+      const directory = pending.pop();
+      for (const name of fs.readdirSync(directory)) {
+        const absolute = path.join(directory, name);
+        const stat = fs.lstatSync(absolute);
+        if (stat.isSymbolicLink()) fail(`Symlinks cannot appear in contract successor evidence: ${absolute}`);
+        if (stat.isDirectory()) pending.push(absolute);
+        else if (stat.isFile()) {
+          const relative = path.relative(run, absolute).replaceAll(path.sep, "/");
+          if (relative.startsWith("private/evaluator/i1-verifier/") || [...protectedInputs].some((input) => relative === input || relative.startsWith(`${input}/`))) continue;
+          paths.add(relative);
+        } else fail(`Unsupported contract successor evidence: ${absolute}`);
+      }
+    }
+  }
+  const receiptRoot = path.join(run, "role-receipts");
+  if (fs.existsSync(receiptRoot)) {
+    for (const name of fs.readdirSync(receiptRoot).filter((item) => item.endsWith(".json"))) {
+      const receipt = readJson(path.join(receiptRoot, name));
+      if (CONTRACT_ROLE_NAMES.has(receipt.role)) continue;
+      paths.add(`role-receipts/${name}`);
+      const launch = `role-launches/${path.basename(name, ".json")}.json`;
+      if (fs.existsSync(path.join(run, launch))) paths.add(launch);
+    }
+  }
+  return [...paths];
+}
+
+function resultAwareEvidenceExists(run, record, successorPaths) {
+  if (RESULT_AWARE_ROOTS.some((relative) => fs.existsSync(path.join(run, relative)))) return true;
+  if (successorPaths.some((relative) => relative.startsWith("private/evaluator/"))) return true;
+  const discoveryIndex = phasesFor(record).indexOf("discovery");
+  return discoveryIndex >= 0 && Object.keys(record.checkpoints).some((phase) => phasesFor(record).indexOf(phase) >= discoveryIndex);
+}
+
+function removeContractGeneratedPaths(run, paths) {
+  const protectedInputs = new Set(verifyInputManifest(run).files.map((item) => relativePath(item.frozen_path)));
+  for (const relative of [...new Set(paths)].sort((left, right) => right.split("/").length - left.split("/").length)) {
+    if ([...protectedInputs].some((input) => relative === input || relative.startsWith(`${input}/`)) || !fs.existsSync(path.join(run, relative))) continue;
+    const target = artifactPath(run, relative).target;
+    fs.rmSync(target, { recursive: true, force: false });
+  }
+}
+
+function archiveInvalidation(run, record, phase, reason, options = {}) {
   const phases = phasesFor(record);
   const index = phases.indexOf(phase);
-  if (index < 0) fail(`Phase ${phase} is not valid for ${record.mode} mode`);
-  if (phase === "contract") fail("The frozen contract cannot be invalidated in place; start a new run");
-  const reason = entry(run, reasonArg);
-  const reasonSource = artifactPath(run, reason.path).target;
-  if (!fs.lstatSync(reasonSource).isFile()) fail("Invalidation reason must be a regular file");
-  if (!record.checkpoints[phase]) fail(`No ${phase} checkpoint exists to invalidate`);
-  const stamp = new Date().toISOString().replaceAll(/[-:.]/g, "");
-  const archive = path.join(run, "receipts", "superseded", `${stamp}-${phase}`);
-  fs.mkdirSync(archive, { recursive: true });
-  const archivedReason = path.join(archive, "reason", path.basename(reason.path));
-  fs.mkdirSync(path.dirname(archivedReason), { recursive: true });
-  fs.copyFileSync(reasonSource, archivedReason);
   const invalidatedPhases = phases.slice(index).filter((current) => record.checkpoints[current]);
   const receiptHashes = invalidatedPhases.map((current) => {
     const expectedSha256 = record.checkpoints[current].receipt_sha256;
@@ -1771,9 +1867,25 @@ function invalidate(runArg, phase, reasonArg) {
     return { phase: current, expected_sha256: expectedSha256, observed_sha256: observedSha256, status: observedSha256 === null ? "missing" : observedSha256 === expectedSha256 ? "moved" : "changed" };
   });
   const expectedOutputs = new Map();
-  for (const current of invalidatedPhases) {
-    for (const item of record.checkpoints[current].outputs) expectedOutputs.set(item.path, item.sha256);
+  for (const current of invalidatedPhases) for (const item of record.checkpoints[current].outputs) expectedOutputs.set(item.path, item.sha256);
+  for (const relative of options.additionalPaths ?? []) if (fs.existsSync(path.join(run, relative)) && !expectedOutputs.has(relative)) expectedOutputs.set(relative, hashArtifact(run, relative));
+  for (const relative of [...expectedOutputs.keys()]) {
+    const match = /^role-receipts\/([^/]+)\.json$/.exec(relative);
+    if (!match) continue;
+    const launch = `role-launches/${match[1]}.json`;
+    if (fs.existsSync(path.join(run, launch)) && !expectedOutputs.has(launch)) expectedOutputs.set(launch, hashArtifact(run, launch));
   }
+  if (!expectedOutputs.size) fail(`No ${phase} implementation evidence exists to revise`);
+
+  const stamp = new Date().toISOString().replaceAll(/[-:.]/g, "");
+  const suffix = options.contractRevision ? `-r${record.contract_revision}` : "";
+  let archive = path.join(run, "receipts", "superseded", `${stamp}-${phase}${suffix}`);
+  for (let collision = 2; fs.existsSync(archive); collision += 1) archive = path.join(run, "receipts", "superseded", `${stamp}-${phase}${suffix}-${collision}`);
+  fs.mkdirSync(archive, { recursive: true });
+  const archivedReason = path.join(archive, "reason", path.basename(reason.path));
+  fs.mkdirSync(path.dirname(archivedReason), { recursive: true });
+  fs.copyFileSync(artifactPath(run, reason.path).target, archivedReason);
+
   const archivedArtifacts = [];
   for (const relative of minimalPaths([...expectedOutputs.keys()])) {
     const source = artifactPath(run, relative).target;
@@ -1785,9 +1897,14 @@ function invalidate(runArg, phase, reasonArg) {
     const observedSha256 = hashArtifact(run, relative);
     const destination = path.join(archive, "artifacts", relative);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.renameSync(source, destination);
-    archivedArtifacts.push({ path: relative, archived_path: path.relative(run, destination).replaceAll(path.sep, "/"), status: observedSha256 === expectedSha256 ? "moved" : "changed", expected_sha256: expectedSha256, observed_sha256: observedSha256 });
+    const preserveWorkingCopy = options.contractRevision && relative === "contract";
+    if (preserveWorkingCopy) fs.cpSync(source, destination, { recursive: true, errorOnExist: true });
+    else fs.renameSync(source, destination);
+    const unchanged = observedSha256 === expectedSha256;
+    archivedArtifacts.push({ path: relative, archived_path: path.relative(run, destination).replaceAll(path.sep, "/"), status: preserveWorkingCopy ? unchanged ? "copied" : "copied_changed" : unchanged ? "moved" : "changed", expected_sha256: expectedSha256, observed_sha256: observedSha256 });
   }
+  if (options.contractRevision) removeContractGeneratedPaths(run, options.additionalPaths ?? []);
+
   const moved = [];
   for (const current of invalidatedPhases) {
     const file = receiptFile(run, current);
@@ -1795,7 +1912,24 @@ function invalidate(runArg, phase, reasonArg) {
     fs.renameSync(file, path.join(archive, `${current}.json`));
     moved.push(current);
   }
-  writeJson(path.join(archive, "invalidation.json"), { schema_version: 1, at: new Date().toISOString(), from_phase: phase, reason, archived_reason: path.relative(run, archivedReason).replaceAll(path.sep, "/"), moved_receipts: moved, receipt_hashes: receiptHashes, expected_outputs: [...expectedOutputs].map(([outputPath, sha256]) => ({ path: outputPath, sha256 })), archived_artifacts: archivedArtifacts });
+  const revisionBefore = record.contract_revision;
+  const revisionAfter = options.contractRevision ? revisionBefore + 1 : revisionBefore;
+  writeJson(path.join(archive, "invalidation.json"), { schema_version: 1, at: new Date().toISOString(), from_phase: phase, contract_revision_before: revisionBefore, contract_revision_after: revisionAfter, reason, archived_reason: path.relative(run, archivedReason).replaceAll(path.sep, "/"), moved_receipts: moved, receipt_hashes: receiptHashes, expected_outputs: [...expectedOutputs].map(([outputPath, sha256]) => ({ path: outputPath, sha256 })), archived_artifacts: archivedArtifacts });
+  return { archive, invalidatedPhases, index, revisionAfter };
+}
+
+function invalidate(runArg, phase, reasonArg) {
+  const run = path.resolve(runArg || "");
+  const record = verifyRunRecord(run, { allowReceiptDrift: true });
+  const phases = phasesFor(record);
+  const index = phases.indexOf(phase);
+  if (index < 0) fail(`Phase ${phase} is not valid for ${record.mode} mode`);
+  if (phase === "contract") fail("Use revise-contract for a versioned same-run contract repair");
+  const reason = entry(run, reasonArg);
+  const reasonSource = artifactPath(run, reason.path).target;
+  if (!fs.lstatSync(reasonSource).isFile()) fail("Invalidation reason must be a regular file");
+  if (!record.checkpoints[phase]) fail(`No ${phase} checkpoint exists to invalidate`);
+  const { archive, invalidatedPhases } = archiveInvalidation(run, record, phase, reason);
   const archivePath = path.relative(run, archive).replaceAll(path.sep, "/");
   record.invalidation_roots.push({ path: archivePath, sha256: hashArtifact(run, archivePath) });
   for (const current of invalidatedPhases) delete record.checkpoints[current];
@@ -1807,6 +1941,47 @@ function invalidate(runArg, phase, reasonArg) {
   record.attention = null;
   writeJson(path.join(run, "run.json"), record);
   appendEvent(run, { event: "receipt_chain_invalidated", phase, reason: reason.path, archive: archivePath });
+  process.stdout.write(`${archive}\n`);
+}
+
+function reviseContract(runArg, reasonArg, amendedPlanArg) {
+  const run = path.resolve(runArg || "");
+  const record = verifyRunRecord(run, { allowReceiptDrift: true });
+  if (!["running", "repairing", "paused", "failed"].includes(record.state)) fail(`Cannot revise a contract while run state is ${record.state}`);
+  const { reason, value } = contractRepairReason(run, reasonArg);
+  const additionalPaths = contractGeneratedPaths(run);
+  const successorPaths = contractSuccessorPaths(run);
+  const detectedResultAwareness = resultAwareEvidenceExists(run, record, successorPaths);
+  if (detectedResultAwareness && !value.result_aware) fail(`Contract repair reason must declare result_aware true because candidate or downstream evidence exists at ${reason.path}`);
+  additionalPaths.push(...successorPaths);
+  let amendedPlan = null;
+  if (value.classification === "RESEARCHER_APPROVED_AMENDMENT") {
+    amendedPlan = relativePath(amendedPlanArg || "");
+    if (amendedPlan === "study-plan.md") fail("The amended plan must be staged at a separate run-relative path");
+    const amendedSource = artifactPath(run, amendedPlan).target;
+    if (!fs.lstatSync(amendedSource).isFile() || !fs.readFileSync(amendedSource, "utf8").trim()) fail("The researcher-approved amended plan must be a non-empty regular file");
+    additionalPaths.push("study-plan.md");
+  } else if (amendedPlanArg) {
+    fail("Automatic contract repair cannot replace study-plan.md");
+  }
+  const { archive, invalidatedPhases, revisionAfter } = archiveInvalidation(run, record, "contract", reason, { contractRevision: true, additionalPaths });
+  if (amendedPlan) fs.copyFileSync(artifactPath(run, amendedPlan).target, path.join(run, "study-plan.md"));
+  const archivePath = path.relative(run, archive).replaceAll(path.sep, "/");
+  record.invalidation_roots.push({ path: archivePath, sha256: hashArtifact(run, archivePath) });
+  for (const current of invalidatedPhases) delete record.checkpoints[current];
+  record.contract_revision = revisionAfter;
+  if (amendedPlan) {
+    record.charter_revision += 1;
+    record.study_plan_sha256 = hashArtifact(run, "study-plan.md");
+  }
+  record.state = "repairing";
+  record.phase = "contract";
+  record.last_checkpoint = null;
+  record.outcome = null;
+  record.updated_at = new Date().toISOString();
+  record.attention = null;
+  writeJson(path.join(run, "run.json"), record);
+  appendEvent(run, { event: "contract_revision_started", revision: revisionAfter, charter_revision: record.charter_revision, classification: value.classification, result_aware: value.result_aware, amended_plan: amendedPlan, reason: reason.path, archive: archivePath });
   process.stdout.write(`${archive}\n`);
 }
 
@@ -1954,9 +2129,10 @@ function verifySuperseded(run) {
       const expected = expectedOutputs.get(item.path);
       if (!expected || item.expected_sha256 !== expected) fail(`Invalid superseded artifact expectation: ${name}/${item.path}`);
       if (item.status === "missing" && item.archived_path === null && item.observed_sha256 === null) continue;
-      if (!["moved", "changed"].includes(item.status) || typeof item.archived_path !== "string" || typeof item.observed_sha256 !== "string") fail(`Invalid superseded artifact status: ${name}/${item.path}`);
+      if (!["moved", "changed", "copied", "copied_changed"].includes(item.status) || typeof item.archived_path !== "string" || typeof item.observed_sha256 !== "string") fail(`Invalid superseded artifact status: ${name}/${item.path}`);
       const observed = hashAt(artifactPath(run, item.archived_path).target, item.path);
-      if (observed !== item.observed_sha256 || (item.status === "moved") !== (observed === expected)) fail(`Superseded artifact changed: ${name}/${item.path}`);
+      const unchangedStatus = item.status === "moved" || item.status === "copied";
+      if (observed !== item.observed_sha256 || unchangedStatus !== (observed === expected)) fail(`Superseded artifact changed: ${name}/${item.path}`);
     }
     const archivedReason = artifactPath(run, metadata.archived_reason).target;
     if (hashAt(archivedReason, metadata.reason.path) !== metadata.reason.sha256) fail(`Superseded invalidation reason changed: ${name}`);
@@ -1991,6 +2167,7 @@ function usage() {
   coe.mjs init <run>
   coe.mjs checkpoint <run> <phase> --input <path>... --output <path>...
   coe.mjs invalidate <run> <phase> <reason-file>
+  coe.mjs revise-contract <run> <contract-revision-reason.json> [researcher-approved-amended-plan.md]
   coe.mjs set-state <run> <running|repairing|paused|failed>
   coe.mjs set-attention <run> attention.md
   coe.mjs clear-attention <run>
@@ -2007,6 +2184,7 @@ try {
   else if (command === "init") init(args[0]);
   else if (command === "checkpoint") checkpoint(args[0], args[1], args.slice(2));
   else if (command === "invalidate") invalidate(args[0], args[1], args[2]);
+  else if (command === "revise-contract") reviseContract(args[0], args[1], args[2]);
   else if (command === "set-state") setState(args[0], args[1]);
   else if (command === "set-attention") setAttention(args[0], args[1]);
   else if (command === "clear-attention") clearAttention(args[0]);

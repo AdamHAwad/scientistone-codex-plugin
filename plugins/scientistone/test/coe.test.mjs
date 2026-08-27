@@ -359,7 +359,7 @@ test("invalidation preserves receipts and resumes from the earliest affected pha
   ]);
   put(root, "rollback.md", "Audit found a grounding defect.\n");
 
-  assert.match(run("invalidate", root, "contract", "rollback.md").stderr, /frozen contract cannot be invalidated/);
+  assert.match(run("invalidate", root, "contract", "rollback.md").stderr, /Use revise-contract/);
 
   fs.appendFileSync(path.join(root, "investigation", "brief.md"), "drift\n");
   const driftedReceipt = JSON.parse(fs.readFileSync(path.join(root, "receipts", "investigation.json"), "utf8"));

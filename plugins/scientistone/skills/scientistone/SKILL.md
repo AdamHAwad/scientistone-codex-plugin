@@ -47,7 +47,7 @@ In Codex desktop, send the complete plain-language plan to `publish_study_review
 
 Only on a surface without the bundled browser MCP should you show the plan in chat and ask: `Is this the study you want me to run?`
 
-The researcher approves once. Save the approved text as `request.md` and `study-plan.md`. Later repairs may fill execution details but cannot change the approved question, inputs, evaluation intent, constraints, exclusions, or limits on interpretation. A change to one of those commitments needs a new run.
+The researcher approves once. Save the approved text as `request.md` and `study-plan.md`. Treat the approved question, named inputs, evaluation intent, constraints, exclusions, permissions, and limits on interpretation as the researcher charter. The generated evaluator, verifier, paths, hashes, seeds, schemas, and other implementation details are the execution contract. Agents may repair and re-audit that execution contract in the same run. Changing the charter requires an explicit amended plan approved through the browser. Start a separate run only for a different research question, changed permissions, or an intentional fork that the researcher wants to preserve alongside the first study.
 
 ## Create the run
 
@@ -68,7 +68,7 @@ Before each scientific, coding, writing, evaluation, or audit assignment:
 
 1. Choose exactly one role card from `references/roles.md`.
 2. Declare the absolute run path, input paths, allowed source classes, output paths, and acceptance gate.
-3. Write `role-launches/<task-name>.json` before launch. Use a unique task name and `fork_turns: "none"` so the specialist starts fresh.
+3. Write `role-launches/<task-name>.json` before launch. Use a stable `logical_task_name`, a unique task name for this attempt, a positive attempt number, and `fork_turns: "none"` so the specialist starts fresh. If launch authorization expires or is consumed before dispatch, request a new grant for the same logical task, increment the attempt, and launch again. Do not ask the researcher to restart Codex or copy runtime files.
 4. Launch the native subagent with the unchanged Common Role Envelope and one role card.
 5. Compare the returned task metadata and receipt with the launch record. Record any limit that Codex could not enforce. Never claim process isolation when only prompt and file rules exist.
 
@@ -87,11 +87,16 @@ Use the model and reasoning policy in `references/model-policy.json` when the cu
 
 ## Run and recovery
 
-Follow `references/protocol.md` in order. At each phase boundary, create a receipt and run the verifier commands in `references/artifacts.md`. On resume, verify saved state and restart at the first invalid or incomplete phase.
+Follow `references/protocol.md` in order. At each phase boundary, create a receipt and run the verifier commands in `references/artifacts.md`. On resume, verify saved state and continue from the first invalid or incomplete phase.
 
-Retry the smallest failed work package. Preserve failed evidence. Use a fresh specialist when independence or scientific judgment was affected. After three failures with the same operational cause, pause the run and write `attention.md` with one exact action for the researcher.
+Retry the smallest failed work package and preserve every failed artifact. Use a fresh specialist when independence or scientific judgment was affected. Treat a generated-contract defect as a repair request, not a terminal blocker:
 
-Changing the question, main outcome, evaluator, held-out data, required method, or scientific limit needs a new run. Do not rewrite an approved contract around a result.
+- For a result-blind defect, revise the execution contract in the same run, record the structured reason, and send the revised contract to a fresh Contract Auditor.
+- For a result-aware defect, use `revise-contract` with `post_result_guard: "invalidate_and_rerun"`. The verifier archives the old contract and every successor, increments the contract revision, and returns the same run to contract review. Never tune a verifier to rescue an observed result.
+- If the repair would change the researcher charter, obtain approval for an amended plan in the browser, record its hash in the revision reason, and revise the same run. Do not infer that approval.
+- Use `attention.md` only when the run lacks data, permission, authority, or a charter decision that agents cannot supply, or when safe in-scope recovery paths have been exhausted and one exact researcher action is necessary. A retry count alone is not a reason to pause.
+
+Operational launch errors with codes such as `S1_LAUNCH_GRANT_NOT_FOUND`, `S1_LAUNCH_GRANT_EXPIRED`, or `S1_LAUNCH_GRANT_MISMATCH` are recoverable: prepare a new one-use grant, retain the logical task name, increment the attempt, and retry the same work package. Do not require a Codex restart, a global installation, or a manually copied runtime.
 
 ## Completion
 

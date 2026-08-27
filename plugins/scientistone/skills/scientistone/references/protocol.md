@@ -58,10 +58,27 @@ verifier. It rejects a policy inferred from candidate results, a relative
 margin whose scale is the observed audit mean, variance that widens an
 equivalence margin, undeclared dependencies or network use, missing fixtures,
 or a non-PASS self-test. A later scientific surprise cannot silently change
-the policy or verifier. Repair requires invalidating the contract and every
-successor, preserving the prior contract, and restarting candidate work under
-the new frozen contract; if that would change an approved scientific
-commitment, write `attention.md` and stop.
+the policy or verifier.
+
+Separate the approved researcher charter from the generated execution
+contract. The charter is the approved question, named inputs, evaluation
+intent, constraints, exclusions, permissions, and limits on interpretation.
+The evaluator, verifier, schemas, paths, hashes, seeds, and other generated
+details are a versioned execution contract.
+
+When generated contract work needs revision, write a structured reason file
+and use `revise-contract` from `artifacts.md`:
+
+- `AUTOMATIC_REPAIR` is allowed when the charter is unchanged. Before results,
+  archive and replace only the rejected generated contract material. After
+  results, require `post_result_guard: "invalidate_and_rerun"`, archive the
+  contract and every successor, and rerun all affected stages.
+- `RESEARCHER_APPROVED_AMENDMENT` requires a browser-approved amended plan and
+  its verified path and hash. It increments both charter and contract
+  revisions in the same run.
+- Never alter a verifier, threshold, outcome, or interpretation to favor an
+  observed result. A different question, changed permissions, or an
+  intentional parallel fork belongs in a separate run.
 
 Spawn one fresh Contract Auditor with `fork_turns: "none"` using the Common
 Role Envelope and Contract Auditor card. Its declared files are only the
@@ -70,14 +87,19 @@ in external-audit mode. It writes `contract/audit.md` and its unique receipt.
 Do not promote a plan with a material finding. A PASS receipt means
 `execution_status: COMPLETE` and `gate_verdict: PASS`.
 
-On REVISE, the lead repairs the contract within the researcher's approved
-scientific commitments and dispatches a fresh Contract Auditor. Record the
-repair and repeat until PASS. Approval is never reopened. If no faithful
-repair can pass, write `attention.md` and stop before initialization.
+On REVISE, the lead preserves the rejected material, makes the smallest
+faithful correction, and dispatches a fresh Contract Auditor. Record each
+attempt and repeat until PASS. Reopen approval only if the repair changes the
+researcher charter. Write `attention.md` only when the run lacks data,
+permission, authority, or an explicit charter decision that agents cannot
+supply. If no safe or lawful repair exists and there is no useful researcher
+action to take, preserve the evidence and mark the work FAILED instead of
+creating a vague attention request.
 
 Before dispatching any specialist, the lead writes a supervisor-generated
 `role-launches/<agent-task>.json` from native task metadata. It records the
-task ID, role, `fork_turns: "none"`, actual model and reasoning effort,
+unique task ID, stable logical task name, positive attempt number, role,
+`fork_turns: "none"`, actual model and reasoning effort,
 `declared_inputs`, allowed external sources, declared outputs, and start time.
 The specialist receipt references the launch-record hash and adds completion
 time, actual outputs, limitations, accidental access, `execution_status`, and
@@ -85,13 +107,21 @@ time, actual outputs, limitations, accidental access, `execution_status`, and
 freshness as declared by the role and checked by the lead; do not call them
 enforced.
 
-Environment failures are operational. For a missing tool or package, inspect
+Launch-authorization failures are operational. For
+`S1_LAUNCH_GRANT_NOT_FOUND`, `S1_LAUNCH_GRANT_EXPIRED`, or
+`S1_LAUNCH_GRANT_MISMATCH`, prepare a fresh one-use grant for the same logical
+task, increment the attempt, and retry the same work package. Do not ask the
+researcher to restart Codex, copy a runtime, or install a global tool.
+
+Other environment failures are operational. For a missing tool or package, inspect
 the bootstrap, install or repair the smallest compatible run-local dependency,
 verify and record it, and rerun only the affected work package. For a conflict,
 preserve the failed environment record and create an isolated role environment;
 do not mutate a working evaluator or another candidate's environment. Try the
-official distribution, an existing compatible tool, and one isolated
-alternative before marking an installation BLOCKED.
+official distribution, an existing compatible tool, and a safe isolated
+alternative when available. Mark work BLOCKED only when an input, permission,
+license, credential, or authority is unavailable and the agent cannot repair
+or replace it within the approved charter.
 
 Gate: exact request, approved plan, environment bootstrap, input manifest,
 evaluator contract and manifest, I1 policy, generated verifier manifest and

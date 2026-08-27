@@ -7,7 +7,7 @@ Use this stable, visible layout. Add domain-specific files inside the named phas
 ```text
 scientistone-runs/<UTC>-<slug>/
   request.md                       exact user request
-  study-plan.md                    approved frozen contract
+  study-plan.md                    approved researcher charter
   run.json                         small live status record
   attention.md                     only while researcher action is required
   events.jsonl                     append-only high-level events and repairs
@@ -214,6 +214,8 @@ The ledger utility creates this record:
   "request_sha256": "<sha256>",
   "study_plan_sha256": "<sha256>",
   "contract_parameters_sha256": "<sha256>",
+  "contract_revision": 1,
+  "charter_revision": 1,
   "last_checkpoint": null,
   "invalidation_roots": [],
   "checkpoints": {},
@@ -232,7 +234,10 @@ Research outcomes are `positive`, `scientific_null`, and
 `paused` or `failed`.
 
 Use validated state commands to set `running`, `repairing`, `paused`, or
-`failed`, to set/clear attention, and to append an event. Checkpoint is the
+`failed`, to set/clear attention, and to append an event. `attention.md` is
+only for an exact researcher action that agents cannot take, such as supplying
+missing data or permission or approving a charter amendment. A retry count or
+repairable generated-contract defect is not attention. Checkpoint is the
 only command that advances a verified phase or marks completion. Do not hand
 edit `run.json`. The utility never rewrites checkpoint anchors, ID, mode,
 profile, creation time, schema, request hash, or study-plan hash. Monitoring
@@ -248,6 +253,41 @@ The supported state operations are:
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs set-outcome <run> <positive|scientific_null|completed_with_limitations|audit_passed|audit_failed|audit_incomplete>
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs sanitize-feedback <run> <private-evaluation-json> <feedback-json>
 ```
+
+Revise a generated contract in place with a structured reason file:
+
+```sh
+<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs revise-contract <run> contract/revision-reason.json
+```
+
+For a browser-approved charter amendment, stage the approved plan at a
+separate run-relative path and pass it as the final argument. The reason must
+bind the browser approval evidence at its exact run-relative path and hash:
+
+```sh
+<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs revise-contract <run> contract/revision-reason.json <approved-amended-plan.md>
+```
+
+The reason object has exactly these fields:
+
+```json
+{
+  "schema_version": 1,
+  "classification": "AUTOMATIC_REPAIR",
+  "charter_changed": false,
+  "result_aware": true,
+  "post_result_guard": "invalidate_and_rerun",
+  "finding": "The frozen verifier omitted a valid result shape.",
+  "repair": "Add result-blind shape handling and rerun the frozen self-test.",
+  "researcher_approval": null
+}
+```
+
+Use `RESEARCHER_APPROVED_AMENDMENT` only with `charter_changed: true` and a
+`researcher_approval` object containing the approved plan's path and SHA-256.
+An automatic repair cannot replace `study-plan.md`. A result-aware repair must
+use `invalidate_and_rerun`; the command archives every successor before it
+returns the same run to contract review.
 
 ## CoE verifier
 
@@ -293,16 +333,21 @@ Checkpoint a passed phase. Every path is run-relative and may name a file or dir
 ```
 
 The utility rejects missing paths, symlinks, path escapes, noncontiguous phases, changed predecessor evidence, and overwritten receipts. It automatically binds each receipt to the prior receipt.
+Every phase receipt also binds the active `contract_revision` and
+`charter_revision`. A receipt from an older revision cannot promote work under
+the repaired contract.
 
 Every promoted Markdown gate (`contract/audit.md`, protocol/brief/selection/paper critics, and `paper/verification.md`) contains exactly one machine-readable `Overall verdict: PASS|REVISE|FAIL` line. Only one overall PASS is promotable; checklist occurrences of PASS do not count.
 
-If a downstream audit or repaired dependency invalidates an accepted phase, first write a reason file, then recoverably supersede that phase and every successor:
+If a downstream audit or repaired dependency invalidates an accepted
+non-contract phase, first write a reason file, then recoverably supersede that
+phase and every successor:
 
 ```sh
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs invalidate <run> writing audit/rollback-reason.md
 ```
 
-This uses the checkpoint's frozen receipt and output anchors, not the possibly changed receipt, to move receipts and all originally promoted outputs into a timestamped `receipts/superseded/` directory. Changed and missing observations are recorded beside the expected hashes. The archive root hash is retained in `run.json` and automatically added to every rebuilt phase receipt, while archived receipt, artifact, and reason hashes are rechecked on every `verify`. Resume from the invalidated phase and create new outputs and receipts at the canonical paths.
+This uses the checkpoint's frozen receipt and output anchors, not the possibly changed receipt, to move receipts and all originally promoted outputs into a timestamped `receipts/superseded/` directory. Changed and missing observations are recorded beside the expected hashes. The archive root hash is retained in `run.json` and automatically added to every rebuilt phase receipt, while archived receipt, artifact, and reason hashes are rechecked on every `verify`. Resume from the invalidated phase and create new outputs and receipts at the canonical paths. The generic `invalidate` command rejects `contract`; use `revise-contract` so contract and charter revisions, result awareness, and approval are recorded.
 
 Generate the final manifest after `deliverables/` contains only audited outputs:
 
@@ -477,6 +522,9 @@ metadata:
 {
   "schema_version": 1,
   "task_id": "<native task id>",
+  "task_name": "evaluator_i02_b03_v02_attempt_2",
+  "logical_task_name": "evaluator_i02_b03_v02",
+  "attempt": 2,
   "role": "evaluator",
   "fork_turns": "none",
   "model": "<actual model>",

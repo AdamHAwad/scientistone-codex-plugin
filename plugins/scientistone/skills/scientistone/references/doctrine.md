@@ -21,9 +21,12 @@ Fresh task contexts reduce accidental carryover between roles. They do not preve
 
 Unsupported claims are removed or weakened; they are not repaired from model memory.
 
-## Rules that do not change during a run
+## Researcher charter and execution contract
 
-- After approval, the question, inputs, evaluation intent, constraints, exclusions, and limits on interpretation cannot change within the run. The lead may repair internal inconsistencies or fill execution details within those commitments, records each repair, and re-audits it without reopening approval. A genuinely different study belongs in a separate future run.
+- The approved question, named inputs, evaluation intent, constraints, exclusions, permissions, and limits on interpretation are the researcher charter. Agents do not change that charter without explicit browser approval of an amended plan.
+- Generated evaluators, verifiers, schemas, paths, hashes, seeds, and other implementation details are the versioned execution contract. The lead repairs defects in this layer within the same run, preserves the superseded material, and sends each revision to a fresh auditor.
+- A result-blind repair may replace only the defective generated material. A result-aware repair must invalidate and rerun every successor of the contract; it may not tune a check to rescue an observed result.
+- A separate run is for a different question, changed permissions, or an intentional research fork—not routine repair.
 - The original request remains beside the normalized plan.
 - The evaluation is specified before candidate results are known.
 - Candidate-visible validation and canonical evaluation stay separate.

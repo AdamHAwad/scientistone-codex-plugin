@@ -10,7 +10,7 @@ async function text(relative) {
 
 test("public manifest ships one complete local Codex experience", async () => {
   const manifest = JSON.parse(await text(".codex-plugin/plugin.json"));
-  assert.equal(manifest.version, "1.0.0");
+  assert.equal(manifest.version, "1.1.0");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -92,4 +92,18 @@ test("setup doctrine requires the bundled local server", async () => {
   assert.match(skill, /Do not upload them to any remote service/i);
   assert.match(intake, /bind only to loopback/i);
   assert.match(intake, /never sent to a remote ScientistOne service/i);
+});
+
+test("sparse intake and generated-contract defects remain recoverable", async () => {
+  const skill = await text("skills/scientistone/SKILL.md");
+  const intake = await text("skills/scientistone/references/intake.md");
+  const protocol = await text("skills/scientistone/references/protocol.md");
+  const roles = await text("skills/scientistone/references/roles.md");
+  assert.match(intake, /Only the research question is required/i);
+  assert.match(intake, /Blank purpose, prior-work, evaluation, limit, or deliverable fields are valid intake/i);
+  assert.match(skill, /result-blind defect[\s\S]+same run/i);
+  assert.match(skill, /result-aware defect[\s\S]+invalidate_and_rerun/i);
+  assert.match(skill, /retry count alone is not a reason to pause/i);
+  assert.match(protocol, /RESEARCHER_APPROVED_AMENDMENT/);
+  assert.match(roles, /Do not treat a repairable\s+contract defect as BLOCKED/i);
 });

@@ -1,0 +1,13 @@
+{
+  "word_count": 4643,
+  "sentence_count": 585,
+  "syllable_count": 6641,
+  "average_sentence_words": 7.94,
+  "flesch_reading_ease": 77.77,
+  "flesch_kincaid_grade": 4.38,
+  "sentences_over_25_words": 3,
+  "contains_em_dash": false,
+  "grade_gate_pass": true,
+  "sentence_gate_pass": true,
+  "em_dash_gate_pass": true
+}

@@ -832,7 +832,7 @@ const tools = [
   },
   {
     name: "prepare_role_launch",
-    description: "Resolve and freeze ScientistOne's semantic model policy, then authorize one native Codex specialist launch. Call immediately before every specialist spawn and use the returned task_name, fork_turns, model, and reasoning_effort exactly.",
+    description: "Resolve and freeze ScientistOne's semantic model policy, then authorize one native Codex specialist launch. Call immediately before every specialist spawn and use the returned task_name, fork_turns, model, and reasoning_effort exactly. For an automatic retry, keep logical_task_name, increment attempt, and use a fresh task_name.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -840,6 +840,8 @@ const tools = [
       properties: {
         run_path: { type: "string" },
         task_name: { type: "string", pattern: "^[a-z0-9_]{1,120}$" },
+        logical_task_name: { type: "string", pattern: "^[a-z0-9_]{1,120}$" },
+        attempt: { type: "integer", minimum: 1 },
         role: { type: "string", enum: Object.keys(roleLabels) },
         declared_inputs: { type: "array", items: { type: "string" } },
         declared_outputs: { type: "array", minItems: 1, items: { type: "string" } },
@@ -926,7 +928,7 @@ async function callTool(name, args = {}) {
 async function handleMessage(message) {
   if (!message || message.jsonrpc !== "2.0") throw Object.assign(new Error("Invalid JSON-RPC message."), { code: -32600 });
   if (message.method === "initialize") {
-    return { protocolVersion: MCP_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "scientistone-mcp", version: "1.0.0" } };
+    return { protocolVersion: MCP_VERSION, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "scientistone-mcp", version: "1.1.0" } };
   }
   if (message.method === "ping") return {};
   if (message.method === "tools/list") return { tools };

@@ -3,13 +3,15 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { createRoutingRecord, ensureRunRouting, loadModelPolicy, prepareRoleLaunch, resolveModelCatalog } from "../mcp/model-routing.mjs";
+import { consumeLaunchToken, createRoutingRecord, ensureRunRouting, launchGrantDirectory, loadModelPolicy, prepareRoleLaunch, resolveModelCatalog } from "../mcp/model-routing.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const HOOK_CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "hooks", "hooks.json"), "utf8"));
 const HOOK_COMMAND = HOOK_CONFIG.hooks.PreToolUse[0].hooks[0].command;
+const STATE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-launch-state-"));
+after(() => fs.rmSync(STATE_HOME, { recursive: true, force: true }));
 const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const model = (slug, description, priority, extra = {}) => ({ slug, description, priority, visibility: "list", supported_in_api: true, supported_reasoning_levels: efforts, ...extra });
 
@@ -24,8 +26,8 @@ function runRoot(t, name = "routing") {
   return run;
 }
 
-function runHook(input) {
-  return spawnSync(HOOK_COMMAND, { shell: true, env: { ...process.env, PLUGIN_ROOT: ROOT }, input: `${JSON.stringify(input)}\n`, encoding: "utf8" });
+function runHook(input, env = {}) {
+  return spawnSync(HOOK_COMMAND, { shell: true, env: { ...process.env, SCIENTISTONE_STATE_HOME: STATE_HOME, PLUGIN_ROOT: ROOT, ...env }, input: `${JSON.stringify(input)}\n`, encoding: "utf8" });
 }
 
 test("semantic routing follows future catalog meaning instead of model names", () => {
@@ -74,7 +76,7 @@ test("an efficient launch resolves to xhigh", async (t) => {
     declared_inputs: ["selection/selected"],
     declared_outputs: ["private/evaluator/evaluation.json"],
     allowed_external_sources: [],
-  }, { catalog: catalog() });
+  }, { catalog: catalog(), stateHome: STATE_HOME });
   assert.equal(prepared.model, "gpt-6-luna");
   assert.equal(prepared.reasoning_effort, "xhigh");
   const launch = JSON.parse(fs.readFileSync(path.join(run, prepared.launch_record), "utf8"));
@@ -109,7 +111,7 @@ test("the bundled hook rewrites an authorized spawn exactly once and leaves unre
     declared_inputs: ["study-plan.md"],
     declared_outputs: ["contract/audit.md"],
     allowed_external_sources: [],
-  }, { catalog: catalog() });
+  }, { catalog: catalog(), stateHome: STATE_HOME });
   assert.match(prepared.task_name, /^s1_contract_auditor__[0-9a-f]{32}$/);
   const message = "UNCHANGED ROLE ENVELOPE";
   const first = runHook({ hook_event_name: "PreToolUse", tool_name: "spawn_agent", tool_input: { task_name: prepared.task_name, message, fork_turns: "all", model: "wrong", reasoning_effort: "low", agent_type: "explorer" } });
@@ -132,4 +134,60 @@ test("the bundled hook rewrites an authorized spawn exactly once and leaves unre
 test("the bundled hook denies malformed ScientistOne launch markers", () => {
   const result = runHook({ hook_event_name: "PreToolUse", tool_name: "spawn_agent", tool_input: { task_name: "s1_not_a_token__task", message: "role" } });
   assert.equal(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision, "deny");
+});
+
+test("launch grants survive different MCP and hook temporary directories", async (t) => {
+  const stableHome = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-stable-home-"));
+  t.after(() => fs.rmSync(stableHome, { recursive: true, force: true }));
+  assert.equal(
+    launchGrantDirectory({ home: stableHome, platform: "darwin", env: { TMPDIR: "/tmp/mcp-a", TMP: "/tmp/mcp-a", TEMP: "/tmp/mcp-a" } }),
+    launchGrantDirectory({ home: stableHome, platform: "darwin", env: { TMPDIR: "/tmp/hook-b", TMP: "/tmp/hook-b", TEMP: "/tmp/hook-b" } }),
+  );
+  const run = runRoot(t, "cross-temp");
+  const prepared = await prepareRoleLaunch({
+    run_path: run,
+    task_name: "cross_temp_contract_check",
+    role: "contract_auditor",
+    declared_inputs: ["study-plan.md"],
+    declared_outputs: ["contract/audit.md"],
+    allowed_external_sources: [],
+  }, { catalog: catalog(), stateHome: STATE_HOME });
+  const hookTemp = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-hook-temp-"));
+  t.after(() => fs.rmSync(hookTemp, { recursive: true, force: true }));
+  const result = runHook({ hook_event_name: "PreToolUse", tool_name: "spawn_agent", tool_input: { task_name: prepared.task_name, message: "UNCHANGED ROLE ENVELOPE" } }, { TMPDIR: hookTemp, TMP: hookTemp, TEMP: hookTemp });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).hookSpecificOutput.permissionDecision, "allow");
+});
+
+test("expired grants have a stable recovery code and a fresh attempt can launch", async (t) => {
+  const run = runRoot(t, "retry");
+  const first = await prepareRoleLaunch({
+    run_path: run,
+    task_name: "literature_map_a1",
+    logical_task_name: "literature_map",
+    attempt: 1,
+    role: "literature_mapper",
+    declared_inputs: ["study-plan.md"],
+    declared_outputs: ["evidence/search-log.jsonl"],
+    allowed_external_sources: ["scholarly_web"],
+  }, { catalog: catalog(), stateHome: STATE_HOME, now: 1_000, grantTtlMs: 10 });
+  assert.throws(() => consumeLaunchToken(first.task_name, { stateHome: STATE_HOME, now: 1_011 }), (error) => error.code === "S1_LAUNCH_GRANT_EXPIRED");
+
+  const second = await prepareRoleLaunch({
+    run_path: run,
+    task_name: "literature_map_a2",
+    logical_task_name: "literature_map",
+    attempt: 2,
+    role: "literature_mapper",
+    declared_inputs: ["study-plan.md"],
+    declared_outputs: ["evidence/search-log.jsonl"],
+    allowed_external_sources: ["scholarly_web"],
+  }, { catalog: catalog(), stateHome: STATE_HOME });
+  const result = runHook({ hook_event_name: "PreToolUse", tool_name: "spawn_agent", tool_input: { task_name: second.task_name, message: "UNCHANGED ROLE ENVELOPE" } });
+  const updated = JSON.parse(result.stdout).hookSpecificOutput.updatedInput;
+  assert.equal(updated.task_name, "literature_map_a2");
+  const launch = JSON.parse(fs.readFileSync(path.join(run, second.launch_record), "utf8"));
+  assert.equal(launch.logical_task_name, "literature_map");
+  assert.equal(launch.attempt, 2);
+  assert.throws(() => consumeLaunchToken(second.task_name, { stateHome: STATE_HOME }), (error) => error.code === "S1_LAUNCH_GRANT_NOT_FOUND");
 });

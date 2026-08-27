@@ -62,17 +62,22 @@ function checkpointResult(root, phase, outputs, roles = []) {
 function checkpoint(root, phase, outputs, roles = []) { const result = checkpointResult(root, phase, outputs, roles); assert.equal(result.status, 0, result.stderr); }
 function newRun(t, mode = "research", environmentSource = "existing") { const root = fs.mkdtempSync(path.join(os.tmpdir(), `scientistone-${mode}-`)); t.after(() => fs.rmSync(root, { recursive: true, force: true })); put(root, "request.md", "Approved request.\n"); put(root, "study-plan.md", "# Approved plan\n"); bootstrap(root, mode, environmentSource); json(root, "contract/custom-profile.json", BUDGETS); assert.equal(run("configure", root, "custom", mode, "contract/custom-profile.json").status, 0); assert.equal(run("init", root).status, 0); installTestRouting(root); return root; }
 
-function contract(t, environmentSource = "existing") {
-  const root = newRun(t, "research", environmentSource); put(root, "inputs/shared/data.csv", "x\n1\n"); put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
-  json(root, "contract/input-manifest.json", { schema_version: 1, files: [{ source_path: "data.csv", frozen_path: "inputs/shared/data.csv", sha256: hash(root, "inputs/shared/data.csv"), classification: "shared" }, { source_path: "evaluate.mjs", frozen_path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), classification: "evaluator_only" }] });
-  put(root, "contract/evaluator-contract.md", "Metric score; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n");
+function writeContractArtifacts(root, evaluatorText = "Metric score; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n") {
+  put(root, "contract/evaluator-contract.md", evaluatorText);
   json(root, "contract/evaluator-manifest.json", { schema_version: 1, files: [{ path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), access_class: "evaluator_only" }] });
   put(root, "contract/audit.md", "Overall verdict: PASS\n");
   const i1Contract = seedI1Contract({ root, mode: "research", runtime: testRuntime(root, "i1_verifier_builder"), hash, fileHash, json, put });
   checkpoint(root, "contract", ["contract", "private/evaluator/i1-verifier"], [
     { role: "i1_verifier_builder", inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs },
     { role: "contract_auditor", inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"] },
-  ]); return root;
+  ]);
+}
+
+function contract(t, environmentSource = "existing") {
+  const root = newRun(t, "research", environmentSource); put(root, "inputs/shared/data.csv", "x\n1\n"); put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
+  json(root, "contract/input-manifest.json", { schema_version: 1, files: [{ source_path: "data.csv", frozen_path: "inputs/shared/data.csv", sha256: hash(root, "inputs/shared/data.csv"), classification: "shared" }, { source_path: "evaluate.mjs", frozen_path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), classification: "evaluator_only" }] });
+  writeContractArtifacts(root);
+  return root;
 }
 const evaluatorInputs = () => ["contract/evaluator-contract.md", "contract/evaluator-manifest.json", "private/evaluator/evaluate.mjs"];
 function evaluation(root, snapshot, destination, id, canonical = false, values = [1]) { const raw = `private/evaluator/raw/${id}.txt`; put(root, raw, `raw ${id}\n`); const record = { schema_version: 1, snapshot_sha256: hash(root, snapshot), metric: { name: "score", value: values.reduce((a, b) => a + b, 0) / values.length, unit: "points", direction: "maximize" }, protocol: "approved", repetitions: values.map((value, seed) => ({ seed, value })), command_or_procedure: "node evaluate.mjs", environment: { software: ["node"], hardware: "test" }, raw_output_ref: raw, raw_output_sha256: hash(root, raw), evaluated_at: "2026-08-22T12:00:00Z", status: "valid" }; record[canonical ? "snapshot_path" : "snapshot"] = snapshot; json(root, destination, record); return raw; }
@@ -203,5 +208,143 @@ test("substantive audits, visual inspection, reproduction, and reporter ownershi
 test("external bundles use arbitrary names and reject empty, unassessable, or falsely PASS inputs", (t) => { const root = externalContract(t); assert.equal(externalAudit(root).status, 0); copy(root, "contract/source-bundle-manifest.json", "deliverables/source-bundle-manifest.json"); copy(root, "audit/report.md", "deliverables/audit-report.md"); copy(root, "delivery/reproduction.md", "deliverables/reproduction.md"); assert.equal(run("manifest", root).status, 0); assert.equal(run("set-outcome", root, "audit_passed").status, 0); checkpoint(root, "complete", ["deliverables"]); assert.equal(run("verify", root).status, 0); const empty = newRun(t, "external_audit"); json(empty, "contract/input-manifest.json", { schema_version: 1, files: [] }); json(empty, "contract/source-bundle-manifest.json", { schema_version: 1, items: [] }); put(empty, "contract/audit.md", "Overall verdict: PASS\n"); assert.match(externalContractResult(empty).stderr, /non-empty items/); const none = newRun(t, "external_audit"); json(none, "contract/input-manifest.json", { schema_version: 1, files: [] }); json(none, "contract/source-bundle-manifest.json", { schema_version: 1, items: bundle(none).map((item) => ({ ...item, available: false, sha256: null, missing_reason: "missing" })) }); put(none, "contract/audit.md", "Overall verdict: PASS\n"); assert.match(externalContractResult(none).stderr, /no assessable integrity check/); const falsePass = externalContract(t, "I1"); assert.match(externalAudit(falsePass, true).stderr, /reports PASS even though required source-bundle inputs are unavailable/); });
 test("validated state and attention commands keep phase aligned to receipts", (t) => { const root = contract(t); assert.equal(read(root, "run.json").phase, "investigation"); assert.match(run("set-state", root, "paused").stderr, /validated attention/); put(root, "attention.md", "Required action: Supply the missing file.\n"); assert.equal(run("set-attention", root, "attention.md").status, 0); assert.equal(run("set-state", root, "paused").status, 0); assert.match(run("set-state", root, "running").stderr, /clear-attention/); assert.equal(run("clear-attention", root).status, 0); assert.equal(run("set-state", root, "running").status, 0); const record = read(root, "run.json"); record.phase = "selection"; json(root, "run.json", record); assert.match(run("verify", root).stderr, /expected investigation, received selection/); });
 test("invalidation preserves evidence and resumes at the first invalid phase", (t) => { const root = through(t, "investigation"); put(root, "reason.md", "repair\n"); fs.appendFileSync(path.join(root, "investigation/brief.md"), "drift\n"); assert.equal(run("invalidate", root, "investigation", "reason.md").status, 0); assert.equal(read(root, "run.json").phase, "investigation"); assert.equal(JSON.parse(run("verify", root).stdout).last_checkpoint, "contract"); const [archive] = fs.readdirSync(path.join(root, "receipts/superseded")); fs.appendFileSync(path.join(root, "receipts/superseded", archive, "artifacts/investigation/brief.md"), "tamper"); assert.match(run("verify", root).stderr, /Invalid invalidation root|Superseded artifact changed/); });
+
+test("a result-blind contract defect repairs and re-audits inside the same run", (t) => {
+  const root = contract(t);
+  const requestBefore = read(root, "run.json").request_sha256;
+  const planBefore = read(root, "run.json").study_plan_sha256;
+  json(root, "repairs/contract-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The generated evaluator added an unapproved readiness score.", repair: "Remove the invented score and retain the approved primary outcome.", researcher_approval: null });
+  const revised = run("revise-contract", root, "repairs/contract-r1.json");
+  assert.equal(revised.status, 0, revised.stderr);
+  const record = read(root, "run.json");
+  assert.equal(record.contract_revision, 2);
+  assert.equal(record.phase, "contract");
+  assert.equal(record.state, "repairing");
+  assert.equal(record.request_sha256, requestBefore);
+  assert.equal(record.study_plan_sha256, planBefore);
+  assert.equal(fs.existsSync(path.join(root, "contract/run-config.json")), true);
+  assert.equal(fs.existsSync(path.join(root, "contract/input-manifest.json")), true);
+  assert.equal(fs.existsSync(path.join(root, "contract/evaluator-contract.md")), false);
+  assert.equal(fs.existsSync(path.join(root, "private/evaluator/evaluate.mjs")), true);
+  assert.equal(run("verify", root).status, 0);
+
+  writeContractArtifacts(root, "Corrected approved primary metric; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n");
+  const resumed = read(root, "run.json");
+  assert.equal(resumed.phase, "investigation");
+  assert.equal(resumed.contract_revision, 2);
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("a rejected pre-checkpoint contract is repaired without restarting the study", (t) => {
+  const root = newRun(t);
+  put(root, "inputs/shared/data.csv", "x\n1\n");
+  put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
+  json(root, "contract/input-manifest.json", { schema_version: 1, files: [
+    { source_path: "data.csv", frozen_path: "inputs/shared/data.csv", sha256: hash(root, "inputs/shared/data.csv"), classification: "shared" },
+    { source_path: "evaluate.mjs", frozen_path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), classification: "evaluator_only" },
+  ] });
+  put(root, "contract/evaluator-contract.md", "Invented readiness score.\n");
+  json(root, "contract/evaluator-manifest.json", { schema_version: 1, files: [{ path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), access_class: "evaluator_only" }] });
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nFinding classification: AUTOMATIC_REPAIR\nRemove the invented score.\n");
+  role(root, { role: "contract_auditor", inputs: ["request.md", "study-plan.md", "contract/evaluator-contract.md", "contract/evaluator-manifest.json"], outputs: ["contract/audit.md"], gate_verdict: "REVISE" });
+  json(root, "repairs/pre-checkpoint.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The generated evaluator added an unapproved readiness score.", repair: "Remove the invented score and keep the approved evaluation intent.", researcher_approval: null });
+
+  const revised = run("revise-contract", root, "repairs/pre-checkpoint.json");
+  assert.equal(revised.status, 0, revised.stderr);
+  const record = read(root, "run.json");
+  assert.equal(record.contract_revision, 2);
+  assert.equal(record.phase, "contract");
+  assert.equal(record.last_checkpoint, null);
+  assert.equal(fs.existsSync(path.join(root, "contract/audit.md")), false);
+  assert.equal(fs.existsSync(path.join(root, "role-receipts/contract_auditor.json")), false);
+  assert.equal(fs.existsSync(path.join(root, "role-launches/contract_auditor.json")), false);
+  assert.equal(fs.existsSync(path.join(root, "private/evaluator/evaluate.mjs")), true, "frozen evaluator-only input must survive generated-contract repair");
+  const archive = path.join(root, record.invalidation_roots.at(-1).path);
+  assert.equal(fs.existsSync(path.join(archive, "artifacts/contract/audit.md")), true);
+  assert.equal(fs.existsSync(path.join(archive, "artifacts/role-receipts/contract_auditor.json")), true);
+  assert.equal(run("verify", root).status, 0);
+
+  writeContractArtifacts(root, "Approved primary metric; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n");
+  assert.equal(read(root, "run.json").contract_revision, 2);
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("a result-blind repair after investigation archives prior work without asking for approval", (t) => {
+  const root = through(t, "investigation");
+  json(root, "repairs/pre-candidate.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The verifier fixture omitted a valid input shape before candidate work began.", repair: "Add the missing result-blind fixture and rerun contract review.", researcher_approval: null });
+  const revised = run("revise-contract", root, "repairs/pre-candidate.json");
+  assert.equal(revised.status, 0, revised.stderr);
+  const record = read(root, "run.json");
+  assert.equal(record.contract_revision, 2);
+  assert.equal(fs.existsSync(path.join(root, "investigation")), false);
+  assert.equal(fs.existsSync(path.join(root, "evidence")), false);
+  const archive = path.join(root, record.invalidation_roots.at(-1).path);
+  assert.equal(fs.existsSync(path.join(archive, "artifacts/investigation/brief.md")), true);
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("a result-aware evaluator repair archives every successor and reruns from contract", (t) => {
+  const root = through(t, "selection");
+  const selectedBefore = fileHash(path.join(root, "selection/canonical-evaluation.json"));
+  json(root, "repairs/contract-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "The frozen verifier mishandles a valid result shape.", repair: "Correct the implementation without changing the approved metric or decision rule, then rerun all affected work.", researcher_approval: null });
+  const revised = run("revise-contract", root, "repairs/contract-r1.json");
+  assert.equal(revised.status, 0, revised.stderr);
+  const record = read(root, "run.json");
+  assert.equal(record.contract_revision, 2);
+  assert.equal(record.last_checkpoint, null);
+  assert.deepEqual(record.checkpoints, {});
+  assert.equal(fs.existsSync(path.join(root, "selection/canonical-evaluation.json")), false);
+  assert.equal(fs.existsSync(path.join(root, "role-launches/canonical_evaluator.json")), false);
+  const archiveRoot = path.join(root, record.invalidation_roots.at(-1).path);
+  const metadata = JSON.parse(fs.readFileSync(path.join(archiveRoot, "invalidation.json"), "utf8"));
+  const archivedSelection = metadata.archived_artifacts.find((item) => item.path === "selection");
+  assert.ok(archivedSelection);
+  assert.equal(fileHash(path.join(root, archivedSelection.archived_path, "canonical-evaluation.json")), selectedBefore);
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("automatic repair cannot relax the researcher charter or skip result-aware rollback", (t) => {
+  const charter = contract(t);
+  json(charter, "repairs/bad-charter.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: true, result_aware: false, post_result_guard: null, finding: "Constraint conflict.", repair: "Relax the constraint.", researcher_approval: null });
+  assert.match(run("revise-contract", charter, "repairs/bad-charter.json").stderr, /cannot change the researcher charter/);
+  const resultAware = through(t, "selection");
+  json(resultAware, "repairs/bad-rollback.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: null, finding: "Verifier defect.", repair: "Patch in place.", researcher_approval: null });
+  assert.match(run("revise-contract", resultAware, "repairs/bad-rollback.json").stderr, /must invalidate and rerun every successor/);
+});
+
+test("partial uncheckpointed candidate work cannot survive a contract revision", (t) => {
+  const root = contract(t);
+  put(root, "discovery/nodes/partial/snapshots/v1/method.txt", "partial candidate\n");
+  put(root, "private/evaluator/raw/partial.txt", "observed result\n");
+  json(root, "repairs/incorrectly-blind.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "Verifier defect discovered during partial evaluation.", repair: "Correct the verifier and rerun the partial candidate.", researcher_approval: null });
+  assert.match(run("revise-contract", root, "repairs/incorrectly-blind.json").stderr, /must declare result_aware true/);
+
+  json(root, "repairs/result-aware.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "Verifier defect discovered during partial evaluation.", repair: "Correct the verifier and rerun the partial candidate without using the observed value to set the rule.", researcher_approval: null });
+  const revised = run("revise-contract", root, "repairs/result-aware.json");
+  assert.equal(revised.status, 0, revised.stderr);
+  const record = read(root, "run.json");
+  assert.equal(fs.existsSync(path.join(root, "discovery")), false);
+  assert.equal(fs.existsSync(path.join(root, "private/evaluator/raw/partial.txt")), false);
+  const archive = path.join(root, record.invalidation_roots.at(-1).path);
+  assert.equal(fs.readFileSync(path.join(archive, "artifacts/discovery/nodes/partial/snapshots/v1/method.txt"), "utf8"), "partial candidate\n");
+  assert.equal(fs.readFileSync(path.join(archive, "artifacts/private/evaluator/raw/partial.txt"), "utf8"), "observed result\n");
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("an explicit researcher approval can amend the charter without losing the original", (t) => {
+  const root = contract(t);
+  put(root, "repairs/researcher-approval.md", "Approved in the ScientistOne study review.\n");
+  put(root, "repairs/amended-study-plan.md", "# Approved amended plan\n\nThe same question uses a researcher-approved primary outcome.\n");
+  json(root, "repairs/approved-amendment.json", { schema_version: 1, classification: "RESEARCHER_APPROVED_AMENDMENT", charter_changed: true, result_aware: false, post_result_guard: null, finding: "The researcher approved a clearer primary outcome before results.", repair: "Replace the active plan and rebuild the generated contract.", researcher_approval: { path: "repairs/researcher-approval.md", sha256: hash(root, "repairs/researcher-approval.md") } });
+  const revised = run("revise-contract", root, "repairs/approved-amendment.json", "repairs/amended-study-plan.md");
+  assert.equal(revised.status, 0, revised.stderr);
+  const record = read(root, "run.json");
+  assert.equal(record.charter_revision, 2);
+  assert.equal(record.contract_revision, 2);
+  assert.match(fs.readFileSync(path.join(root, "study-plan.md"), "utf8"), /Approved amended plan/);
+  const archive = path.join(root, record.invalidation_roots.at(-1).path);
+  assert.equal(fs.readFileSync(path.join(archive, "artifacts/study-plan.md"), "utf8"), "# Approved plan\n");
+  assert.equal(run("verify", root).status, 0);
+});
 
 export { checkpoint as contractCheckpoint, copy as contractCopy, externalAudit, externalContract, json as contractJson, newRun as contractNewRun, put as contractPut, read as contractRead, run as contractRun, through as contractThrough };

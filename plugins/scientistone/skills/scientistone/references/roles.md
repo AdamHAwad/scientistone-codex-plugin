@@ -32,8 +32,15 @@ Authority
   completed check.
 - Keep scientific failure or null evidence separate from an operational
   failure.
-- If an instruction conflicts with the plan or a required input is missing,
-  stop and write a BLOCKED receipt.
+- If generated contract instructions conflict with the approved plan, finish
+  the review artifact with `gate_verdict: REVISE`, identify the smallest exact
+  repair, and preserve the conflicting material. Do not treat a repairable
+  contract defect as BLOCKED.
+- Use BLOCKED only when required data, permission, credentials, authority, or
+  a researcher-charter decision is unavailable and cannot be supplied or
+  replaced within this assignment. Use FAILED for an execution failure. Record
+  a scientific null or rejected method as evidence, not as an operational
+  blocker.
 - Do not contact the researcher. Write the artifact before reporting its path
   and status.
 
@@ -103,6 +110,12 @@ transitions, and report only verified milestones or decisions requiring research
 mechanical collation and delivery commands but does not silently make a
 specialist's scientific judgment.
 
+Own recovery orchestration. For a repairable generated-contract defect, write
+the structured revision reason, invoke the same-run `revise-contract` flow,
+and dispatch a fresh auditor. If results exist, require rollback and rerun of
+every successor. Ask the researcher only for unavailable inputs, permissions,
+authority, or approval of a charter amendment.
+
 Set `role` in the receipt to exactly `lead`.
 
 Own `discovery/index.json`, each collated node `idea.md` and shared-input
@@ -134,8 +147,17 @@ margin, or ADRS legacy outside its declared compatibility scope. Write only
 `contract/audit.md` and the assigned receipt. The audit has exactly one
 `Overall verdict: PASS|REVISE` line, a checklist, exact evidence paths, and
 exact revisions; do not rewrite the plan or request researcher reapproval.
-Every proposed revision must preserve the approved question, inputs,
-evaluation intent, constraints, exclusions, and limits on interpretation.
+Classify every REVISE finding as exactly `AUTOMATIC_REPAIR`,
+`REAPPROVAL_REQUIRED`, or `FATAL`. `AUTOMATIC_REPAIR` must state the
+smallest result-blind correction that preserves the approved question, inputs,
+evaluation intent, constraints, exclusions, permissions, and limits on
+interpretation. `REAPPROVAL_REQUIRED` must identify the exact charter
+change and why no faithful in-charter repair exists. `FATAL` is reserved for a
+study that cannot be carried out safely or lawfully under any permitted
+repair; it is not a label for ambiguity, a missing generated detail, or a
+failed first attempt. After the researcher approves the proposed charter
+change, the lead records the resulting contract revision as
+`RESEARCHER_APPROVED_AMENDMENT`.
 
 Before submitting, ask: Did I separate a clerical defect from a change to the
 researcher's scientific commitment?

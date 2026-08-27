@@ -6,12 +6,13 @@ function response(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
-function deny(reason) {
+function deny(reason, code = "S1_LAUNCH_REJECTED") {
+  const message = /^\[S1_[A-Z_]+\]/.test(reason) ? reason : `[${code}] ${reason}`;
   response({
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: reason,
+      permissionDecisionReason: message,
     },
   });
 }
@@ -42,5 +43,5 @@ try {
     },
   });
 } catch (error) {
-  deny(error.message || "ScientistOne rejected an invalid specialist launch.");
+  deny(error.message || "ScientistOne rejected an invalid specialist launch.", error.code);
 }

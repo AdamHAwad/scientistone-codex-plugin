@@ -1,0 +1,30 @@
+{
+  "checks": {
+    "required_text_present": true,
+    "all_linked_images_exist": true,
+    "all_required_assets_exist": true,
+    "practice_csv_has_24_rows": true,
+    "practice_groups_have_12_rows_each": true,
+    "practice_expected_means_match": true,
+    "no_personal_absolute_paths": true,
+    "no_secret_assignments": true,
+    "all_images_have_descriptive_alt_text": true,
+    "no_em_dash": true,
+    "no_terminal_install_path": true,
+    "no_public_directory_assumption": true
+  },
+  "details": {
+    "missing_text": [],
+    "missing_linked_images": [],
+    "missing_assets": [],
+    "data_rows": 24,
+    "group_means_cm": {
+      "8": 3.133,
+      "12": 4.425
+    },
+    "mean_difference_cm": 1.292,
+    "personal_path_hits": [],
+    "secret_assignment_count": 0,
+    "weak_alt_texts": []
+  }
+}
