@@ -20,6 +20,8 @@ const UI_ROOT = path.join(HERE, "ui");
 const COE = path.join(PLUGIN_ROOT, "skills", "scientistone", "scripts", "coe.mjs");
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+const RESEARCHER_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
+const RESEARCHER_TIMEOUT_MESSAGE = "I see it's been an hour. I've saved everything—don't worry. When you're ready to get back into things, send me a message and I'll open it again.";
 const ACTIVE_DRAFT_STATES = new Set(["draft", "submitted", "review_ready", "changes_requested", "approved"]);
 const EDITABLE_REVIEW_FIELDS = ["question", "objective", "materials", "prior_work", "evaluation", "requirements", "negative_or_inconclusive", "deliverables", "study_plan_markdown"];
 const REQUIRED_REVIEW_FIELDS = new Set(["question", "objective", "evaluation", "negative_or_inconclusive", "deliverables", "study_plan_markdown"]);
@@ -287,20 +289,39 @@ async function updateDraft(projectRootArg, draftId, mutate) {
   return state;
 }
 
-async function waitForResearcher(projectRootArg, draftId) {
+function researcherWaitResult(state, timedOut = false) {
+  return {
+    ...publicDraft(state),
+    wait_status: timedOut ? "saved_timeout" : "researcher_responded",
+    wait_timed_out: timedOut,
+    ...(timedOut ? { timed_out_at: now(), resume_available: true, researcher_message: RESEARCHER_TIMEOUT_MESSAGE } : {}),
+  };
+}
+
+async function waitForResearcher(projectRootArg, draftId, timeoutMs = RESEARCHER_WAIT_TIMEOUT_MS) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("The researcher wait timeout must be a positive number of milliseconds.");
   const projectRoot = safeProjectRoot(projectRootArg);
   const key = stateFile(projectRoot, draftId);
   const current = readDraft(projectRoot, draftId);
-  if (!new Set(["draft", "review_ready"]).has(current.status)) return current;
+  if (!new Set(["draft", "review_ready"]).has(current.status)) return researcherWaitResult(current);
   const waitingStatus = current.status;
   return new Promise((resolve) => {
+    let settled = false;
+    let timer;
+    const finish = (state, timedOut = false) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      draftEvents.off(key, onChange);
+      resolve(researcherWaitResult(state, timedOut));
+    };
     const onChange = (state) => {
       if (state.status === waitingStatus) return;
-      draftEvents.off(key, onChange);
-      resolve(state);
+      finish(state);
     };
     draftEvents.on(key, onChange);
     onChange(readDraft(projectRoot, draftId));
+    if (!settled) timer = setTimeout(() => finish(readDraft(projectRoot, draftId), true), timeoutMs);
   });
 }
 
@@ -773,7 +794,7 @@ const tools = [
   },
   {
     name: "wait_for_researcher",
-    description: "Pause this task until the researcher submits the setup or responds to the study review. Call once after start_study_setup or publish_study_review; it stays pending without polling.",
+    description: "Pause this task until the researcher submits the setup or responds to the study review. Call once after start_study_setup or publish_study_review; it waits without polling and returns a saved, resumable timeout result after one hour.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -890,7 +911,7 @@ async function callTool(name, args = {}) {
   }
   if (name === "read_study_setup") return publicDraft(readDraft(args.project_root, args.draft_id));
   if (name === "wait_for_researcher") {
-    return publicDraft(await waitForResearcher(args.project_root, args.draft_id));
+    return waitForResearcher(args.project_root, args.draft_id);
   }
   if (name === "publish_study_review") {
     const review = assertObject(args.review, "review");
@@ -983,4 +1004,4 @@ process.once("SIGINT", shutdown);
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) void runMcp();
 
-export { callTool, createDraft, handleMessage, monitorSnapshot, readDraft, stop, updateDraft };
+export { RESEARCHER_TIMEOUT_MESSAGE, RESEARCHER_WAIT_TIMEOUT_MS, callTool, createDraft, handleMessage, monitorSnapshot, readDraft, stop, updateDraft, waitForResearcher };

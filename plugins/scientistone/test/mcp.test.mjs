@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { callTool, handleMessage, monitorSnapshot, stop } from "../mcp/server.mjs";
+import { RESEARCHER_TIMEOUT_MESSAGE, RESEARCHER_WAIT_TIMEOUT_MS, callTool, handleMessage, monitorSnapshot, stop, updateDraft, waitForResearcher } from "../mcp/server.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const COE = path.join(ROOT, "skills", "scientistone", "scripts", "coe.mjs");
@@ -128,6 +128,47 @@ test("a pending researcher wait does not block the MCP", async (t) => {
   await request(context, "/answers", { method: "POST", body: JSON.stringify({ question: "Which method performs best?" }) });
   await request(context, "/submit", { method: "POST", body: "{}" });
   assert.equal((await within(waiting)).result.structuredContent.status, "submitted");
+});
+
+test("a researcher wait pauses after one hour with a saved, resumable draft", async (t) => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-mcp-timeout-"));
+  t.after(() => {
+    fs.rmSync(project, { recursive: true, force: true });
+  });
+
+  assert.equal(RESEARCHER_WAIT_TIMEOUT_MS, 3_600_000);
+  const opened = await callTool("start_study_setup", { project_root: project, mode: "research" });
+  await updateDraft(project, opened.draft_id, (draft) => {
+    draft.answers.question = "Which method performs best?";
+    draft.answers.objective = "Choose a reliable method.";
+  });
+
+  const timedOut = await within(waitForResearcher(project, opened.draft_id, 20));
+  assert.equal(timedOut.status, "draft");
+  assert.equal(timedOut.wait_status, "saved_timeout");
+  assert.equal(timedOut.wait_timed_out, true);
+  assert.equal(timedOut.resume_available, true);
+  assert.equal(timedOut.researcher_message, RESEARCHER_TIMEOUT_MESSAGE);
+  assert.equal(timedOut.answers.objective, "Choose a reliable method.");
+  assert.match(timedOut.timed_out_at, /^\d{4}-\d{2}-\d{2}T/);
+
+  const resumed = await callTool("start_study_setup", { project_root: project, mode: "research", resume_latest: true });
+  assert.equal(resumed.draft_id, opened.draft_id);
+  const resumedWait = waitForResearcher(project, opened.draft_id, 1_000);
+  await updateDraft(project, opened.draft_id, (draft) => { draft.status = "submitted"; });
+  const responded = await within(resumedWait);
+  assert.equal(responded.status, "submitted");
+  assert.equal(responded.wait_status, "researcher_responded");
+  assert.equal(responded.wait_timed_out, false);
+
+  await updateDraft(project, opened.draft_id, (draft) => {
+    draft.status = "review_ready";
+    draft.review = { question: "Which method performs best?", study_plan_markdown: "# Study plan\n" };
+  });
+  const reviewTimedOut = await within(waitForResearcher(project, opened.draft_id, 20));
+  assert.equal(reviewTimedOut.status, "review_ready");
+  assert.equal(reviewTimedOut.wait_timed_out, true);
+  assert.equal(reviewTimedOut.review.question, "Which method performs best?");
 });
 
 test("intake files persist, approval attaches a verified run, and discard removes only its draft", async (t) => {

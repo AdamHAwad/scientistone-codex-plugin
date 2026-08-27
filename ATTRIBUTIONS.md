@@ -17,6 +17,6 @@ OpenAI image generation created `docs/images/scientistone-for-codex-hero.png` fo
 
 ## Public generated artifacts
 
-The paper's authors publish evaluated papers and solution code at <https://github.com/scientist-one/generated-artifacts> under Apache-2.0. We reviewed commit `721f1fbe3b39a558dff13386c50621a357e6f9a7` for provenance. Version 1.1.2 of this repository does not copy that solution code. The link is here so readers can inspect the research artifacts that accompany the paper.
+The paper's authors publish evaluated papers and solution code at <https://github.com/scientist-one/generated-artifacts> under Apache-2.0. We reviewed commit `721f1fbe3b39a558dff13386c50621a357e6f9a7` for provenance. Version 1.1.3 of this repository does not copy that solution code. The link is here so readers can inspect the research artifacts that accompany the paper.
 
 The release bundle includes ScientistOne's Codex-native local browser and monitor. It does not include `@tintinweb/pi-subagents` or the deprecated predecessor harness.

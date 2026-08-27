@@ -10,7 +10,7 @@ async function text(relative) {
 
 test("public manifest ships one complete local Codex experience", async () => {
   const manifest = JSON.parse(await text(".codex-plugin/plugin.json"));
-  assert.equal(manifest.version, "1.1.2");
+  assert.equal(manifest.version, "1.1.3");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -78,6 +78,11 @@ test("Codex skills route setup, review, and monitoring through the bundled MCP",
   assert.match(skill, /publish_study_review/);
   assert.match(skill, /attach_run_monitor/);
   assert.match(monitor, /open_run_monitor/);
+  assert.match(skill, /wait_timed_out: true/);
+  assert.match(skill, /close the same built-in browser tab/i);
+  assert.match(skill, /resume_latest: true/);
+  const mcp = JSON.parse(await text(".mcp.json"));
+  assert.equal(mcp.mcpServers.scientistone_mcp.tool_timeout_sec, 3700);
 });
 
 test("setup doctrine requires the bundled local server", async () => {

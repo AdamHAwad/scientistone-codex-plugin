@@ -2,6 +2,12 @@
 
 This project follows Semantic Versioning.
 
+## 1.1.3 - 2026-08-27
+
+- Made each researcher intake and plan-review wait last up to one hour without polling.
+- Added a normal saved-pause result that closes the setup tab, tells the researcher how to resume, and preserves the unfinished local draft.
+- Kept the MCP host timeout slightly longer than the internal wait so the researcher receives the saved-pause message instead of a generic tool timeout.
+
 ## 1.1.2 - 2026-08-27
 
 - Removed the redundant in-task updater and its network, Codex CLI, cache, documentation, and test surface.
