@@ -2,6 +2,12 @@
 
 This project follows Semantic Versioning.
 
+## 1.1.1 - 2026-08-27
+
+- Added a first-step update check that refreshes the configured Git marketplace through Codex and installs a newer ScientistOne bundle when available.
+- Kept update failures non-blocking, while requiring a fresh Codex session after an installed update so skills, tools, and hooks come from one version.
+- Added isolated updater tests for current, updated, local-development, ambiguous-install, and offline states.
+
 ## 1.1.0 - 2026-08-27
 
 - Restored the complete local Codex browser workflow: seven-step intake, direct project-local uploads, editable plan review, and interactive live study flowchart.

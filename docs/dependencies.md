@@ -14,7 +14,7 @@ The MCP is implemented with Node.js standard-library modules and has no npm runt
 
 The browser UI bundles its HTML, CSS, JavaScript, logo, icon data, and font. It has no remote image, font, frame, media, analytics, beacon, WebSocket, or upload destination.
 
-The optional model-routing tool may execute the Codex CLI already supplied by Codex to read the local model catalog. It does not contact a ScientistOne service.
+The optional model-routing tool may execute the Codex CLI already supplied by Codex to read the local model catalog. The update tool uses that same Codex CLI to refresh the Git marketplace that supplied the running plugin. Codex handles the marketplace source, Git access, and installed cache; ScientistOne does not download files or edit Codex configuration itself. Neither tool contacts a ScientistOne service.
 
 ## Study dependencies
 

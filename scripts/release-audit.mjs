@@ -49,8 +49,8 @@ for (const relative of files) {
 
 const manifestPath = path.join(root, "plugins/scientistone/.codex-plugin/plugin.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-if (manifest.version !== "1.1.0" || manifest.license !== "Apache-2.0") {
-  findings.push({ file: "plugins/scientistone/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.1.0 and Apache-2.0" });
+if (manifest.version !== "1.1.1" || manifest.license !== "Apache-2.0") {
+  findings.push({ file: "plugins/scientistone/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.1.1 and Apache-2.0" });
 }
 if (manifest.mcpServers !== "./.mcp.json" || manifest.hooks !== "./hooks/hooks.json" || "apps" in manifest) {
   findings.push({ file: "plugins/scientistone/.codex-plugin/plugin.json", type: "runtime wiring", remediation: "ship only the bundled local MCP and lifecycle hooks; do not declare a competing registered app" });
@@ -60,6 +60,7 @@ const requiredRuntimeFiles = [
   "plugins/scientistone/.mcp.json",
   "plugins/scientistone/mcp/server.mjs",
   "plugins/scientistone/mcp/model-routing.mjs",
+  "plugins/scientistone/mcp/update-manager.mjs",
   "plugins/scientistone/mcp/ui/index.html",
   "plugins/scientistone/mcp/ui/app.js",
   "plugins/scientistone/mcp/ui/app.css",

@@ -10,7 +10,7 @@ async function text(relative) {
 
 test("public manifest ships one complete local Codex experience", async () => {
   const manifest = JSON.parse(await text(".codex-plugin/plugin.json"));
-  assert.equal(manifest.version, "1.1.0");
+  assert.equal(manifest.version, "1.1.1");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -74,6 +74,7 @@ test("Codex skills route setup, review, and monitoring through the bundled MCP",
   const skill = await text("skills/scientistone/SKILL.md");
   const monitor = await text("skills/scientistone-monitor/SKILL.md");
   assert.match(skill, /start_study_setup/);
+  assert.match(skill, /check_for_updates/);
   assert.match(skill, /wait_for_researcher/);
   assert.match(skill, /publish_study_review/);
   assert.match(skill, /attach_run_monitor/);

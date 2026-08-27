@@ -101,6 +101,8 @@ AdamHAwad/scientistone-codex-plugin
 
 ScientistOne opens a full-page setup guide in Codex's built-in browser. Explain what you want to study, add any files the study needs, choose the limits, and review the plan. After you approve the plan, the same page becomes a live flowchart that shows the study's progress.
 
+When a new ScientistOne task begins, the plugin asks Codex to refresh its Git marketplace. If Codex installs a newer version, ScientistOne asks you to close and reopen Codex before starting the study. Otherwise, setup opens without an update step for you to manage.
+
 A study may later need a project-specific tool, such as a Python library required by the approved method. Codex will ask before installing anything that needs your permission. That tool belongs to the study, not to ScientistOne itself.
 
 ## What a study saves
