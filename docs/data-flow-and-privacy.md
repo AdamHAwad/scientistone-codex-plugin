@@ -24,9 +24,8 @@ Codex may use literature, dataset, package, or model sources approved for a stud
 | --- | --- | --- | --- |
 | Codex to the bundled ScientistOne MCP over stdio | Start setup, publish review, attach or reopen the monitor | Project root, intake state, and selected run path stay on the machine | Required for the complete Codex desktop experience |
 | Codex built-in browser to `127.0.0.1` | Intake, local upload, plan approval, and live flowchart | Researcher-authored setup, selected files, and saved run state stay on the machine | Required for the complete Codex desktop experience; loopback only |
-| Codex marketplace updater to the configured Git source | Check for and install a newer ScientistOne bundle | No study content; Codex sends only the Git request needed to refresh the marketplace | Once when a new ScientistOne task begins; a failed check does not block the study |
 | Codex and OpenAI services | Run the user's Codex task | Chosen by the researcher under OpenAI settings | Required by Codex, not plugin-owned |
 | Literature, dataset, or package sources | Approved research and project-local setup | Depends on the task | Only when the approved study needs them |
-| ScientistOne database, API, object store, analytics, telemetry, or publisher-operated update service | None | None | Does not exist |
+| ScientistOne database, API, object store, analytics, telemetry, or update service | None | None | Does not exist |
 
 Adding accounts, analytics, storage, remote processing, or richer network integrations changes this privacy model and requires a new review before release.

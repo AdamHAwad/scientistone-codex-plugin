@@ -14,7 +14,7 @@ Codex starts the bundled MCP automatically from `.mcp.json` with the Node.js run
 
 The browser provides the complete seven-step intake, direct project-local file upload, editable study-plan review, and interactive study flowchart. Drafts live under `.scientistone/intake/` in the active project. The monitor reads `run.json`, receipts, role launches, and delivery files from the selected run. A random token protects its local API, and paths are canonicalized and constrained to the active project or selected run.
 
-The publisher operates no remote ScientistOne service. Any Codex surface that cannot start the bundled MCP or show the built-in browser uses the text intake. There is no application database, object store, queue, telemetry service, publisher-operated update service, or plugin-owned model API. At the start of a new ScientistOne task, the MCP can ask Codex to refresh the configured Git marketplace; Codex owns that update and its installed cache.
+The publisher operates no remote ScientistOne service. Any Codex surface that cannot start the bundled MCP or show the built-in browser uses the text intake. There is no application database, object store, queue, telemetry service, update service, or plugin-owned model API.
 
 ## Local study runtime
 

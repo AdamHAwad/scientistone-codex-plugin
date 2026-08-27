@@ -25,7 +25,6 @@ licenses/NEWSREADER-LICENSE
 licenses/PHOSPHOR-LICENSE
 mcp/model-routing.mjs
 mcp/server.mjs
-mcp/update-manager.mjs
 mcp/ui/app.css
 mcp/ui/app.js
 mcp/ui/index.html

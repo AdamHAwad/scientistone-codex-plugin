@@ -10,7 +10,7 @@ In Codex desktop, the installed plugin starts a loopback-only MCP and browser se
 
 ## No ScientistOne backend
 
-The Codex plugin does not use a ScientistOne database, API, storage service, analytics endpoint, telemetry endpoint, or publisher-operated update server. At the start of a new ScientistOne task, the bundled MCP asks Codex to refresh the Git marketplace that supplied the plugin. This sends no research question, file, path, citation, result, or run state to the marketplace source. Codex performs the supported marketplace update and manages its own installed cache.
+The Codex plugin does not use a ScientistOne database, API, storage service, analytics endpoint, telemetry endpoint, or update server. The publisher does not receive setup answers, files, paths, citations, results, or run state.
 
 OpenAI separately processes Codex conversations, tool calls, and files under the user's OpenAI plan, settings, and terms. The ScientistOne publisher does not control OpenAI's retention.
 

@@ -10,7 +10,6 @@ import { Transform } from "node:stream";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadModelPolicy, prepareRoleLaunch } from "./model-routing.mjs";
-import { checkAndInstallUpdate } from "./update-manager.mjs";
 
 const execFileAsync = promisify(execFile);
 const MCP_VERSION = "2025-11-25";
@@ -28,7 +27,6 @@ const draftLocks = new Map();
 const draftEvents = new EventEmitter();
 let webServer;
 let webPort;
-let updateCheck;
 const webToken = randomBytes(24).toString("base64url");
 
 const phaseLabels = {
@@ -744,16 +742,6 @@ function toolResult(value) {
 
 const tools = [
   {
-    name: "check_for_updates",
-    description: "Check the configured ScientistOne Git marketplace and install a newer bundle through Codex when one is available. Call this before starting setup in a new ScientistOne task.",
-    inputSchema: { type: "object", additionalProperties: false, properties: {} },
-    annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
-    _meta: {
-      "openai/toolInvocation/invoking": "Checking ScientistOne…",
-      "openai/toolInvocation/invoked": "ScientistOne update check finished.",
-    },
-  },
-  {
     name: "start_study_setup",
     description: "Start ScientistOne's guided browser setup. Call this first for a new study or explicit setup resume; never launch the bundled server through a shell command.",
     inputSchema: {
@@ -892,10 +880,6 @@ const tools = [
 ];
 
 async function callTool(name, args = {}) {
-  if (name === "check_for_updates") {
-    updateCheck ??= checkAndInstallUpdate({ pluginRoot: PLUGIN_ROOT, runningVersion: PLUGIN_VERSION });
-    return updateCheck;
-  }
   await ensureWebServer();
   if (name === "start_study_setup") {
     const projectRoot = safeProjectRoot(args.project_root);

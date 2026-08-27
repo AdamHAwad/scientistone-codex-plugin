@@ -67,9 +67,8 @@ test("the bundled MCP exposes the intake and monitor tools", async () => {
   assert.equal(initialized.protocolVersion, "2025-11-25");
   assert.deepEqual(initialized.capabilities, { tools: { listChanged: false } });
   const listed = await handleMessage({ jsonrpc: "2.0", id: 2, method: "tools/list" });
-  assert.deepEqual(listed.tools.map((item) => item.name), ["check_for_updates", "start_study_setup", "read_study_setup", "wait_for_researcher", "publish_study_review", "prepare_role_launch", "attach_run_monitor", "open_run_monitor"]);
+  assert.deepEqual(listed.tools.map((item) => item.name), ["start_study_setup", "read_study_setup", "wait_for_researcher", "publish_study_review", "prepare_role_launch", "attach_run_monitor", "open_run_monitor"]);
   assert.deepEqual(Object.fromEntries(listed.tools.map((item) => [item.name, item.annotations])), {
-    check_for_updates: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     start_study_setup: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     read_study_setup: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     wait_for_researcher: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },

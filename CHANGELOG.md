@@ -2,6 +2,11 @@
 
 This project follows Semantic Versioning.
 
+## 1.1.2 - 2026-08-27
+
+- Removed the redundant in-task updater and its network, Codex CLI, cache, documentation, and test surface.
+- Returned update ownership to Codex's configured Git marketplace startup lifecycle so a running ScientistOne task never replaces its own plugin bundle.
+
 ## 1.1.1 - 2026-08-27
 
 - Added a first-step update check that refreshes the configured Git marketplace through Codex and installs a newer ScientistOne bundle when available.

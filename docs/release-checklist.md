@@ -17,7 +17,6 @@ marketplace version.
 ## Bundled Codex MCP
 
 - [ ] Fresh install starts the stdio MCP without a user-installed runtime
-- [ ] The first-step update tool refreshes only the configured Git marketplace through Codex, continues safely when offline, and requires a new Codex session only after an update
 - [ ] Local browser binds only to `127.0.0.1` with a random token
 - [ ] Seven-step intake, large file upload, editable plan review, and same-tab transition to the live flowchart all pass
 - [ ] Uploaded files land only under the active project's `.scientistone/intake/` tree and match recorded hashes
