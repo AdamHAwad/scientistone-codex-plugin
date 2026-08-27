@@ -8,7 +8,7 @@ Open an issue before changing the scientific contract, role separation, privacy 
 
 ## Local checks
 
-Use Node.js 20 or newer.
+Use Node.js 24 and npm 10 or newer.
 
 ```bash
 npm ci
@@ -20,7 +20,7 @@ Tests must run without outside network access. Add fixtures for valid, boundary,
 
 ## Pull requests
 
-Keep changes focused. Describe the user effect, privacy or permission change, tests run, and each new dependency or network call. Update the architecture, privacy, and submission docs when their facts change.
+Keep changes focused. Describe the user effect, privacy or permission change, tests run, and each new dependency or network call. Update the architecture, privacy, marketplace, bundle, and release-test documents when their facts change.
 
 Do not commit datasets, restricted papers, credentials, local paths, run output, caches, generated secrets, or screenshots that show research content.
 

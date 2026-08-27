@@ -1,14 +1,18 @@
-# Public release checklist
+# Public repository checklist
 
-## Plugin package
+Use this checklist before making the repository public or publishing a new
+marketplace version.
 
-- [ ] Stable semantic version in every manifest
-- [ ] Manifest declares exactly three skills, one bundled MCP, and one lifecycle hook
-- [ ] Identity, URLs, permissions, logo, and listing copy reviewed
-- [ ] Plugin archive built from the allowlist
-- [ ] Archive contains the complete bundled MCP and no tests, caches, development-only files, secrets, or registered app mapping
-- [ ] Archive contents match `docs/submission-bundle.md`
-- [ ] Fresh-profile install and bare invocation pass
+## Marketplace and plugin
+
+- [ ] `.agents/plugins/marketplace.json` parses and exposes `scientistone@scientistone`
+- [ ] The catalog source resolves to `plugins/scientistone/`
+- [ ] The plugin manifest has one semantic version shared by the MCP server and package metadata
+- [ ] The manifest declares exactly three skills, one bundled MCP, and one lifecycle hook
+- [ ] Identity, URLs, permissions, descriptions, and logos are current
+- [ ] `npm run package:plugin` succeeds and the result matches `docs/plugin-bundle.md`
+- [ ] The generated bundle contains no tests, caches, development files, secrets, run output, or registered app mapping
+- [ ] A fresh Codex profile can add the repository marketplace and install `scientistone@scientistone`
 
 ## Bundled Codex MCP
 
@@ -16,25 +20,16 @@
 - [ ] Local browser binds only to `127.0.0.1` with a random token
 - [ ] Seven-step intake, large file upload, editable plan review, and same-tab transition to the live flowchart all pass
 - [ ] Uploaded files land only under the active project's `.scientistone/intake/` tree and match recorded hashes
-- [ ] Monitor reads verified local run files and supports pan, zoom, fit, team selection, specialist details, and live refresh
-- [ ] CLI and IDE text-only compatibility intake works without claiming browser support
+- [ ] Monitor reads verified local run files and supports pan, zoom, fit, stage selection, specialist details, and live refresh
+- [ ] A surface that cannot start the MCP or show the built-in browser uses the text setup without claiming browser support
 - [ ] macOS, Windows, and clean-profile launcher paths are tested or explicitly marked unverified
-
-## OpenAI submission
-
-- [ ] No submission, review request, or publication occurs until the owner explicitly does it in the Platform portal
-- [ ] OpenAI confirms that the public submission path accepts a Codex-specific bundled `.mcp.json` server; current public docs describe bundled MCP packaging but ask for server details during public submission
-- [ ] Listing copy matches the packaged manifest; upload `assets/logo.png` as the listing logo
-- [ ] Publisher identity verified
-- [ ] Website, support, privacy, and terms URLs are public and match the publisher
-- [ ] Positive, negative, privacy, and clean-machine test cases pass
-- [ ] Tool annotations and descriptions reviewed
-- [ ] OpenAI review completed
 
 ## Repository
 
-- [ ] Secret and personal-path scans pass on the full Git history
-- [ ] License, notices, attribution, and citation files reviewed
-- [ ] Tests pass from a clean checkout
-- [ ] Branch protection, dependency updates, and private security reports enabled
-- [ ] Maintainer reviewed GitHub's private-to-public history warning
+- [ ] `npm test` and `npm run audit:release` pass from a clean checkout
+- [ ] Secret, personal-path, private-URL, and stale-language scans pass
+- [ ] License, notices, attribution, citation, privacy, terms, security, and support files are reviewed
+- [ ] Every README link and image resolves
+- [ ] Branch protection, dependency updates, and private security reports are configured
+- [ ] The owner has reviewed GitHub's private-to-public warning and the complete tracked file list
+- [ ] The marketplace install is repeated from the public GitHub source after visibility changes

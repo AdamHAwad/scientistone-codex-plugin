@@ -22,7 +22,8 @@ test("public manifest ships one complete local Codex experience", async () => {
   assert.equal(manifest.interface.displayName, "ScientistOne");
   assert.equal(manifest.interface.category, "Scientific Research");
   assert.equal(manifest.interface.shortDescription, "Turn a question into a checked research study");
-  assert.match(manifest.interface.longDescription, /nine teams of AI agents/i);
+  assert.match(manifest.interface.longDescription, /nine stages/i);
+  assert.match(manifest.interface.longDescription, /number of agents adapts/i);
   assert.match(manifest.interface.longDescription, /paper with its sources, code, results, and check reports/i);
   assert.equal(manifest.interface.brandColor, "#347DF5");
   assert.equal(manifest.interface.composerIcon, "./assets/logo.png");

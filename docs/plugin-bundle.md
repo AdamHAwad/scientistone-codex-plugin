@@ -1,6 +1,11 @@
-# Submission bundle
+# Plugin bundle
 
-`npm run package:plugin` builds `dist/scientistone/` from an allowlist. This is the exact plugin package used for clean-install testing and repository distribution.
+The repository marketplace catalog points Codex to `plugins/scientistone/`.
+That directory is the installable ScientistOne plugin.
+
+Maintainers can run `npm run package:plugin` to copy the same installable files
+into `dist/scientistone/` from an explicit allowlist. The generated directory is
+used for release verification; users install from the repository marketplace.
 
 ## Included
 
@@ -46,12 +51,17 @@ skills/scientistone-results/agents/openai.yaml
 skills/scientistone-results/assets/logo.svg
 ```
 
-The manifest points to the three packaged skills, the bundled MCP, and the lifecycle hook. It contains no registered app mapping. Codex desktop uses the MCP for the complete local browser and monitor.
+The manifest points to three packaged skills, the bundled local MCP, and the
+lifecycle hook. It contains no registered app mapping. The root PNG is the
+marketplace icon. Each skill carries the centered blue-and-green S1 SVG named
+by its metadata.
 
-The root PNG is the directory-listing icon. Each skill carries the same blue-and-green S1 SVG in its own `assets/` directory, as required by the skill metadata paths.
+## Repository-only files
 
-## Excluded
+The repository also contains its marketplace catalog, README, policy and
+contributor documents, explanatory images, tests, CI configuration,
+package-manager metadata, and maintainer scripts. Those files support discovery,
+development, and verification but are not part of the installed plugin bundle.
 
-The bundle excludes repository README and policy pages, contributor files, CI, tests, review screenshots, explanatory README images, package-manager metadata, packaging scripts, caches, local run output, development tools, `.DS_Store`, and all retired compatibility code.
-
-Do not use GitHub's automatic source ZIP as the install bundle. It contains repository-only files that are not part of the plugin. Use the allowlisted package generated under `dist/scientistone/`.
+The packaging allowlist excludes tests, caches, secrets, local run output,
+development tools, `.DS_Store`, and retired compatibility code.

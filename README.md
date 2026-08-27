@@ -2,11 +2,9 @@
 
 ![A researcher directs several AI research roles toward a checked evidence bundle](docs/images/scientistone-for-codex-hero.png)
 
-ScientistOne helps you turn a research question into a full study in Codex. You explain what you want to find out and approve the plan. Then nine teams of AI agents read the relevant research, test competing ideas with code, compare the results, and write a paper. Before the study can finish, ScientistOne checks that the numbers in the paper match the saved test results. It also checks that each important claim points to a source or saved result that supports it. If a check fails, the study returns to the step that needs fixing. You receive the paper with its sources, code, results, and check reports, so you can see how it reached its conclusions.
+ScientistOne helps you turn a research question into a full study in Codex. You explain what you want to find out and approve the plan. Specialist AI agents then move the study through nine stages: planning, literature review, method development, selection, component testing, writing, claim checking, integrity audit, and delivery. The number of agents adapts to the approved study. Before the work can finish, ScientistOne checks that the numbers in the paper match the saved test results. It also checks that each important claim points to a source or saved result that supports it. If a check fails, the study returns to the stage that needs fixing. You receive the paper with its sources, code, results, and check reports, so you can see how it reached its conclusions.
 
 The design comes from the [ScientistOne research paper](https://arxiv.org/abs/2605.26340) and its Chain-of-Evidence method. This repository is an independent Codex adaptation. Google and the paper's authors do not make or endorse this plugin. The paper's benchmark results do not describe this implementation.
-
-> This repository is a release candidate. No public submission or publication has occurred.
 
 ## Why this exists
 
@@ -28,7 +26,7 @@ Regular Codex is a capable general agent. ScientistOne adds a research protocol.
 
 ## What Codex adds
 
-Codex gives the workflow a local project, a terminal, file tools, web research, and native subagents. ScientistOne uses those tools. It does not ship a second agent runtime.
+Codex gives the workflow a local project, a terminal, file tools, native subagents, and web research when the researcher allows it. ScientistOne uses those tools. It does not ship a second agent runtime.
 
 The lead agent coordinates the study. Each specialist gets declared inputs, outputs, and source permissions. Specialists write files for the next role to inspect. Chat is not the source of truth.
 
@@ -36,7 +34,7 @@ This matters most for score verification. No single formula can cover a near-zer
 
 The agents can adapt the code to the science. They cannot adapt the test to a result they have already seen. If the frozen verifier did not plan for a result type, the contract must restart.
 
-![Nine research teams move an approved question toward a checked study](docs/images/from-question-to-completed-study.png)
+![Nine research stages move an approved question toward a checked study](docs/images/from-question-to-completed-study.png)
 
 ## How a study moves
 
@@ -64,18 +62,50 @@ The publisher operates no ScientistOne backend. Read [Data flow and privacy](doc
 
 ## Install and start
 
-OpenAI uses one public Plugin Directory for ChatGPT and Codex, but individual capabilities can be surface-specific. The full ScientistOne workflow needs Codex project files, a terminal, native subagents, and the bundled local MCP. On a host that does not provide those tools, the skill can explain the workflow but must not claim that it started a study.
+ScientistOne is available through the Codex marketplace in this repository. Add the marketplace once, install the plugin, and then start a study in any project.
 
-After directory approval:
+### 1. Check that Codex is installed
 
-1. Open the Plugin Directory in Codex.
-2. Select **ScientistOne** and click **Install**.
-3. Open a fresh Codex task in the project where the study should live.
+Open **Terminal** on macOS or Linux. On Windows, open **PowerShell**. Run:
+
+```sh
+codex --version
+```
+
+If you see a version number, continue to the next step. If the command is not found, follow OpenAI's [Codex CLI installation guide](https://developers.openai.com/codex/cli/), sign in to Codex, and run the check again.
+
+### 2. Add the ScientistOne marketplace
+
+Copy this command into Terminal or PowerShell and press **Return** or **Enter**:
+
+```sh
+codex plugin marketplace add AdamHAwad/scientistone-codex-plugin --ref main
+```
+
+This tells Codex where to find ScientistOne. You only need to add the marketplace once.
+
+### 3. Install ScientistOne
+
+Run:
+
+```sh
+codex plugin add scientistone@scientistone
+```
+
+Wait for Codex to confirm that the plugin was installed. You do not need to install a separate package, database, browser extension, or companion app.
+
+### 4. Start a study
+
+1. Open the Codex desktop app.
+2. Open the folder where you want the study files to be saved.
+3. Start a new task.
 4. Say `ScientistOne, help me plan a study.`
 
-ScientistOne opens its full-page setup wizard in Codex's built-in browser. Complete the wizard there. The page then shows the editable study plan and, after approval, changes into the live interactive flowchart. Codex CLI and the IDE extension do not have the built-in browser, so those surfaces use a text-only compatibility intake.
+ScientistOne opens a full-page setup guide in Codex's built-in browser. Explain what you want to study, add any files the study needs, choose the limits, and review the plan. After you approve the plan, the same page becomes a live flowchart that shows the study's progress.
 
-Directory users do not need to install a package, runtime, CLI, database, browser extension, or companion app. A study may later need its own tool, such as a Python library named by the approved method. Codex may install the smallest compatible project-local dependency through its normal permission flow. That dependency belongs to the study, not to plugin installation.
+When the current Codex surface can start the bundled MCP and show the built-in browser, ScientistOne uses the full browser experience. Otherwise, it uses the same setup as a text conversation.
+
+A study may later need a project-specific tool, such as a Python library required by the approved method. Codex will ask before installing anything that needs your permission. That tool belongs to the study, not to ScientistOne itself.
 
 ## What a study saves
 
@@ -94,14 +124,15 @@ Read [Architecture](docs/architecture.md), [Permissions](docs/permissions.md), a
 ## Repository map
 
 ```text
+.agents/plugins/marketplace.json   Codex marketplace catalog
 plugins/scientistone/   Installable plugin bundle
-docs/                   Architecture, privacy, permissions, and release notes
+docs/                   Architecture, privacy, permissions, and release verification
 scripts/                Packaging and hygiene checks
 ```
 
-The release script builds the plugin from an allowlist. It includes the complete bundled local MCP, browser interface, skills, hooks, launchers, licenses, and brand assets. It leaves out development tests, caches, secrets, and run output. [Submission bundle](docs/submission-bundle.md) lists every included path and the main exclusions.
+This repository is the ScientistOne Codex marketplace. Its catalog points Codex to `plugins/scientistone/`, which contains the complete local MCP, browser interface, three skills, lifecycle hook, launchers, licenses, and brand assets.
 
-The release archive is built from an allowlist and tested through a clean local marketplace install. Maintainers should use the reviewed [submission materials](docs/submission-materials.md), not GitHub's automatic source ZIP.
+For verification, `npm run package:plugin` copies the installable plugin into `dist/scientistone/` from an explicit allowlist. It leaves out tests, caches, secrets, run output, and repository-only files. [Plugin bundle](docs/plugin-bundle.md) lists the included paths and exclusions. [Release tests](docs/release-tests.md) describes the clean-install checks.
 
 ## Development
 

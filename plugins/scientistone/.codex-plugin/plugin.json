@@ -16,7 +16,7 @@
   "interface": {
     "displayName": "ScientistOne",
     "shortDescription": "Turn a question into a checked research study",
-    "longDescription": "ScientistOne helps you turn a research question into a full study in Codex. You explain what you want to find out and approve the plan. Then nine teams of AI agents read the relevant research, test competing ideas with code, compare the results, and write a paper. Before the study can finish, ScientistOne checks that the numbers in the paper match the saved test results. It also checks that each important claim points to a source or saved result that supports it. If a check fails, the study returns to the step that needs fixing. You receive the paper with its sources, code, results, and check reports, so you can see how it reached its conclusions.",
+    "longDescription": "ScientistOne helps you turn a research question into a full study in Codex. You explain what you want to find out and approve the plan. Specialist AI agents then move the study through nine stages: planning, literature review, method development, selection, component testing, writing, claim checking, integrity audit, and delivery. The number of agents adapts to the approved study. Before the work can finish, ScientistOne checks that the numbers in the paper match the saved test results. It also checks that each important claim points to a source or saved result that supports it. If a check fails, the study returns to the stage that needs fixing. You receive the paper with its sources, code, results, and check reports, so you can see how it reached its conclusions.",
     "developerName": "Adam H. Awad",
     "category": "Scientific Research",
     "capabilities": ["Read", "Write"],

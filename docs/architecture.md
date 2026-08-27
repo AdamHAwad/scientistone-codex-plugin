@@ -4,7 +4,7 @@ ScientistOne has three parts with different jobs.
 
 ## Installed plugin
 
-The directory bundle contains the manifest, skills, references, validation scripts, brand assets, and a loopback-only MCP with the complete browser intake and monitor. It gives Codex the workflow and routing rules. It does not contain a database, persistent daemon, model provider, or second agent runtime.
+The repository marketplace installs the plugin bundle from `plugins/scientistone/`. The bundle contains the manifest, skills, references, validation scripts, brand assets, and a loopback-only MCP with the complete browser intake and monitor. It gives Codex the workflow and routing rules. It does not contain a database, persistent daemon, model provider, or second agent runtime.
 
 The plugin uses tools that Codex supplies, including the project filesystem, terminal, web tools when allowed, native subagents, and the bundled MCP. Research dependencies belong in the approved project or run. They are not hidden installation requirements.
 
@@ -14,7 +14,7 @@ Codex starts the bundled MCP automatically from `.mcp.json` with the Node.js run
 
 The browser provides the complete seven-step intake, direct project-local file upload, editable study-plan review, and interactive study flowchart. Drafts live under `.scientistone/intake/` in the active project. The monitor reads `run.json`, receipts, role launches, and delivery files from the selected run. A random token protects its local API, and paths are canonicalized and constrained to the active project or selected run.
 
-The publisher operates no remote ScientistOne service. Codex CLI and the IDE extension use a text-only intake when they cannot start the bundled MCP or show the built-in browser. There is no application database, object store, queue, telemetry service, update service, or plugin-owned model API.
+The publisher operates no remote ScientistOne service. Any Codex surface that cannot start the bundled MCP or show the built-in browser uses the text intake. There is no application database, object store, queue, telemetry service, update service, or plugin-owned model API.
 
 ## Local study runtime
 

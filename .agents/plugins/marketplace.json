@@ -1,0 +1,20 @@
+{
+  "name": "scientistone",
+  "interface": {
+    "displayName": "ScientistOne"
+  },
+  "plugins": [
+    {
+      "name": "scientistone",
+      "source": {
+        "source": "local",
+        "path": "./plugins/scientistone"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Scientific Research"
+    }
+  ]
+}

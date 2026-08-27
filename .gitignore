@@ -15,7 +15,10 @@ dist/
 .cache/
 tmp/
 
-.agents/
+.agents/*
+!.agents/plugins/
+.agents/plugins/*
+!.agents/plugins/marketplace.json
 .impeccable/
 skills-lock.json
 PRODUCT.md
