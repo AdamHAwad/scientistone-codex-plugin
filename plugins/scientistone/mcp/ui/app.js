@@ -233,10 +233,11 @@ function collectAnswer() {
   if (item.key && field) intake.answers[item.key] = field.value;
 }
 
-async function saveAnswers(silent = false) {
+async function saveAnswers(silent = false, savedStep = step) {
   collectAnswer();
-  const updated = await api(intakeQuery("/answers"), { method: "POST", body: JSON.stringify(intake.answers) });
+  const updated = await api(intakeQuery("/answers"), { method: "POST", body: JSON.stringify({ ...intake.answers, wizard_step: savedStep }) });
   intake = updated;
+  step = intake.wizard_step;
   if (!silent) announce("Saved.");
 }
 
@@ -258,9 +259,9 @@ async function goNext() {
   busy = true;
   renderWizard();
   try {
-    await saveAnswers(true);
-    if (step < steps.length - 1) {
-      step += 1;
+    const currentStep = step;
+    await saveAnswers(true, Math.min(step + 1, steps.length - 1));
+    if (currentStep < steps.length - 1) {
       helpOpen = false;
       busy = false;
       renderWizard();
@@ -367,8 +368,8 @@ function bindWizard() {
     }
   });
   document.querySelector("#back")?.addEventListener("click", async () => {
-    try { await saveAnswers(true); } catch {}
-    step -= 1;
+    const previousStep = step - 1;
+    try { await saveAnswers(true, previousStep); } catch { step = previousStep; }
     helpOpen = false;
     errorMessage = "";
     renderWizard();
@@ -422,7 +423,7 @@ function bindReviewFields() {
 }
 
 function renderReview() {
-  const review = intake.review;
+  const review = intake.review_draft || intake.review;
   app.innerHTML = appShell(`
     <div class="review-layout">
       <section class="review-copy" aria-labelledby="review-title">
@@ -446,7 +447,7 @@ function renderReview() {
         <button class="button button-primary" id="approve" type="button">Approve and start study</button>
         <div class="change-form">
           <label for="change-note">Other changes</label>
-          <textarea id="change-note" placeholder="Describe anything else you want changed."></textarea>
+          <textarea id="change-note" placeholder="Describe anything else you want changed.">${escapeHtml(intake.change_request_draft || "")}</textarea>
           <button class="button button-secondary" id="request-change" type="button">Send changes to S1</button>
         </div>
         ${errorMessage ? `<div class="error-box" role="alert">${escapeHtml(errorMessage)}</div>` : ""}
@@ -456,9 +457,24 @@ function renderReview() {
   document.querySelector("#approve").addEventListener("click", approveStudy);
   document.querySelector("#request-change").addEventListener("click", requestChange);
   bindReviewFields();
+  document.querySelectorAll(".review-field, #change-note").forEach((field) => field.addEventListener("input", scheduleReviewSave));
+}
+
+async function saveReviewDraft() {
+  const review = collectReviewEdits();
+  const note = document.querySelector("#change-note").value;
+  intake.review_draft = { ...intake.review, ...review };
+  intake.change_request_draft = note;
+  intake = await api(intakeQuery("/review-draft"), { method: "POST", body: JSON.stringify({ review, note }) });
+}
+
+function scheduleReviewSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => saveReviewDraft().catch(showError), 600);
 }
 
 async function approveStudy() {
+  clearTimeout(saveTimer);
   const review = collectReviewEdits();
   intake.review = { ...intake.review, ...review };
   busy = true;
@@ -474,6 +490,7 @@ async function approveStudy() {
 }
 
 async function requestChange() {
+  clearTimeout(saveTimer);
   const review = collectReviewEdits();
   intake.review = { ...intake.review, ...review };
   const note = document.querySelector("#change-note").value.trim();
@@ -510,6 +527,7 @@ function renderIntakeState() {
 async function loadIntake() {
   try {
     intake = await api(intakeQuery(""));
+    if (intake.status === "draft" && Number.isInteger(intake.wizard_step)) step = Math.max(0, Math.min(steps.length - 1, intake.wizard_step));
     errorMessage = "";
     renderIntakeState();
   } catch (error) {
@@ -517,6 +535,25 @@ async function loadIntake() {
     renderWaiting();
   }
 }
+
+function persistOpenDraft() {
+  if (view !== "intake" || !intake) return;
+  clearTimeout(saveTimer);
+  let route;
+  let body;
+  if (intake.status === "draft") {
+    collectAnswer();
+    route = "/answers";
+    body = { ...intake.answers, wizard_step: step };
+  } else if (intake.status === "review_ready") {
+    route = "/review-draft";
+    body = { review: collectReviewEdits(), note: document.querySelector("#change-note")?.value || "" };
+  } else return;
+  const headers = new Headers({ "Content-Type": "application/json", "X-ScientistOne-Token": token });
+  fetch(`${apiOrigin}${intakeQuery(route)}`, { method: "POST", headers, body: JSON.stringify(body), keepalive: true }).catch(() => {});
+}
+
+addEventListener("pagehide", persistOpenDraft);
 
 function monitorStatusText(status) {
   return { complete: "Checked", current: "Working now", attention: "Needs your input", upcoming: "Not started" }[status] || status;

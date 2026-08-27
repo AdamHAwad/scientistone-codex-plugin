@@ -189,10 +189,13 @@ function publicDraft(state) {
     revision: state.revision,
     created_at: state.created_at,
     updated_at: state.updated_at,
+    wizard_step: state.wizard_step ?? 0,
     answers: state.answers,
     uploads: state.uploads,
     review: state.review,
+    review_draft: state.review_draft ?? null,
     change_request: state.change_request,
+    change_request_draft: state.change_request_draft ?? "",
     review_edits: state.review_edits ?? [],
     run_path: state.run_path,
   };
@@ -216,6 +219,7 @@ function createDraft(projectRootArg, modeArg = "research") {
     revision: 0,
     created_at: now(),
     updated_at: now(),
+    wizard_step: 0,
     answers: {
       question: "",
       objective: "",
@@ -226,7 +230,9 @@ function createDraft(projectRootArg, modeArg = "research") {
     },
     uploads: [],
     review: null,
+    review_draft: null,
     change_request: "",
+    change_request_draft: "",
     review_edits: [],
     run_path: null,
   };
@@ -428,7 +434,7 @@ function applyReviewEdits(draft, value) {
     if (typeof edits[field] !== "string") throw new Error(`${field} must be text.`);
     const next = edits[field].trim().slice(0, 200000);
     if (REQUIRED_REVIEW_FIELDS.has(field) && !next) throw new Error(`${field} cannot be empty.`);
-    if (draft.review[field] !== next) {
+    if (String(draft.review[field] ?? "").trim() !== next) {
       draft.review[field] = next;
       changed.push(field);
     }
@@ -437,6 +443,10 @@ function applyReviewEdits(draft, value) {
     draft.review_edits ??= [];
     draft.review_edits.push({ edited_at: now(), fields: changed });
   }
+}
+
+function editableReviewDraft(value) {
+  return Object.fromEntries(EDITABLE_REVIEW_FIELDS.map((field) => [field, String(value?.[field] ?? "").slice(0, 200000)]));
 }
 
 async function parseJsonBody(req) {
@@ -663,6 +673,7 @@ async function handleWeb(req, res) {
       const state = await updateDraft(requestUrl.searchParams.get("project"), requestUrl.searchParams.get("draft"), (draft) => {
         if (!["draft", "changes_requested"].includes(draft.status)) throw new Error("This intake has already been submitted.");
         for (const key of Object.keys(draft.answers)) if (typeof body[key] === "string") draft.answers[key] = body[key].slice(0, 20000);
+        if (Number.isInteger(body.wizard_step)) draft.wizard_step = Math.max(0, Math.min(6, body.wizard_step));
       });
       return sendJson(res, 200, publicDraft(state));
     }
@@ -694,15 +705,30 @@ async function handleWeb(req, res) {
       });
       return sendJson(res, 200, publicDraft(state));
     }
+    if (requestUrl.pathname === "/api/intake/review-draft" && req.method === "POST") {
+      const body = assertObject(await parseJsonBody(req), "review draft");
+      const review = assertObject(body.review, "review draft fields");
+      const state = await updateDraft(requestUrl.searchParams.get("project"), requestUrl.searchParams.get("draft"), (draft) => {
+        if (draft.status !== "review_ready" || !draft.review) throw new Error("The study summary is not ready to edit.");
+        draft.review_draft = { ...editableReviewDraft(draft.review), ...(draft.review_draft ?? {}) };
+        for (const field of EDITABLE_REVIEW_FIELDS) {
+          if (typeof review[field] === "string") draft.review_draft[field] = review[field].slice(0, 200000);
+        }
+        if (typeof body.note === "string") draft.change_request_draft = body.note.slice(0, 12000);
+      });
+      return sendJson(res, 200, publicDraft(state));
+    }
     if (requestUrl.pathname === "/api/intake/change" && req.method === "POST") {
       const body = assertObject(await parseJsonBody(req), "change request");
       const state = await updateDraft(requestUrl.searchParams.get("project"), requestUrl.searchParams.get("draft"), (draft) => {
         if (draft.status !== "review_ready") throw new Error("The study summary is not ready for revision.");
-        applyReviewEdits(draft, body.review);
-        const note = String(body.note || "").trim();
+        applyReviewEdits(draft, { ...(draft.review_draft ?? {}), ...(body.review ?? {}) });
+        const note = String(body.note || draft.change_request_draft || "").trim();
         if (!note) throw new Error("Describe what you want S1 to change.");
         draft.status = "changes_requested";
         draft.change_request = note.slice(0, 12000);
+        draft.review_draft = null;
+        draft.change_request_draft = "";
       });
       return sendJson(res, 200, publicDraft(state));
     }
@@ -710,8 +736,10 @@ async function handleWeb(req, res) {
       const body = assertObject(await parseJsonBody(req), "approval");
       const state = await updateDraft(requestUrl.searchParams.get("project"), requestUrl.searchParams.get("draft"), (draft) => {
         if (draft.status !== "review_ready") throw new Error("The study summary is not ready for approval.");
-        applyReviewEdits(draft, body.review);
+        applyReviewEdits(draft, { ...(draft.review_draft ?? {}), ...(body.review ?? {}) });
         draft.status = "approved";
+        draft.review_draft = null;
+        draft.change_request_draft = "";
       });
       return sendJson(res, 200, publicDraft(state));
     }
@@ -923,9 +951,11 @@ async function callTool(name, args = {}) {
       if (!new Set(["submitted", "changes_requested", "review_ready"]).has(draft.status)) throw new Error("The intake is not ready for a study summary.");
       classifyUploads(draft, review.file_assignments);
       draft.review = { ...review };
+      draft.review_draft = editableReviewDraft(review);
       draft.review_edits = [];
       draft.status = "review_ready";
       draft.change_request = "";
+      draft.change_request_draft = "";
     });
     return publicDraft(state);
   }

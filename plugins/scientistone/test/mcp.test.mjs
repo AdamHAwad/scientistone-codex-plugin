@@ -164,11 +164,15 @@ test("a researcher wait pauses after one hour with a saved, resumable draft", as
   await updateDraft(project, opened.draft_id, (draft) => {
     draft.status = "review_ready";
     draft.review = { question: "Which method performs best?", study_plan_markdown: "# Study plan\n" };
+    draft.review_draft = { question: "Which method is most dependable?", study_plan_markdown: "# Study plan\n" };
+    draft.change_request_draft = "Keep the saved edit for later.";
   });
   const reviewTimedOut = await within(waitForResearcher(project, opened.draft_id, 20));
   assert.equal(reviewTimedOut.status, "review_ready");
   assert.equal(reviewTimedOut.wait_timed_out, true);
   assert.equal(reviewTimedOut.review.question, "Which method performs best?");
+  assert.equal(reviewTimedOut.review_draft.question, "Which method is most dependable?");
+  assert.equal(reviewTimedOut.change_request_draft, "Keep the saved edit for later.");
 });
 
 test("intake files persist, approval attaches a verified run, and discard removes only its draft", async (t) => {
@@ -220,8 +224,9 @@ test("intake files persist, approval attaches a verified run, and discard remove
   });
   await new Promise((resolve) => setImmediate(resolve));
 
-  state = await request(context, "/answers", { method: "POST", body: JSON.stringify({ question: "Which method performs best?", objective: "Choose a method." }) });
+  state = await request(context, "/answers", { method: "POST", body: JSON.stringify({ question: "Which method performs best?", objective: "Choose a method.", wizard_step: 4 }) });
   assert.equal(state.answers.question, "Which method performs best?");
+  assert.equal(state.wizard_step, 4);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(initialWaitResolved, false);
 
@@ -261,8 +266,13 @@ test("intake files persist, approval attaches a verified run, and discard remove
   );
   state = await callTool("publish_study_review", { project_root: project, draft_id: context.draft, review });
   assert.equal(state.status, "review_ready");
+  assert.equal(state.review_draft.question, review.question);
   assert.equal(state.uploads[0].classification, "shared");
   assert.equal(state.uploads[0].purpose, "Candidate observations.");
+  state = await request(context, "/review-draft", { method: "POST", body: JSON.stringify({ review: { objective: "Choose a dependable method." }, note: "Please use the stricter comparison." }) });
+  assert.equal(state.review.objective, "Choose a method.");
+  assert.equal(state.review_draft.objective, "Choose a dependable method.");
+  assert.equal(state.change_request_draft, "Please use the stricter comparison.");
   const reviewWait = callTool("wait_for_researcher", { project_root: project, draft_id: context.draft });
   await new Promise((resolve) => setImmediate(resolve));
   state = await request(context, "/change", { method: "POST", body: JSON.stringify({ note: "Use a stricter comparison.", review: { objective: "Choose a reliable method." } }) });
