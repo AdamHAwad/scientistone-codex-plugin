@@ -9,7 +9,7 @@ scientistone-runs/<UTC>-<slug>/
   request.md                       exact user request
   study-plan.md                    approved researcher charter
   run.json                         small live status record
-  attention.md                     only while researcher action is required
+  attention.md                     legacy/pre-approval researcher action only
   events.jsonl                     append-only high-level events and repairs
   role-receipts/<agent-task>.json  one immutable receipt per specialist
   receipts/                        immutable phase hash receipts
@@ -230,14 +230,18 @@ External-audit mode uses `contract`, `audit`, `complete`.
 
 Research outcomes are `positive`, `scientific_null`, and
 `completed_with_limitations`; external-audit outcomes are `audit_passed`,
-`audit_failed`, and `audit_incomplete`. Operationally incomplete work remains
-`paused` or `failed`.
+`audit_failed`, and `audit_incomplete`. After approval, operationally
+incomplete work remains `running` or `repairing` until verified delivery or
+explicit researcher cancellation.
 
 Use validated state commands to set `running`, `repairing`, `paused`, or
-`failed`, to set/clear attention, and to append an event. `attention.md` is
-only for an exact researcher action that agents cannot take, such as supplying
-missing data or permission or approving a charter amendment. A retry count or
-repairable generated-contract defect is not attention. Checkpoint is the
+`failed`, to set/clear attention, and to append an event. `paused`, `failed`,
+and `attention.md` remain schema-compatible for historical runs, but an
+approved 1.1.4+ run must not enter them merely because data, permission,
+authority, credentials, hardware, licensing, compute, or a generated-contract
+repair is unavailable. Keep it `running` or `repairing`, select a safe in-scope
+fallback, and carry the limitation into delivery. Only explicit researcher
+cancellation may end it early. Checkpoint is the
 only command that advances a verified phase or marks completion. Do not hand
 edit `run.json`. The utility never rewrites checkpoint anchors, ID, mode,
 profile, creation time, schema, request hash, or study-plan hash. Monitoring
@@ -260,9 +264,10 @@ Revise a generated contract in place with a structured reason file:
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs revise-contract <run> contract/revision-reason.json
 ```
 
-For a browser-approved charter amendment, stage the approved plan at a
-separate run-relative path and pass it as the final argument. The reason must
-bind the browser approval evidence at its exact run-relative path and hash:
+For a researcher-initiated charter amendment supplied after approval, stage the
+amended plan at a separate run-relative path and pass it as the final argument.
+The lead must never ask for this amendment. The reason binds the researcher's
+supplied change at its exact run-relative path and hash:
 
 ```sh
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs revise-contract <run> contract/revision-reason.json <approved-amended-plan.md>
@@ -283,8 +288,10 @@ The reason object has exactly these fields:
 }
 ```
 
-Use `RESEARCHER_APPROVED_AMENDMENT` only with `charter_changed: true` and a
-`researcher_approval` object containing the approved plan's path and SHA-256.
+Use `RESEARCHER_APPROVED_AMENDMENT` only when the researcher independently
+supplied the change, with `charter_changed: true` and a `researcher_approval`
+object containing the amended plan's path and SHA-256. Never use the class as
+a reason to stop and solicit approval.
 An automatic repair cannot replace `study-plan.md`. A result-aware repair must
 use `invalidate_and_rerun`; the command archives every successor before it
 returns the same run to contract review.

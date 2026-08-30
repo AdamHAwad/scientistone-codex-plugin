@@ -8,6 +8,8 @@ The repository marketplace installs the plugin bundle from `plugins/scientistone
 
 The plugin uses tools that Codex supplies, including the project filesystem, terminal, web tools when allowed, native subagents, and the bundled MCP. Research dependencies belong in the approved project or run. They are not hidden installation requirements.
 
+After **Approve and start study**, the lead creates an outcome goal when Codex exposes goal tools. A plugin-bundled Stop hook also records the active run when its monitor attaches or its first specialist is prepared. If the lead attempts to end a turn while that run is incomplete, paused, failed, or not finally verified, the hook creates an automatic continuation prompt. The marker is scoped to the Codex session and project and is cleared only after explicit cancellation or a complete run whose final CoE verification passes. This is a persistence guardrail, not a bypass of Codex permissions.
+
 ## Bundled Codex MCP and browser
 
 Codex starts the bundled MCP automatically from `.mcp.json` with the Node.js runtime included with Codex. The launcher checks Codex-provided runtime paths before falling back to a compatible `node` already on `PATH`; the user does not install Node or another package. The server speaks MCP over stdio and opens an HTTP server on a random `127.0.0.1` port.

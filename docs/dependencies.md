@@ -18,6 +18,6 @@ The optional model-routing tool may execute the Codex CLI already supplied by Co
 
 ## Study dependencies
 
-A research method may need a package, compiler, dataset, or system capability named by the approved study. Codex must install the smallest compatible dependency inside the project or run through its normal permission flow, or record that the method cannot run. These are study dependencies, not plugin installation dependencies.
+A research method may need a package, compiler, dataset, or system capability named by the approved study. ScientistOne uses the smallest compatible existing or project-local dependency covered by the approved plan. If that exact path is unavailable or would require authority outside the plan, it chooses a safe in-scope alternative and carries the limitation into the paper instead of pausing for another study approval. These are study dependencies, not plugin installation dependencies.
 
 Codex may contact OpenAI services and sources approved by the study. Those calls run through Codex or project tools under the researcher's settings.

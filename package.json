@@ -1,6 +1,6 @@
 {
   "name": "scientistone-codex-plugin",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "private": true,
   "description": "Public source for the complete local-first ScientistOne Codex plugin.",
   "type": "module",

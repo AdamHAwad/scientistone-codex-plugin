@@ -102,6 +102,20 @@ test("a run freezes its resolution while a new run resolves a newer catalog", as
   assert.equal(fresh.tiers.efficient.model, "generation-b-efficient");
 });
 
+test("an unavailable frozen route returns autonomous repair guidance", async (t) => {
+  const run = runRoot(t, "unavailable");
+  await ensureRunRouting(run, { catalog: catalog("generation-a-strong", "generation-a-efficient") });
+  await assert.rejects(
+    ensureRunRouting(run, { catalog: catalog("generation-b-strong", "generation-b-efficient") }),
+    (error) => {
+      assert.match(error.message, /keep the run repairing/i);
+      assert.match(error.message, /without asking the researcher/i);
+      assert.doesNotMatch(error.message, /pause the run/i);
+      return true;
+    },
+  );
+});
+
 test("the bundled hook rewrites an authorized spawn exactly once and leaves unrelated spawns alone", async (t) => {
   const run = runRoot(t, "hook");
   const prepared = await prepareRoleLaunch({

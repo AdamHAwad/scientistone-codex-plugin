@@ -10,7 +10,7 @@ async function text(relative) {
 
 test("public manifest ships one complete local Codex experience", async () => {
   const manifest = JSON.parse(await text(".codex-plugin/plugin.json"));
-  assert.equal(manifest.version, "1.1.3");
+  assert.equal(manifest.version, "1.1.4");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -108,7 +108,26 @@ test("sparse intake and generated-contract defects remain recoverable", async ()
   assert.match(intake, /Blank purpose, prior-work, evaluation, limit, or deliverable fields are valid intake/i);
   assert.match(skill, /result-blind defect[\s\S]+same run/i);
   assert.match(skill, /result-aware defect[\s\S]+invalidate_and_rerun/i);
-  assert.match(skill, /retry count alone is not a reason to pause/i);
+  assert.match(skill, /approved run stays `running` or `repairing` until verified completion/i);
   assert.match(protocol, /RESEARCHER_APPROVED_AMENDMENT/);
   assert.match(roles, /Do not treat a repairable\s+contract defect as BLOCKED/i);
+});
+
+test("one approval drives an approved run through verified delivery", async () => {
+  const skill = await text("skills/scientistone/SKILL.md");
+  const intake = await text("skills/scientistone/references/intake.md");
+  const protocol = await text("skills/scientistone/references/protocol.md");
+  const roles = await text("skills/scientistone/references/roles.md");
+  const hooks = JSON.parse(await text("hooks/hooks.json"));
+  assert.match(skill, /Approve and start study.*durable authority/i);
+  assert.match(skill, /Immediately after approval, use native goal tools/i);
+  assert.match(skill, /never ask the researcher for approval, permission, authority, confirmation/i);
+  assert.match(skill, /Do not create `attention\.md` after approval/i);
+  assert.match(skill, /Do not report completion or end an approved run until[\s\S]+final verifier passes/i);
+  assert.match(intake, /only approval checkpoint/i);
+  assert.match(protocol, /Never reopen approval or ask the researcher/i);
+  assert.match(roles, /Classify every REVISE finding as `AUTOMATIC_REPAIR`/i);
+  assert.doesNotMatch(roles, /Classify every REVISE finding[^\n]+REAPPROVAL_REQUIRED/i);
+  assert.ok(Array.isArray(hooks.hooks.Stop) && hooks.hooks.Stop.length === 1);
+  assert.match(hooks.hooks.Stop[0].hooks[0].command, /enforce-study-autonomy\.mjs/);
 });

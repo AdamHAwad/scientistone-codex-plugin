@@ -72,7 +72,7 @@ Give the researcher only:
 - whether they need to act;
 - one direct link to the most useful current artifact when appropriate.
 
-Do not expose framework vocabulary, task IDs, internal prompts, raw stack traces, model costs, or speculative completion times unless asked. Translate a technical blocker into one actionable sentence while preserving the detailed record in `attention.md`.
+Do not expose framework vocabulary, task IDs, internal prompts, raw stack traces, model costs, or speculative completion times unless asked. Translate a technical blocker into one plain sentence. If a historical `attention.md` exists, preserve and report it as legacy evidence; never turn it into a request for new approval or authority.
 
 Example:
 
@@ -82,8 +82,8 @@ Example:
 
 - `running` plus valid contiguous receipts: healthy even if current outputs are incomplete.
 - `repairing`: report the exact phase and preserved failure; no researcher action unless `attention` is set.
-- `paused`: read `attention.md`; give the one required researcher action.
-- `failed`: distinguish operational failure from completed null evidence. Suggest resume only when the frozen plan remains valid.
+- `paused`: treat this as legacy or stale state after approval; report the recorded item, explain that execution should resume autonomously under the current policy, and do not request a second approval.
+- `failed`: distinguish operational failure from completed null evidence. Explain that the execution task should resume with a safe in-scope fallback; do not ask for repair authority.
 - `complete`: require `verify` to pass; state, phase, receipts, required outputs, visual inspection, and manifest verification must agree. Otherwise report "delivery verification is incomplete," not complete.
 - Hash mismatch: identify the first invalid receipt; downstream outputs are stale until rebuilt.
 
@@ -95,17 +95,17 @@ Create an automation only when the researcher explicitly asks to keep monitoring
 
 > Use the scientistone-monitor skill on `<absolute run path>`. Report only a changed verified phase, a new attention item, an invalid evidence receipt, or terminal completion. On terminal completion or cancellation, stop this automation.
 
-Do not create a second monitor when the main long-running task is already reporting and the researcher did not ask for one. Stop recurring monitoring when the run becomes complete, failed, cancelled, or paused for researcher action.
+Do not create a second monitor when the main long-running task is already reporting and the researcher did not ask for one. Stop recurring monitoring only when the run becomes complete or cancelled. Treat `failed` or `paused` as a nonterminal legacy state: report the change and keep monitoring while the owning execution task repairs and resumes it autonomously.
 
 ## Resume handoff
 
-When the researcher asks to resume, hand off to `scientistone` with the same absolute run path. Verify the receipt chain first, preserve failed or partial artifacts, and continue from the first invalid or incomplete phase. Generated evaluator, verifier, schema, path, hash, seed, or method-detail repairs stay in the same versioned run. A charter amendment requires explicit researcher approval. Create a separate run only for a different research question, changed permissions, or an intentional fork.
+When the researcher asks to resume, hand off to `scientistone` with the same absolute run path. Verify the receipt chain first, preserve failed or partial artifacts, clear stale attention, and continue from the first invalid or incomplete phase. Generated evaluator, verifier, schema, path, hash, seed, outcome-operationalization, environment, or method-detail repairs stay in the same versioned run without another approval. Preserve fixed charter boundaries through a safe limited design when necessary. Create a separate run only when the researcher explicitly requests a different research question or intentional fork.
 
 ## Before ending a turn
 
 1. Confirm that `run.json` was read and `verify` passed or failed.
 2. Report only a phase supported by a valid receipt.
-3. If the run is paused, report the one required action from `attention.md`.
+3. If the run is paused, report the recorded legacy action and state that the execution task should clear it and resume autonomously; do not ask for approval.
 4. Do not modify, resume, stop, invalidate, or repair the run.
 5. Do not report completion unless state, phase, receipts, required outputs, and manifest verification agree.
 6. Create recurring monitoring only after an explicit request and only through the native automation tool.

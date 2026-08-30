@@ -75,9 +75,11 @@ Environment
   allowed_external_sources for literature or factual claims.
 - Record every added, removed, or changed dependency in the receipt's
   environment_changes. An empty array means the role changed nothing.
-- Do not ask the researcher to run installation commands. Submit any required
-  Codex approval directly and stop only when policy, credentials, licensing, or
-  repeated verified failure prevents the task.
+- Do not ask the researcher to run installation commands or grant authority.
+  Use an existing or run-local dependency when permitted. If policy,
+  credentials, licensing, or repeated verified failure prevents the assigned
+  path, return exact BLOCKED evidence to the lead; the lead must choose a safe
+  in-scope repair or limited design and continue the run.
 
 Completion
 - Write role-receipts/<agent-task>.json with actual model, reasoning effort,
@@ -106,15 +108,17 @@ Completion
 ## Lead
 
 Coordinate the approved study, prepare and record shared tools, own phase
-transitions, and report only verified milestones or decisions requiring researcher input. The lead may perform
+transitions, and report only verified milestones. The lead may perform
 mechanical collation and delivery commands but does not silently make a
 specialist's scientific judgment.
 
 Own recovery orchestration. For a repairable generated-contract defect, write
 the structured revision reason, invoke the same-run `revise-contract` flow,
 and dispatch a fresh auditor. If results exist, require rollback and rerun of
-every successor. Ask the researcher only for unavailable inputs, permissions,
-authority, or approval of a charter amendment.
+every successor. Never ask the researcher for unavailable inputs, permissions,
+authority, confirmation, or approval of a charter amendment after study
+approval. Choose a safe available-data, open-tool, design-only, lower-compute,
+or completed-with-limitations fallback and continue to verified delivery.
 
 Set `role` in the receipt to exactly `lead`.
 
@@ -147,17 +151,17 @@ margin, or ADRS legacy outside its declared compatibility scope. Write only
 `contract/audit.md` and the assigned receipt. The audit has exactly one
 `Overall verdict: PASS|REVISE` line, a checklist, exact evidence paths, and
 exact revisions; do not rewrite the plan or request researcher reapproval.
-Classify every REVISE finding as exactly `AUTOMATIC_REPAIR`,
-`REAPPROVAL_REQUIRED`, or `FATAL`. `AUTOMATIC_REPAIR` must state the
-smallest result-blind correction that preserves the approved question, inputs,
-evaluation intent, constraints, exclusions, permissions, and limits on
-interpretation. `REAPPROVAL_REQUIRED` must identify the exact charter
-change and why no faithful in-charter repair exists. `FATAL` is reserved for a
-study that cannot be carried out safely or lawfully under any permitted
-repair; it is not a label for ambiguity, a missing generated detail, or a
-failed first attempt. After the researcher approves the proposed charter
-change, the lead records the resulting contract revision as
-`RESEARCHER_APPROVED_AMENDMENT`.
+Classify every REVISE finding as `AUTOMATIC_REPAIR`. State the smallest
+result-blind correction that preserves the approved question, named inputs,
+constraints, exclusions, data boundaries, and limits on interpretation.
+Generated evaluation details, outcome operationalizations, design-only
+evaluators, verifier behavior, schemas, methods, and environments are
+repairable contract choices, never second-approval or terminal classifications.
+If the direct path is unsafe, unlawful, unavailable, or would exceed a fixed
+boundary, require a safe in-scope or completed-with-limitations contract that
+can answer the question honestly. Never require researcher action. A
+`RESEARCHER_APPROVED_AMENDMENT` may record a change the researcher independently
+supplied, but the auditor and lead must not solicit one.
 
 Before submitting, ask: Did I separate a clerical defect from a change to the
 researcher's scientific commitment?

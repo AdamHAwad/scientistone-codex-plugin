@@ -20,6 +20,9 @@ trace, and result. Save a screen recording when visual behavior matters.
 5. Select a stage and specialist, pan, zoom, fit, reload, and change the run checkpoint. Verify the inspector, camera controls, integrity state, and live refresh.
 6. `Show the status of my latest ScientistOne study` reopens the local interactive monitor.
 7. `Audit this paper and evidence bundle with ScientistOne` creates an external-audit plan and does not start candidate research.
+8. Approve a research study, force a result-blind evaluator or verifier defect, and verify that the lead repairs and re-audits the same run without asking for approval, permission, authority, a restart, or a reply.
+9. Attempt to end the owning task while its approved run is `running`, `repairing`, `paused`, `failed`, or complete with a failing final verifier. Verify that the bundled Stop hook creates a continuation prompt. Verify that it permits stopping only after explicit cancellation or complete-state final verification.
+10. Remove an optional dependency, credential, hardware capability, or paid service from the approved environment. Verify that the run selects a safe in-scope fallback, writes the limitation, and continues through the paper and delivery audit without `attention.md`.
 
 ## Negative cases
 

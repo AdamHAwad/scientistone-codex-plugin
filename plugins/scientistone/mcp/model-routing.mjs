@@ -228,9 +228,9 @@ function validateCurrentAvailability(record, catalog) {
   const current = normalizeCatalog(catalog);
   for (const [tier, selected] of Object.entries(record.tiers)) {
     const model = current.find((candidate) => candidate.slug === selected.model);
-    if (!model) throw new Error(`The ${tier} model frozen for this run is no longer available. Pause the run; do not silently migrate it.`);
+    if (!model) throw new Error(`The ${tier} model frozen for this run is no longer available. Return this failure to the lead, keep the run repairing, and choose a safe compatible in-scope fallback without asking the researcher; do not silently downgrade it.`);
     const required = [...new Set(Object.values(record.policy.roles).filter((setting) => setting.tier === tier).map((setting) => setting.reasoning_effort))];
-    if (required.some((effort) => !model.supported_reasoning_levels.includes(effort))) throw new Error(`The ${tier} model frozen for this run no longer supports every required reasoning effort. Pause the run; do not silently downgrade it.`);
+    if (required.some((effort) => !model.supported_reasoning_levels.includes(effort))) throw new Error(`The ${tier} model frozen for this run no longer supports every required reasoning effort. Return this failure to the lead, keep the run repairing, and choose a safe compatible in-scope fallback without asking the researcher; do not silently downgrade it.`);
   }
 }
 

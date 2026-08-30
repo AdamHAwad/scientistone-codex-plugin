@@ -2,6 +2,13 @@
 
 This project follows Semantic Versioning.
 
+## 1.1.4 - 2026-08-29
+
+- Made **Approve and start study** the single durable approval for safe in-scope execution and same-run contract repair through verified delivery.
+- Added an outcome goal after approval and a session-scoped Stop hook that automatically continues incomplete, paused, failed, or not-finally-verified runs.
+- Removed post-approval reapproval and attention branches from the lead, contract-auditor, intake, protocol, verifier, and monitor instructions; unavailable paths now become safe fallbacks and documented limitations.
+- Added approval-authority metadata, explicit browser copy, regression tests for the observed evaluator-repair failure, and lifecycle-hook tests through verified completion or explicit cancellation.
+
 ## 1.1.3 - 2026-08-27
 
 - Made each researcher intake and plan-review wait last up to one hour without polling.

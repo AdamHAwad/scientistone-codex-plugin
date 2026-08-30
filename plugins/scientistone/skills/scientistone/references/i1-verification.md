@@ -60,8 +60,9 @@ PASS contract may begin candidate work. Because policy and code are frozen
 before results, an unhandled later result type is not permission to improvise.
 Use a versioned same-run contract repair. If results already exist, archive the
 old contract and every successor, then rebuild and rerun them under a fresh
-audit. If the repair changes the researcher charter, obtain explicit approval
-for the amended plan before revising the contract.
+audit. If the direct repair would exceed a fixed researcher-charter boundary,
+preserve the boundary and author the strongest safe in-scope verifier or
+limited design. Continue the same run without requesting another approval.
 
 ## Required structured policy
 

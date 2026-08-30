@@ -48,7 +48,11 @@ In Codex desktop, send the complete plain-language plan to `publish_study_review
 
 Only on a surface without the bundled browser MCP should you show the plan in chat and ask: `Is this the study you want me to run?`
 
-The researcher approves once. Save the approved text as `request.md` and `study-plan.md`. Treat the approved question, named inputs, evaluation intent, constraints, exclusions, permissions, and limits on interpretation as the researcher charter. The generated evaluator, verifier, paths, hashes, seeds, schemas, and other implementation details are the execution contract. Agents may repair and re-audit that execution contract in the same run. Changing the charter requires an explicit amended plan approved through the browser. Start a separate run only for a different research question, changed permissions, or an intentional fork that the researcher wants to preserve alongside the first study.
+The researcher approves once. The `Approve and start study` action is both approval of the plan and durable authority to carry the study autonomously to its verified deliverables. Save the approved text as `request.md` and `study-plan.md`. Treat the approved question, named inputs, constraints, exclusions, data boundaries, and limits on interpretation as the researcher charter. Treat outcomes, evaluators, verifiers, paths, hashes, seeds, schemas, method details, and other generated operationalizations as the versioned execution contract. Agents may repair, replace, and re-audit that contract in the same run without a second approval, including a result-blind replacement evaluator or verifier needed to faithfully answer the approved question.
+
+After approval, never ask the researcher for approval, permission, authority, confirmation, a reply, a restart, or a resume message. Never present a proposed repair for acceptance and never end the turn because the contract, evaluator, verifier, environment, method, or run ledger needs repair. If a possible action would exceed the approved data, safety, legal, paid-service, publication, destructive-change, or project boundaries, do not request broader authority: choose a safe in-scope alternative and carry the limitation into the paper. Only an explicit researcher cancellation may terminate the run before verified delivery. A separate run is created only when the researcher explicitly asks for a different question or preserved fork; the lead never proposes one as a repair.
+
+Immediately after approval, use native goal tools when they are available. If there is no active goal, create one without a token budget whose objective is: `Complete the approved ScientistOne study through every required phase and deliver the final verified paper and evidence package; never stop or ask the researcher for further authority, and autonomously perform every safe in-scope repair.` If that ScientistOne goal already exists, preserve it. Do not pause or ask about goal state. Mark it complete only after the final verifier passes and delivery is ready.
 
 ## Create the run
 
@@ -83,24 +87,24 @@ Use the model and reasoning policy in `references/model-policy.json` when the cu
 - Keep candidate work away from evaluator-only files and held-out answers.
 - Preserve failed methods, null findings, contradictions, and audit failures.
 - Keep an operational failure separate from scientific null evidence.
-- Do not publish, use a paid service, accept a license, export private data, or make a destructive change without new authority.
+- Do not publish, use a paid service, accept a license, export private data, or make a destructive change unless the approved plan already and lawfully authorizes that exact action. Use a safe no-new-authority alternative when it does not.
 - Give the researcher short updates at real checkpoints. Use their field language instead of internal task IDs or schema keys.
 
 ## Run and recovery
 
 Follow `references/protocol.md` in order. At each phase boundary, create a receipt and run the verifier commands in `references/artifacts.md`. On resume, verify saved state and continue from the first invalid or incomplete phase.
 
-Retry the smallest failed work package and preserve every failed artifact. Use a fresh specialist when independence or scientific judgment was affected. Treat a generated-contract defect as a repair request, not a terminal blocker:
+Retry the smallest failed work package and preserve every failed artifact. Use a fresh specialist when independence or scientific judgment was affected. An approved run stays `running` or `repairing` until verified completion or explicit researcher cancellation; do not set `attention`, `paused`, or `failed` as a way to end the task. Treat every generated-contract defect as autonomous repair work, not a researcher decision or terminal blocker:
 
 - For a result-blind defect, revise the execution contract in the same run, record the structured reason, and send the revised contract to a fresh Contract Auditor.
 - For a result-aware defect, use `revise-contract` with `post_result_guard: "invalidate_and_rerun"`. The verifier archives the old contract and every successor, increments the contract revision, and returns the same run to contract review. Never tune a verifier to rescue an observed result.
-- If the repair would change the researcher charter, obtain approval for an amended plan in the browser, record its hash in the revision reason, and revise the same run. Do not infer that approval.
-- Use `attention.md` only when the run lacks data, permission, authority, or a charter decision that agents cannot supply, or when safe in-scope recovery paths have been exhausted and one exact researcher action is necessary. A retry count alone is not a reason to pause.
+- If the most direct repair would exceed a fixed charter boundary, keep the question and boundary fixed, choose the strongest safe in-scope design or limited conclusion, record the deviation and its scientific consequence, and continue. Do not solicit a charter amendment. If the researcher independently supplies a change, record it as a researcher-initiated amendment in the same run.
+- Do not create `attention.md` after approval. Missing data, unavailable credentials, unavailable hardware, licenses, paid services, unsafe methods, exhausted compute, and repeated operational failure require an available-data, open-tool, simulated, design-only, lower-compute, or completed-with-limitations fallback. Preserve what failed and continue to the paper; do not ask the researcher to act.
 
 Operational launch errors with codes such as `S1_LAUNCH_GRANT_NOT_FOUND`, `S1_LAUNCH_GRANT_EXPIRED`, or `S1_LAUNCH_GRANT_MISMATCH` are recoverable: prepare a new one-use grant, retain the logical task name, increment the attempt, and retry the same work package. Do not require a Codex restart, a global installation, or a manually copied runtime.
 
 ## Completion
 
-Do not report completion until every deliverable required by the plan exists and the final verifier passes. In research mode this normally includes the selected method or protocol, canonical evaluation, paper source, claim provenance, I1 to I4 audit, reproduction guide, visual check for rendered documents, and delivery manifest. A PDF is required only when the approved deliverables and available verified environment require one.
+Do not report completion or end an approved run until every deliverable required by the plan exists and the final verifier passes. In research mode this normally includes the selected method or protocol, canonical evaluation, paper source, claim provenance, I1 to I4 audit, reproduction guide, visual check for rendered documents, and delivery manifest. A PDF is required only when the approved deliverables and available verified environment require one. Negative, null, design-only, or completed-with-limitations findings are valid papers; an operational obstacle is work to repair or a limitation to study, not a reason to stop before writing.
 
-Then route interpretation to `scientistone-results`. Before ending a turn, confirm the run path, phase, receipt, and next verified action. Ask one question only when the researcher must act.
+Then route interpretation to `scientistone-results`. Before ending a turn, confirm the run path, phase, receipt, and next verified action. If native goal tools were used, mark the ScientistOne goal complete only now. Do not ask a post-approval question.

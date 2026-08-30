@@ -287,6 +287,8 @@ test("intake files persist, approval attaches a verified run, and discard remove
   await new Promise((resolve) => setImmediate(resolve));
   state = await request(context, "/approve", { method: "POST", body: JSON.stringify({ review: { question: "Which method is most reliable?", study_plan_markdown: "# Study plan\n\nUse the researcher's correction.\n" } }) });
   assert.equal(state.status, "approved");
+  assert.match(state.approved_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.match(state.execution_authority, /approved this study once.*Do not request another approval/i);
   assert.equal(state.review.question, "Which method is most reliable?");
   assert.deepEqual(state.review_edits.at(-1).fields, ["question", "study_plan_markdown"]);
   assert.equal((await approvalWait).status, "approved");

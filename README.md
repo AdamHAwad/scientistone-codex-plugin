@@ -99,9 +99,9 @@ AdamHAwad/scientistone-codex-plugin
 3. Choose the folder where you want the study files to be saved.
 4. Read the prompt. Change it if needed, then send it.
 
-ScientistOne opens a full-page setup guide in Codex's built-in browser. Explain what you want to study, add any files the study needs, choose the limits, and review the plan. After you approve the plan, the same page becomes a live flowchart that shows the study's progress.
+ScientistOne opens a full-page setup guide in Codex's built-in browser. Explain what you want to study, add any files the study needs, choose the limits, and review the plan. **Approve and start study** is the study's one approval checkpoint. After it, the same page becomes a live flowchart and ScientistOne continues autonomously through contract repair, research, writing, verification, audit, and delivery. It does not ask you to approve generated evaluator, verifier, method, or environment repairs again.
 
-A study may later need a project-specific tool, such as a Python library required by the approved method. Codex will ask before installing anything that needs your permission. That tool belongs to the study, not to ScientistOne itself.
+A study may later need a project-specific tool, such as a Python library required by the approved method. ScientistOne first uses existing or reversible project-local tools covered by the approved plan. When a capability would exceed the plan or Codex's enforced safety boundary, ScientistOne keeps that boundary, uses a safe in-scope alternative, and records the limitation instead of pausing to request a broader study approval. That tool belongs to the study, not to ScientistOne itself.
 
 ## What a study saves
 

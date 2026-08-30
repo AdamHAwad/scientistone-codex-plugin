@@ -26,9 +26,11 @@ access limitation; brief-repair limit; `idea_ceiling`,
 `ablation_ceiling`, `minimum_valid_ablations`, and exact audit panel size.
 
 The plan lists estimated maximum evaluations and compute implications before
-approval. Valid stop reasons are evidence saturation under the stated rule, no
-additional eligible ideas, stable ranking under a plan-defined criterion,
-exhausted approved compute, repeated operational failure, or researcher stop.
+approval. Valid phase stop reasons are evidence saturation under the stated
+rule, no additional eligible ideas, stable ranking under a plan-defined
+criterion, exhausted approved compute, or repeated operational failure. These
+stop only the affected search or experiment loop; they do not stop the approved
+run. The run itself stops early only when the researcher explicitly cancels it.
 Do not pad a ceiling with duplicate or unsupported work.
 
 Use the pilot profile by default. Use the standard profile only after the
@@ -61,10 +63,12 @@ or a non-PASS self-test. A later scientific surprise cannot silently change
 the policy or verifier.
 
 Separate the approved researcher charter from the generated execution
-contract. The charter is the approved question, named inputs, evaluation
-intent, constraints, exclusions, permissions, and limits on interpretation.
-The evaluator, verifier, schemas, paths, hashes, seeds, and other generated
-details are a versioned execution contract.
+contract. The charter is the approved question, named inputs, constraints,
+exclusions, data boundaries, and limits on interpretation. Outcome
+operationalizations, evaluators, verifiers, schemas, paths, hashes, seeds,
+methods, and other generated details are a versioned execution contract.
+Approval grants durable authority to repair this generated layer autonomously
+until verified delivery.
 
 When generated contract work needs revision, write a structured reason file
 and use `revise-contract` from `artifacts.md`:
@@ -73,12 +77,15 @@ and use `revise-contract` from `artifacts.md`:
   archive and replace only the rejected generated contract material. After
   results, require `post_result_guard: "invalidate_and_rerun"`, archive the
   contract and every successor, and rerun all affected stages.
-- `RESEARCHER_APPROVED_AMENDMENT` requires a browser-approved amended plan and
-  its verified path and hash. It increments both charter and contract
-  revisions in the same run.
+- `RESEARCHER_APPROVED_AMENDMENT` records only a change the researcher
+  independently supplies after approval. The lead never solicits one. It binds
+  the supplied amended plan by verified path and hash and increments both
+  charter and contract revisions in the same run.
 - Never alter a verifier, threshold, outcome, or interpretation to favor an
-  observed result. A different question, changed permissions, or an
-  intentional parallel fork belongs in a separate run.
+  observed result. If a direct repair would exceed a fixed charter boundary,
+  preserve the boundary and use the strongest safe in-scope design or limited
+  conclusion. Create a separate run only when the researcher explicitly asks
+  for a different question or intentional parallel fork.
 
 Spawn one fresh Contract Auditor with `fork_turns: "none"` using the Common
 Role Envelope and Contract Auditor card. Its declared files are only the
@@ -89,12 +96,12 @@ Do not promote a plan with a material finding. A PASS receipt means
 
 On REVISE, the lead preserves the rejected material, makes the smallest
 faithful correction, and dispatches a fresh Contract Auditor. Record each
-attempt and repeat until PASS. Reopen approval only if the repair changes the
-researcher charter. Write `attention.md` only when the run lacks data,
-permission, authority, or an explicit charter decision that agents cannot
-supply. If no safe or lawful repair exists and there is no useful researcher
-action to take, preserve the evidence and mark the work FAILED instead of
-creating a vague attention request.
+attempt and repeat until PASS. Never reopen approval or ask the researcher to
+choose a repair. Missing data, hardware, credentials, licenses, paid services,
+compute, or a safe executable method require an available-data, open-tool,
+simulated, design-only, lower-compute, or completed-with-limitations contract.
+Preserve the unavailable path and its consequence, but do not write
+`attention.md`, pause, fail, or stop the approved run.
 
 Before dispatching any specialist, the lead writes a supervisor-generated
 `role-launches/<agent-task>.json` from native task metadata. It records the
@@ -119,9 +126,10 @@ verify and record it, and rerun only the affected work package. For a conflict,
 preserve the failed environment record and create an isolated role environment;
 do not mutate a working evaluator or another candidate's environment. Try the
 official distribution, an existing compatible tool, and a safe isolated
-alternative when available. Mark work BLOCKED only when an input, permission,
-license, credential, or authority is unavailable and the agent cannot repair
-or replace it within the approved charter.
+alternative when available. Mark an individual specialist receipt BLOCKED only
+when its declared work package cannot proceed. The lead must then repair or
+replace that work package within the approved boundaries; a BLOCKED specialist
+never becomes a paused run or a request for researcher action.
 
 Gate: exact request, approved plan, environment bootstrap, input manifest,
 evaluator contract and manifest, I1 policy, generated verifier manifest and
@@ -252,13 +260,14 @@ A fresh Legitimacy Auditor reviews every completed node for:
 
 Only eligible candidates with finite canonical results may rank. Preserve failed
 and ineligible records. The lead writes each iteration's sanitized feedback and
-records screened, eligible, evaluated, retained, and stopped counts. Stop when
+records screened, eligible, evaluated, retained, and stopped counts. Stop the candidate loop when
 the candidate-node ceiling or compute ceiling is reached, the minimum
 evaluated candidates and plan-defined stable-ranking criterion are satisfied,
 no additional eligible idea exists, evidence saturates, a repeated operational
-failure is recorded, or the researcher stops. A run that has not met the
-minimum valid work remains paused or incomplete; it does not become a
-scientific null.
+failure is recorded, or the researcher cancels. A run that has not met the
+minimum valid work changes to the strongest scientifically honest limited
+design and continues through writing, verification, audit, and delivery; it
+does not become a scientific null or pause for researcher action.
 
 Gate: every indexed node has its idea, exact shared-only manifest, sealed
 snapshots, experimental log, evaluation records, method report, and legitimacy
@@ -538,9 +547,10 @@ outcome. Checkpoint `complete` only after manifest verification passes, then
 run `verify` once more.
 
 Research outcomes are `positive`, `scientific_null`, or
-`completed_with_limitations`. Operationally incomplete work remains `paused`
-or `failed`, never a scientific null. External-audit outcomes use the values
-in Section 8.
+`completed_with_limitations`. After approval, operational failures keep the run
+`running` or `repairing` and become recovered paths or explicit limitations;
+they do not move it to `paused` or `failed`. External-audit outcomes use the
+values in Section 8.
 
 ## Canonical terminology
 

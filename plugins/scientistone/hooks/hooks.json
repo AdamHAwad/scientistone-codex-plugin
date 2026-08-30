@@ -10,6 +10,29 @@
             "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\launch-scientistone-mcp.cmd\" \"%PLUGIN_ROOT%\\hooks\\enforce-role-launch.mjs\""
           }
         ]
+      },
+      {
+        "matcher": "(?:^|__)scientistone_mcp__(?:attach_run_monitor|prepare_role_launch)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/scripts/launch-scientistone-mcp\" \"${PLUGIN_ROOT}/hooks/enforce-study-autonomy.mjs\"",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\launch-scientistone-mcp.cmd\" \"%PLUGIN_ROOT%\\hooks\\enforce-study-autonomy.mjs\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${PLUGIN_ROOT}/scripts/launch-scientistone-mcp\" \"${PLUGIN_ROOT}/hooks/enforce-study-autonomy.mjs\"",
+            "commandWindows": "\"%PLUGIN_ROOT%\\scripts\\launch-scientistone-mcp.cmd\" \"%PLUGIN_ROOT%\\hooks\\enforce-study-autonomy.mjs\"",
+            "timeout": 150,
+            "statusMessage": "Keeping the approved study moving"
+          }
+        ]
       }
     ]
   }

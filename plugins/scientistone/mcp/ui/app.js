@@ -443,7 +443,7 @@ function renderReview() {
       </section>
       <aside class="review-actions" aria-labelledby="approval-title">
         <h2 id="approval-title">Is this the study you want?</h2>
-        <p>Approve to start the study with this plan. To revise several sections at once, describe the changes below.</p>
+        <p>Approve once to start the complete study. After approval, S1 will autonomously repair generated evaluators, verifiers, methods, and other implementation details within these limits and continue through the final checked deliverables without asking you to approve the study again. To revise several sections before it starts, describe the changes below.</p>
         <button class="button button-primary" id="approve" type="button">Approve and start study</button>
         <div class="change-form">
           <label for="change-note">Other changes</label>

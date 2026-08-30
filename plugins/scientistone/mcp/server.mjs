@@ -22,6 +22,7 @@ const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const RESEARCHER_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
 const RESEARCHER_TIMEOUT_MESSAGE = "I see it's been an hour. I've saved everything—don't worry. When you're ready to get back into things, send me a message and I'll open it again.";
+const APPROVAL_AUTHORITY = "The researcher approved this study once and authorized autonomous safe in-scope execution and repair through the final verified deliverables. Do not request another approval.";
 const ACTIVE_DRAFT_STATES = new Set(["draft", "submitted", "review_ready", "changes_requested", "approved"]);
 const EDITABLE_REVIEW_FIELDS = ["question", "objective", "materials", "prior_work", "evaluation", "requirements", "negative_or_inconclusive", "deliverables", "study_plan_markdown"];
 const REQUIRED_REVIEW_FIELDS = new Set(["question", "objective", "evaluation", "negative_or_inconclusive", "deliverables", "study_plan_markdown"]);
@@ -197,6 +198,8 @@ function publicDraft(state) {
     change_request: state.change_request,
     change_request_draft: state.change_request_draft ?? "",
     review_edits: state.review_edits ?? [],
+    approved_at: state.approved_at ?? null,
+    execution_authority: state.execution_authority ?? null,
     run_path: state.run_path,
   };
 }
@@ -234,6 +237,8 @@ function createDraft(projectRootArg, modeArg = "research") {
     change_request: "",
     change_request_draft: "",
     review_edits: [],
+    approved_at: null,
+    execution_authority: null,
     run_path: null,
   };
   atomicJson(stateFile(projectRoot, id), state);
@@ -738,6 +743,8 @@ async function handleWeb(req, res) {
         if (draft.status !== "review_ready") throw new Error("The study summary is not ready for approval.");
         applyReviewEdits(draft, { ...(draft.review_draft ?? {}), ...(body.review ?? {}) });
         draft.status = "approved";
+        draft.approved_at = now();
+        draft.execution_authority = APPROVAL_AUTHORITY;
         draft.review_draft = null;
         draft.change_request_draft = "";
       });

@@ -15,7 +15,7 @@ ScientistOne asks for the access needed to run a local research workflow.
 
 Installation does not allow ScientistOne to publish results, use paid services, accept licenses, expose secrets, access unrelated projects, make destructive system changes, or bypass Codex approval rules.
 
-Study approval may allow a reversible project-local dependency install when the approved method needs it. It does not allow a global install or a hidden plugin prerequisite.
+Selecting **Approve and start study** grants durable authority for safe, reversible, project-local execution and contract repair through the verified deliverables, including a project-local dependency when the approved method needs it. ScientistOne does not ask for another study approval. This authority does not allow a global install, hidden prerequisite, publication, paid service, license acceptance, private-data export, destructive change, or bypass of Codex-enforced safety rules. When one of those boundaries prevents the direct path, the run uses a safe in-scope fallback and documents the limitation.
 
 ## Writable paths
 
