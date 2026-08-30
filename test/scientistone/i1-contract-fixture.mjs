@@ -1,27 +1,11 @@
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { installTestRouting, testRuntime } from "./model-routing-fixture.mjs";
 
-const MODEL_POLICY = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../skills/scientistone/references/model-policy.json");
-
-function installTestRouting(root) {
-  const policy = JSON.parse(fs.readFileSync(MODEL_POLICY, "utf8"));
-  const roles = Object.fromEntries(Object.entries(policy.roles).map(([role, value]) => [role, { tier: value.tier, model: `test-${value.tier}`, reasoning_effort: value.reasoning_effort }]));
-  const file = path.join(root, "contract", "model-routing.json");
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify({ schema_version: 1, roles }, null, 2)}\n`);
-}
-
-function testRuntime(root, role) {
-  const file = path.join(root, "contract", "model-routing.json");
-  const routing = JSON.parse(fs.readFileSync(file, "utf8"));
-  const runtime = routing.roles[role];
-  return { ...runtime, routing_sha256: createHash("sha256").update(fs.readFileSync(file)).digest("hex") };
-}
+// Repository-only fixture; intentionally excluded from the installed plugin.
 
 function i1BuilderInputs(mode) {
-  const inputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/run-config.json", "contract/model-routing.json", "contract/input-manifest.json"];
+  const inputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "environment/model-routing.json", "contract/run-config.json", "contract/input-manifest.json"];
   inputs.push(mode === "research" ? "contract/evaluator-contract.md" : "contract/source-bundle-manifest.json");
   if (mode === "research") inputs.push("contract/evaluator-manifest.json");
   return inputs;

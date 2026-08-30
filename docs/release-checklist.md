@@ -13,6 +13,9 @@ marketplace version.
 - [ ] `npm run package:plugin` succeeds and the result matches `docs/plugin-bundle.md`
 - [ ] The generated bundle contains no tests, caches, development files, secrets, run output, or registered app mapping
 - [ ] A fresh Codex profile can add the repository marketplace and install `scientistone@scientistone`
+- [ ] The opt-in capacity preflight preserves unrelated config, backs up and
+      validates atomically, enforces one restart, and never reprompts after a
+      decline or managed result
 
 ## Bundled Codex MCP
 

@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { contractCheckpoint, contractCopy, contractJson, contractNewRun, contractPut, contractRead, contractRun, contractThrough, externalAudit, externalContract } from "./coe-contract.test.mjs";
 import { installTestRouting, seedI1Audit, seedI1Contract, testRuntime } from "./i1-contract-fixture.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../plugins/scientistone");
 const COE = path.join(ROOT, "skills", "scientistone", "scripts", "coe.mjs");
 
 function run(...args) {
@@ -70,9 +70,21 @@ function selectedTreeHash(root, relative) {
   return digest.digest("hex");
 }
 
+test("runs retain the paper-compatible pilot profile by default", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-default-profile-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const configured = run("configure", root);
+  assert.equal(configured.status, 0, configured.stderr);
+  const value = JSON.parse(fs.readFileSync(path.join(root, "contract/run-config.json"), "utf8"));
+  assert.equal(value.search_profile, "pilot");
+  assert.equal(value.mode, "research");
+  assert.equal(value.budgets.candidate_node_ceiling, 4);
+  assert.equal(value.budgets.audit_panel_size, 3);
+});
+
 function checkpoint(root, phase, outputs, roles) {
   if (phase !== "complete") {
-    const contractInputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/run-config.json", "contract/model-routing.json", "contract/input-manifest.json"];
+    const contractInputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "environment/model-routing.json", "contract/run-config.json", "contract/input-manifest.json"];
     if (fs.existsSync(path.join(root, "contract", "source-bundle-manifest.json"))) contractInputs.push("contract/source-bundle-manifest.json");
     const mode = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8")).mode;
     if (mode === "research") {
@@ -118,15 +130,18 @@ function checkpoint(root, phase, outputs, roles) {
     }
     outputs = [...outputs, ...receipts];
   }
-  const args = ["checkpoint", root, phase, "--input", "study-plan.md"];
+  const flags = ["--input", "study-plan.md"];
   if (phase === "contract") {
-    args.push("--input", "request.md", "--input", "environment/bootstrap.json", "--input", "contract/run-config.json", "--input", "contract/model-routing.json", "--input", "contract/input-manifest.json");
-    if (fs.existsSync(path.join(root, "contract", "source-bundle-manifest.json"))) args.push("--input", "contract/source-bundle-manifest.json");
-    else args.push("--input", "contract/evaluator-contract.md", "--input", "contract/evaluator-manifest.json");
-    args.push("--input", "contract/i1-verification-policy.json", "--input", "private/evaluator/i1-verifier");
+    flags.push("--input", "request.md", "--input", "environment/bootstrap.json", "--input", "environment/model-routing.json", "--input", "contract/run-config.json", "--input", "contract/input-manifest.json");
+    if (fs.existsSync(path.join(root, "contract", "source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json");
+    else flags.push("--input", "contract/evaluator-contract.md", "--input", "contract/evaluator-manifest.json");
+    flags.push("--input", "contract/i1-verification-policy.json", "--input", "private/evaluator/i1-verifier");
   }
-  for (const output of outputs) args.push("--output", output);
-  const result = run(...args);
+  for (const output of outputs) flags.push("--output", output);
+  const preflight = run("preflight", root, phase, ...flags);
+  assert.equal(preflight.status, 0, preflight.stderr);
+  assert.equal(fs.existsSync(path.join(root, "receipts", `${phase}.json`)), false);
+  const result = run("checkpoint", root, phase, ...flags);
   assert.equal(result.status, 0, result.stderr);
 }
 

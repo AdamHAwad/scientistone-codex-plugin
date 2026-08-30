@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { RESEARCHER_TIMEOUT_MESSAGE, RESEARCHER_WAIT_TIMEOUT_MS, callTool, handleMessage, monitorSnapshot, stop, updateDraft, waitForResearcher } from "../mcp/server.mjs";
+import { RESEARCHER_TIMEOUT_MESSAGE, RESEARCHER_WAIT_TIMEOUT_MS, callTool, clearMonitorIntegrityCache, handleMessage, monitorSnapshot, stop, updateDraft, waitForResearcher } from "../../plugins/scientistone/mcp/server.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../plugins/scientistone");
 const COE = path.join(ROOT, "skills", "scientistone", "scripts", "coe.mjs");
 const MCP = path.join(ROOT, "mcp", "server.mjs");
 
@@ -67,8 +67,11 @@ test("the bundled MCP exposes the intake and monitor tools", async () => {
   assert.equal(initialized.protocolVersion, "2025-11-25");
   assert.deepEqual(initialized.capabilities, { tools: { listChanged: false } });
   const listed = await handleMessage({ jsonrpc: "2.0", id: 2, method: "tools/list" });
-  assert.deepEqual(listed.tools.map((item) => item.name), ["start_study_setup", "read_study_setup", "wait_for_researcher", "publish_study_review", "prepare_role_launch", "attach_run_monitor", "open_run_monitor"]);
+  assert.deepEqual(listed.tools.map((item) => item.name), ["check_parallel_capacity", "decline_parallel_capacity", "approve_parallel_capacity", "start_study_setup", "read_study_setup", "wait_for_researcher", "publish_study_review", "prepare_role_launch", "attach_run_monitor", "open_run_monitor"]);
   assert.deepEqual(Object.fromEntries(listed.tools.map((item) => [item.name, item.annotations])), {
+    check_parallel_capacity: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    decline_parallel_capacity: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    approve_parallel_capacity: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
     start_study_setup: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     read_study_setup: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     wait_for_researcher: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
@@ -79,6 +82,88 @@ test("the bundled MCP exposes the intake and monitor tools", async () => {
   });
   assert.equal(listed.tools.find((item) => item.name === "start_study_setup")._meta.ui, undefined);
   assert.ok(listed.tools.find((item) => item.name === "publish_study_review").inputSchema.properties.review.required.includes("file_assignments"));
+});
+
+test("the fixed-purpose capacity tools persist a decision without project or study input", async (t) => {
+  const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-mcp-capacity-"));
+  t.after(() => fs.rmSync(codexHome, { recursive: true, force: true }));
+  const configFile = path.join(codexHome, "config.toml");
+  put(codexHome, "config.toml", "model = \"test\"\n");
+  const read = {
+    config: { agents: { max_concurrent_threads_per_session: 4 } },
+    origins: {},
+    layers: [{ name: { type: "user", profile: null, file: configFile }, version: "v1", config: {} }],
+  };
+  const configRequest = async (method) => {
+    assert.equal(method, "config/read");
+    return read;
+  };
+  const checked = await callTool("check_parallel_capacity", {}, { codexHome, configRequest, instanceMarker: "instance-a" });
+  assert.equal(checked.action, "prompt");
+  assert.match(checked.confirmation_token, /^[0-9a-f-]{36}$/);
+  await assert.rejects(() => callTool("approve_parallel_capacity", { confirmation_token: "00000000-0000-0000-0000-000000000000" }, { codexHome, configRequest }), /fresh one-use/);
+  const declined = await callTool("decline_parallel_capacity", {}, { codexHome, configRequest, instanceMarker: "instance-a" });
+  assert.equal(declined.reason, "declined");
+  assert.equal((await callTool("check_parallel_capacity", {}, { codexHome, configRequest, instanceMarker: "instance-a" })).reason, "declined");
+});
+
+test("capacity approval requires and consumes the one-use token", async (t) => {
+  const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-mcp-capacity-approve-"));
+  t.after(() => fs.rmSync(codexHome, { recursive: true, force: true }));
+  const configFile = path.join(codexHome, "config.toml");
+  put(codexHome, "config.toml", "model = \"test\"\n");
+  let capacity = 4;
+  let version = 1;
+  const configRequest = async (method, params) => {
+    if (method === "config/read") return {
+      config: { agents: { max_concurrent_threads_per_session: capacity } },
+      origins: {},
+      layers: [{ name: { type: "user", profile: null, file: configFile }, version: `v${version}`, config: {} }],
+    };
+    assert.equal(method, "config/batchWrite");
+    assert.equal(params.expectedVersion, `v${version}`);
+    capacity = params.edits.find((edit) => edit.keyPath === "agents.max_concurrent_threads_per_session").value;
+    version += 1;
+    fs.appendFileSync(configFile, "\n[agents]\nmax_concurrent_threads_per_session = 16\n");
+    return { status: "ok", filePath: configFile, version: `v${version}` };
+  };
+  const checked = await callTool("check_parallel_capacity", {}, { codexHome, configRequest, instanceMarker: "instance-a" });
+  const applied = await callTool("approve_parallel_capacity", { confirmation_token: checked.confirmation_token }, { codexHome, configRequest, instanceMarker: "instance-a" });
+  assert.equal(applied.action, "restart_required");
+  await assert.rejects(() => callTool("approve_parallel_capacity", { confirmation_token: checked.confirmation_token }, { codexHome, configRequest }), /fresh one-use/);
+});
+
+test("monitor verification is single-flight and caches only a non-authoritative unchanged snapshot", async (t) => {
+  clearMonitorIntegrityCache();
+  t.after(() => clearMonitorIntegrityCache());
+  const run = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-monitor-cache-"));
+  t.after(() => fs.rmSync(run, { recursive: true, force: true }));
+  const record = { id: "monitor-test", mode: "research", state: "running", outcome: null, phase: "contract", updated_at: "2026-08-30T12:00:00Z", attention: null, last_checkpoint: null, checkpoints: {} };
+  put(run, "run.json", `${JSON.stringify(record)}\n`);
+  let calls = 0;
+  const verifyRunner = async () => {
+    calls += 1;
+    await new Promise((resolve) => setImmediate(resolve));
+    return { ok: true, record };
+  };
+
+  const [first, collapsed] = await Promise.all([
+    monitorSnapshot(run, { verifyRunner, now: 1_000, verifyTtlMs: 5_000 }),
+    monitorSnapshot(run, { verifyRunner, now: 1_000, verifyTtlMs: 5_000 }),
+  ]);
+  assert.equal(calls, 1);
+  assert.equal(first.integrity.authoritative, false);
+  assert.equal(collapsed.integrity.authoritative, false);
+  const cached = await monitorSnapshot(run, { verifyRunner, now: 1_001, verifyTtlMs: 5_000 });
+  assert.equal(calls, 1);
+  assert.equal(cached.integrity.cached, true);
+
+  record.updated_at = "2026-08-30T12:00:01Z";
+  put(run, "run.json", `${JSON.stringify(record)}\n`);
+  const refreshed = await monitorSnapshot(run, { verifyRunner, now: 1_002, verifyTtlMs: 5_000 });
+  assert.equal(calls, 2);
+  assert.equal(refreshed.integrity.cached, false);
+  assert.match(refreshed.integrity.message, /Final delivery and task stop always run a fresh verifier/);
 });
 
 test("the stdio server emits only newline-delimited JSON-RPC and exits with its client", async () => {

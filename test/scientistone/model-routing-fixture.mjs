@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createRoutingRecord, expectedRoleRuntime, loadModelPolicy } from "../mcp/model-routing.mjs";
+import { createRoutingRecord, expectedRoleRuntime, loadModelPolicy } from "../../plugins/scientistone/mcp/model-routing.mjs";
 
 const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const TEST_CATALOG = {

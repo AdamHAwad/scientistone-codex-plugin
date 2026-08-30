@@ -193,18 +193,18 @@ The ledger utility creates this record:
   "schema_version": 1,
   "id": "20260817T153000Z-example-question",
   "mode": "research",
-  "search_profile": "standard",
-  "audit_judge_count": 5,
+  "search_profile": "pilot",
+  "audit_judge_count": 3,
   "budgets": {
-    "idea_ceiling": 18,
-    "minimum_eligible_ideas": 5,
-    "candidate_node_ceiling": 25,
-    "minimum_evaluated_candidates": 5,
-    "evaluation_ceiling_per_node": 4,
-    "ablation_ceiling": 4,
+    "idea_ceiling": 4,
+    "minimum_eligible_ideas": 2,
+    "candidate_node_ceiling": 4,
+    "minimum_evaluated_candidates": 2,
+    "evaluation_ceiling_per_node": 2,
+    "ablation_ceiling": 2,
     "minimum_valid_ablations": 1,
-    "canonical_repetitions": 5,
-    "audit_panel_size": 5
+    "canonical_repetitions": 3,
+    "audit_panel_size": 3
   },
   "created_at": "2026-08-17T15:30:00.000Z",
   "updated_at": "2026-08-17T15:30:00.000Z",
@@ -310,11 +310,12 @@ never assume a plugin-root sibling path.
 Before the independent contract audit, create immutable structured mode/profile parameters:
 
 ```sh
-<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs configure <run> standard research
+<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs configure <run> pilot research
 ```
 
-Pilot is the default; standard requires explicit researcher approval. Both
-ceiling/minimum profiles are built in. For a custom profile,
+Pilot remains the paper-compatible default and its smaller ceilings must be
+disclosed. Standard is available only when the researcher explicitly approves
+its larger compute budgets. Both ceiling/minimum profiles are built in. For a custom profile,
 first write `contract/custom-profile.json` with every integer field shown in
 `run.json` and the scientific reason in `study-plan.md`, then pass that
 run-relative path as the final argument. The auditor reads the fully expanded
@@ -324,17 +325,69 @@ run-relative path as the final argument. The auditor reads the fully expanded
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs init <absolute-run-directory>
 ```
 
+## `environment/task-ledger.json`
+
+The executable scheduler reads this run-local queue. `capacity` is the usable
+native-agent limit capped at 16. Every task has a stable ID, exact real
+predecessors, one or more exclusive run-relative output trees, and any shared
+evaluator resources it consumes. Each resource freezes `parallel_safe` and a
+positive `max_concurrency`; false always means a limit of one.
+
+```json
+{
+  "schema_version": 1,
+  "capacity": 16,
+  "resources": [
+    { "id": "canonical-evaluator", "parallel_safe": true, "max_concurrency": 2 }
+  ],
+  "tasks": [
+    {
+      "id": "candidate.001.evaluate.001",
+      "status": "pending",
+      "predecessors": ["candidate.001.develop.001"],
+      "outputs": ["search/candidates/001/evaluations/001"],
+      "resource_ids": ["canonical-evaluator"]
+    }
+  ]
+}
+```
+
+Valid statuses are `pending`, `running`, `complete`, `failed`, and `blocked`.
+Before dispatch and after first completion, invoke:
+
+```sh
+<resolved-node-path> <scientistone-skill-root>/scripts/scheduler.mjs ready <run>/environment/task-ledger.json
+```
+
+Only returned IDs may launch. Update `running` after successful dispatch and
+`complete` only after the hash-bound role receipt passes. Completion order
+never changes IDs, seeds, rankings, or collation.
+
 Hash each frozen input for `contract/input-manifest.json` with the same path-bound SHA-256 algorithm used by receipts:
 
 ```sh
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs hash <run> inputs/shared/observations.csv
 ```
 
-Checkpoint a passed phase. Every path is run-relative and may name a file or directory:
+Preflight a finished phase before downstream work. It runs the same artifact,
+role-coverage, access, lineage, metric, and manifest gates without writing a
+receipt or advancing `run.json`:
+
+```sh
+<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs preflight <run> contract \
+  --input request.md --input study-plan.md --input environment/bootstrap.json \
+  --input environment/model-routing.json \
+  --input contract/run-config.json --input contract/input-manifest.json \
+  --output contract --output role-receipts/<contract-auditor-task>.json
+```
+
+Checkpoint only after that command passes. Every path is run-relative and may
+name a file or directory:
 
 ```sh
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs checkpoint <run> contract \
   --input request.md --input study-plan.md --input environment/bootstrap.json \
+  --input environment/model-routing.json \
   --input contract/run-config.json --input contract/input-manifest.json \
   --output contract --output role-receipts/<contract-auditor-task>.json
 ```
@@ -372,11 +425,28 @@ Verify at resume, before audit, and before completion:
 
 `verify` checks the exact request and plan hashes, shared/evaluator-only input locations and hashes, individual role receipts, required descendants, every promoted input/output and receipt link, superseded evidence, audit-panel counts/majorities, final manifest hashes, required deliverables, and complete-state consistency. A nonzero exit blocks promotion.
 
+For an interrupted unfinished phase, validate one completed work package before
+reusing it:
+
+```sh
+<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs verify-role <run> role-receipts/<agent-task>.json
+```
+
+This is read-only. It accepts only a COMPLETE/PASS receipt from the current
+predecessor whose logical task, attempt, contract/charter revision, role
+contract, routing, declared input/output hashes, privacy boundary, and schema
+still match. It rejects legacy unbound receipts, changed artifacts, already
+promoted work, and duplicate COMPLETE/PASS logical samples. Reuse the accepted
+receipt as its original sample; never count it as a new repetition or vote.
+
 ## Phase receipt requirements
 
 The checkpoint command accepts domain-specific extra artifacts, but these minimum outputs must exist and be included; promoting only an ancestor does not excuse a missing descendant:
 
-The contract receipt must bind `environment/bootstrap.json` as an exact input.
+The contract receipt must bind `environment/bootstrap.json` and the canonical
+`environment/model-routing.json` as exact inputs. The routing record contains
+the frozen policy, catalog, tiers, and their validated hashes; do not create a
+second routing schema under `contract/`.
 
 Each phase checkpoint must also include the individual `role-receipts/<agent-task>.json` files for every specialist whose work it promotes. Pass the individual files, not the whole growing `role-receipts/` directory.
 
@@ -472,16 +542,31 @@ Every specialist writes a unique `role-receipts/<agent-task>.json` named by the 
   "agent_task": "evaluator_i02_b03_v02",
   "launch_record": "role-launches/evaluator_i02_b03_v02.json",
   "launch_record_sha256": "<hash>",
+  "logical_task_name": "evaluator_i02_b03_v02",
+  "attempt": 1,
+  "contract_revision": 1,
+  "charter_revision": 1,
+  "predecessor": { "path": "receipts/investigation.json", "sha256": "<hash>" },
+  "model_routing_sha256": "<hash>",
+  "role_contract_sha256": "<hash>",
+  "gate_schema_version": 1,
   "model": "<actual model id or declared-by-role>",
   "reasoning_effort": "<actual effort or declared-by-role>",
   "fork_turns": "none",
   "started_at": "<ISO-8601>",
   "completed_at": "<ISO-8601>",
   "declared_inputs": ["study-plan.md", "discovery/nodes/i02-b03/snapshots/v02"],
+  "input_artifacts": [
+    { "path": "study-plan.md", "sha256": "<hash>" },
+    { "path": "discovery/nodes/i02-b03/snapshots/v02", "sha256": "<hash>" }
+  ],
   "allowed_external_sources": [],
   "external_results_used": [],
   "environment_changes": [],
   "outputs": ["discovery/nodes/i02-b03/evaluations/v02.json"],
+  "output_artifacts": [
+    { "path": "discovery/nodes/i02-b03/evaluations/v02.json", "sha256": "<hash>" }
+  ],
   "undeclared_inputs_accessed": [],
   "limitations": [],
   "execution_status": "COMPLETE",
@@ -532,11 +617,22 @@ metadata:
   "task_name": "evaluator_i02_b03_v02_attempt_2",
   "logical_task_name": "evaluator_i02_b03_v02",
   "attempt": 2,
+  "contract_revision": 1,
+  "charter_revision": 1,
+  "predecessor": { "path": "receipts/discovery.json", "sha256": "<hash>" },
   "role": "evaluator",
   "fork_turns": "none",
+  "model_tier": "efficient",
   "model": "<actual model>",
   "reasoning_effort": "<actual effort>",
+  "model_routing_sha256": "<hash>",
+  "role_contract_sha256": "<hash>",
+  "gate_schema_version": 1,
   "declared_inputs": ["study-plan.md", "selection/selected"],
+  "input_artifacts": [
+    { "path": "study-plan.md", "sha256": "<hash>" },
+    { "path": "selection/selected", "sha256": "<hash>" }
+  ],
   "allowed_external_sources": [],
   "declared_outputs": ["selection/canonical-evaluation.json"],
   "started_at": "<ISO-8601>"

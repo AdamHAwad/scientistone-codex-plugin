@@ -10,11 +10,19 @@ The full workflow needs a Codex surface with a writable project, terminal comman
 
 ## Bundled MCP
 
-The MCP is implemented with Node.js standard-library modules and has no npm runtime dependencies. It communicates with Codex over stdio, binds a browser server to a random `127.0.0.1` port, and reads or writes only the active project's intake and run files.
+The MCP is implemented with Node.js standard-library modules and has no npm
+runtime dependencies. It communicates with Codex over stdio and binds a browser
+server to a random `127.0.0.1` port. Study content is read or written only in
+the active project. Before intake, its fixed-purpose capacity tools may use
+Codex App Server's local configuration API and write only the documented
+backup and preference files after explicit opt-in.
 
 The browser UI bundles its HTML, CSS, JavaScript, logo, icon data, and font. It has no remote image, font, frame, media, analytics, beacon, WebSocket, or upload destination.
 
-The optional model-routing tool may execute the Codex CLI already supplied by Codex to read the local model catalog. It does not contact a ScientistOne service.
+The optional model-routing tool may execute the Codex CLI already supplied by
+Codex to read the local model catalog. The capacity preflight uses that same
+bundled CLI's App Server `config/read` and versioned `config/batchWrite`
+methods. Neither contacts a ScientistOne service.
 
 ## Study dependencies
 

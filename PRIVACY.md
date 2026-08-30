@@ -18,6 +18,13 @@ OpenAI separately processes Codex conversations, tool calls, and files under the
 
 ScientistOne creates intake and run files in the researcher's active project. The researcher controls that project, its backups, its Git history, and deletion.
 
+Before any study intake, ScientistOne may locally check Codex's parallel-agent
+limit. If the user explicitly opts in, it stores an exact private config backup
+and a small preference record under the local Codex home. The record contains
+only setup state, hashes, and a relative backup name; it contains no research
+question, selected file, citation, result, or raw desktop-instance path. A
+decline is remembered locally so the plugin does not ask again.
+
 ## Changes and contact
 
 A future feature that receives research content, creates accounts, stores state, or adds telemetry needs a new privacy review and policy before release. Use the channel in [SUPPORT.md](SUPPORT.md) for questions.

@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../plugins/scientistone");
 const REFERENCES = path.join(ROOT, "skills", "scientistone", "references");
 const protocol = fs.readFileSync(path.join(REFERENCES, "protocol.md"), "utf8");
 const guide = fs.readFileSync(path.join(REFERENCES, "i1-verification.md"), "utf8");

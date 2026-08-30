@@ -20,6 +20,7 @@ THIRD_PARTY_NOTICES.md
 assets/logo.svg
 assets/logo.png
 hooks/enforce-role-launch.mjs
+hooks/enforce-study-autonomy.mjs
 hooks/hooks.json
 licenses/NEWSREADER-LICENSE
 licenses/PHOSPHOR-LICENSE
@@ -42,7 +43,9 @@ skills/scientistone/references/intake.md
 skills/scientistone/references/model-policy.json
 skills/scientistone/references/protocol.md
 skills/scientistone/references/roles.md
+skills/scientistone/scripts/capacity-preflight.mjs
 skills/scientistone/scripts/coe.mjs
+skills/scientistone/scripts/scheduler.mjs
 skills/scientistone-monitor/SKILL.md
 skills/scientistone-monitor/agents/openai.yaml
 skills/scientistone-monitor/assets/logo.svg
@@ -63,5 +66,8 @@ contributor documents, explanatory images, tests, CI configuration,
 package-manager metadata, and maintainer scripts. Those files support discovery,
 development, and verification but are not part of the installed plugin bundle.
 
-The packaging allowlist excludes tests, caches, secrets, local run output,
-development tools, `.DS_Store`, and retired compatibility code.
+Repository-only tests live under `test/scientistone/`, outside the marketplace
+source. The packaging script compares every source file to the exact allowlist
+before copying, so an ignored or newly added file cannot enter an install by
+accident. It excludes tests, caches, secrets, local run output, development
+tools, `.DS_Store`, and retired compatibility code.

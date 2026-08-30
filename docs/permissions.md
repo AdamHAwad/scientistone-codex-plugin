@@ -10,6 +10,8 @@ ScientistOne asks for the access needed to run a local research workflow.
 - Use research sources when the task, Codex permissions, and role contract allow them.
 - Run experiments, validation, local environments, and document builds in the active project.
 - Assign bounded work to native Codex subagents.
+- Before intake, read Codex's parallel-agent capacity and, only after explicit
+  opt-in, back up and update that one local setting to 16.
 
 ## What installation does not allow
 
@@ -19,4 +21,11 @@ Selecting **Approve and start study** grants durable authority for safe, reversi
 
 ## Writable paths
 
-Intake state belongs under `.scientistone/intake/`, and run state belongs under `scientistone-runs/`, both in the active project. Temporary files and local environments should stay inside the run when possible. The publisher operates no remote data service.
+Intake state belongs under `.scientistone/intake/`, and run state belongs under
+`scientistone-runs/`, both in the active project. The optional one-time
+capacity preflight writes only `CODEX_HOME/config.toml`, an exact private backup
+beside it, and `CODEX_HOME/scientistone/capacity-preflight.json`. It preserves
+unrelated settings, validates before success, rolls back safely, and does not
+follow symlink-managed paths. Temporary study files and local environments
+should stay inside the run when possible. The publisher operates no remote
+data service.

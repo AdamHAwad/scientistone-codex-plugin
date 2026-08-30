@@ -7,8 +7,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { installTestRouting, seedI1Audit, seedI1Contract, testRuntime } from "./i1-contract-fixture.mjs";
+import { TEST_CATALOG } from "./model-routing-fixture.mjs";
+import { prepareRoleLaunch } from "../../plugins/scientistone/mcp/model-routing.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../plugins/scientistone");
 const COE = path.join(ROOT, "skills", "scientistone", "scripts", "coe.mjs");
 const BUDGETS = { idea_ceiling: 2, minimum_eligible_ideas: 1, candidate_node_ceiling: 1, minimum_evaluated_candidates: 1, evaluation_ceiling_per_node: 1, ablation_ceiling: 1, minimum_valid_ablations: 1, canonical_repetitions: 2, audit_panel_size: 3 };
 
@@ -54,10 +56,11 @@ function role(root, { role: name, task = name, inputs = ["study-plan.md"], outpu
   return `role-receipts/${task}.json`;
 }
 function checkpointResult(root, phase, outputs, roles = []) {
-  const args = ["checkpoint", root, phase, "--input", "study-plan.md"];
-  if (phase === "contract") { for (const item of ["request.md", "environment/bootstrap.json", "contract/run-config.json", "contract/model-routing.json", "contract/input-manifest.json"]) args.push("--input", item); if (fs.existsSync(path.join(root, "contract/source-bundle-manifest.json"))) args.push("--input", "contract/source-bundle-manifest.json"); else for (const item of ["contract/evaluator-contract.md", "contract/evaluator-manifest.json"]) args.push("--input", item); for (const item of ["contract/i1-verification-policy.json", "private/evaluator/i1-verifier"]) if (fs.existsSync(path.join(root, item))) args.push("--input", item); }
-  for (const output of [...outputs, ...roles.map((item) => role(root, item))]) args.push("--output", output);
-  return run(...args);
+  const flags = ["--input", "study-plan.md"];
+  if (phase === "contract") { for (const item of ["request.md", "environment/bootstrap.json", "environment/model-routing.json", "contract/run-config.json", "contract/input-manifest.json"]) flags.push("--input", item); if (fs.existsSync(path.join(root, "contract/source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json"); else for (const item of ["contract/evaluator-contract.md", "contract/evaluator-manifest.json"]) flags.push("--input", item); for (const item of ["contract/i1-verification-policy.json", "private/evaluator/i1-verifier"]) if (fs.existsSync(path.join(root, item))) flags.push("--input", item); }
+  for (const output of [...outputs, ...roles.map((item) => role(root, item))]) flags.push("--output", output);
+  const checked = run("preflight", root, phase, ...flags);
+  return checked.status === 0 ? run("checkpoint", root, phase, ...flags) : checked;
 }
 function checkpoint(root, phase, outputs, roles = []) { const result = checkpointResult(root, phase, outputs, roles); assert.equal(result.status, 0, result.stderr); }
 function newRun(t, mode = "research", environmentSource = "existing") { const root = fs.mkdtempSync(path.join(os.tmpdir(), `scientistone-${mode}-`)); t.after(() => fs.rmSync(root, { recursive: true, force: true })); put(root, "request.md", "Approved request.\n"); put(root, "study-plan.md", "# Approved plan\n"); bootstrap(root, mode, environmentSource); json(root, "contract/custom-profile.json", BUDGETS); assert.equal(run("configure", root, "custom", mode, "contract/custom-profile.json").status, 0); assert.equal(run("init", root).status, 0); installTestRouting(root); return root; }
@@ -93,9 +96,12 @@ function discover(root, change = null, receipt = {}) {
   return checkpointResult(root, "discovery", ["discovery"], roles);
 }
 
-function select(root, changed = false) {
+function select(root, changed = false, defect = null) {
   const source = "discovery/nodes/n1/snapshots/v1"; put(root, "selection/selection.md"); put(root, "selection/selection-audit.md", "Overall verdict: PASS\n"); copy(root, `${source}/method.txt`, "selection/selected/method.txt"); json(root, "selection/selected/manifest.json", { files: ["method.txt"] }); const sourceHash = treeHash(path.join(root, source), ["method.txt"]); const selectedHash = treeHash(path.join(root, "selection/selected"), ["method.txt"]); json(root, "selection/lineage.json", { source_node_id: "n1", source_snapshot_path: source, source_snapshot_sha256: sourceHash, selected_snapshot_sha256: selectedHash, legitimacy_verdict_path: "discovery/nodes/n1/legitimacy-audit.md", evaluation_path: "discovery/nodes/n1/evaluations/v1.json", metric_name: "score", metric_direction: "maximize", rank: 1, tie_break_evidence: [] }); if (changed) put(root, "selection/selected/method.txt", "different\n"); const raw = evaluation(root, "selection/selected", "selection/canonical-evaluation.json", "canonical", true, [1, 1]);
-  return checkpointResult(root, "selection", ["selection"], [{ role: "selection_analyst", inputs: ["study-plan.md", "discovery/index.json"], outputs: ["selection/selection.md", "selection/lineage.json", "selection/selected"] }, { role: "selection_auditor", inputs: ["study-plan.md", "discovery/index.json", "selection/selection.md", "selection/lineage.json"], outputs: ["selection/selection-audit.md"] }, { role: "evaluator", task: "canonical_evaluator", inputs: ["study-plan.md", "selection/selected", ...evaluatorInputs()], outputs: ["selection/canonical-evaluation.json", raw] }]);
+  if (defect === "metric") { const value = read(root, "selection/canonical-evaluation.json"); value.metric.unit = "wrong-units"; json(root, "selection/canonical-evaluation.json", value); }
+  const canonicalInputs = ["study-plan.md", "selection/selected", ...evaluatorInputs()];
+  if (defect === "downstream") { put(root, "paper/claims.jsonl", "{}\n"); canonicalInputs.push("paper/claims.jsonl"); }
+  return checkpointResult(root, "selection", ["selection"], [{ role: "selection_analyst", inputs: ["study-plan.md", "discovery/index.json"], outputs: ["selection/selection.md", "selection/lineage.json", "selection/selected"] }, { role: "selection_auditor", inputs: ["study-plan.md", "discovery/index.json", "selection/selection.md", "selection/lineage.json"], outputs: ["selection/selection-audit.md"] }, { role: "evaluator", task: "canonical_evaluator", inputs: canonicalInputs, outputs: ["selection/canonical-evaluation.json", raw] }]);
 }
 function ablate(root) { json(root, "ablation/plan.json", { ablations: [{ id: "a1" }] }); put(root, "ablation/variants/a1/method.txt"); const raw = evaluation(root, "ablation/variants/a1", "ablation/evaluations/a1.json", "ablation"); json(root, "ablation/results.json", { ablations: [{ id: "a1", status: "valid" }] }); put(root, "ablation/report.md"); checkpoint(root, "ablation", ["ablation"], [{ role: "ablation_designer", inputs: ["study-plan.md", "selection/selected"], outputs: ["ablation/plan.json"] }, { role: "ablation_implementer", inputs: ["study-plan.md", "selection/selected", "ablation/plan.json"], outputs: ["ablation/variants/a1"] }, { role: "evaluator", task: "ablation_evaluator", inputs: ["study-plan.md", "ablation/variants", ...evaluatorInputs()], outputs: ["ablation/evaluations/a1.json", raw] }, { role: "ablation_analyst", inputs: ["study-plan.md", "ablation/plan.json", "ablation/evaluations", "ablation/results.json"], outputs: ["ablation/results.json", "ablation/report.md"] }]); }
 const tagged = () => ["\\documentclass{article}", "\\newcommand{\\coe}[1]{}", "\\begin{document}", "Study score 1 \\coe{C1}; prior score 2 with \\& escape \\coe{C2}.", "\\caption{Method. \\coe{C3}}", "\\begin{tabular}{c}Conclusion \\coe{C4} \\\\ \\end{tabular}", "\\end{document}", ""].join("\n");
@@ -203,11 +209,121 @@ test("only COMPLETE plus PASS launches promote, and output ownership is exclusiv
 test("external-source permissions are bound to the supervisor launch", (t) => { const root = through(t, "investigation"); assert.match(discover(root, null, { allowed_external_sources: [], receipt_allowed_external_sources: ["web search"] }).stderr, /Allowed external sources.*differ from supervisor launch record/); });
 test("evaluator access, outputs, and feedback are sanitized", (t) => { const leak = through(t, "investigation"); assert.match(discover(leak, "leak").stderr, /evaluator-only input/); const exposed = through(t, "investigation"); assert.match(discover(exposed, "expose").stderr, /Unknown candidate-visible field.*heldout_rows/); const root = contract(t); put(root, "private/evaluator/feedback.json", JSON.stringify({ schema_version: 1, execution_status: "COMPLETE", public_metric: { name: "score", value: 1, unit: "points", direction: "maximize" }, safe_failure_category: null, candidate_visible_note: "Done." })); assert.equal(run("sanitize-feedback", root, "private/evaluator/feedback.json", "discovery/nodes/n1/feedback/v1.json").status, 0); put(root, "private/evaluator/bad.json", JSON.stringify({ schema_version: 1, execution_status: "COMPLETE", public_metric: null, safe_failure_category: null, candidate_visible_note: "Done.", heldout_rows: [] })); assert.match(run("sanitize-feedback", root, "private/evaluator/bad.json", "discovery/nodes/n1/feedback/bad.json").stderr, /heldout_rows/); });
 test("selection lineage is byte-bound to an eligible sealed snapshot", (t) => { const root = through(t, "discovery"); assert.match(select(root, true).stderr, /differs from lineage source/); });
+test("selection preflight binds the canonical metric to frozen I1 policy and rejects downstream inputs", (t) => { const metric = through(t, "discovery"); assert.match(select(metric, false, "metric").stderr, /does not match exactly one frozen primary I1 metric/); assert.equal(fs.existsSync(path.join(metric, "receipts/selection.json")), false); const downstream = through(t, "discovery"); assert.match(select(downstream, false, "downstream").stderr, /declares downstream input paper\/claims\.jsonl while producing selection evidence/); assert.equal(fs.existsSync(path.join(downstream, "receipts/selection.json")), false); });
 test("grounding, claim inventory, exact sentences, evidence resolution, cycles, and study/prior-work sources are enforced", (t) => { const wrong = through(t, "ablation"); assert.match(write(wrong, true).stderr, /grounding ratio is inconsistent/); const base = through(t, "writing"); for (const [change, expected] of [["missing", /claim inventory differs/], ["extra", /claim inventory differs/], ["sentence", /does not occur/], ["mapping", /differs from its claim record/], ["target", /Missing artifact/], ["cycle", /Circular inference/], ["study_source", /canonical or ablation metric/]]) { const clone = fs.mkdtempSync(path.join(os.tmpdir(), "coe-claims-")); t.after(() => fs.rmSync(clone, { recursive: true, force: true })); fs.cpSync(base, clone, { recursive: true }); assert.match(verifyPhase(clone, change).stderr, expected); } assert.equal(verifyPhase(base).status, 0); });
 test("substantive audits, visual inspection, reproduction, and reporter ownership reject bare or overbroad records", (t) => { const base = through(t, "verification"); for (const [change, expected] of [["i1", /Malformed task-adaptive I1 aggregate/], ["i3", /I3.*non-empty entries/], ["claim", /total_numerical_claims/], ["vote", /Malformed substantive I2 vote/], ["report", /Audit report is empty/], ["reproduction", /Reproduction guide/], ["reporter-extra", /Audit reporter owns an invalid report set/]]) { const clone = fs.mkdtempSync(path.join(os.tmpdir(), "coe-audit-")); t.after(() => fs.rmSync(clone, { recursive: true, force: true })); fs.cpSync(base, clone, { recursive: true }); assert.match(audit(clone, change).stderr, expected); } const visual = through(t, "writing"); assert.match(verifyPhase(visual, "visual").stderr, /must record every checked page/); });
 test("external bundles use arbitrary names and reject empty, unassessable, or falsely PASS inputs", (t) => { const root = externalContract(t); assert.equal(externalAudit(root).status, 0); copy(root, "contract/source-bundle-manifest.json", "deliverables/source-bundle-manifest.json"); copy(root, "audit/report.md", "deliverables/audit-report.md"); copy(root, "delivery/reproduction.md", "deliverables/reproduction.md"); assert.equal(run("manifest", root).status, 0); assert.equal(run("set-outcome", root, "audit_passed").status, 0); checkpoint(root, "complete", ["deliverables"]); assert.equal(run("verify", root).status, 0); const empty = newRun(t, "external_audit"); json(empty, "contract/input-manifest.json", { schema_version: 1, files: [] }); json(empty, "contract/source-bundle-manifest.json", { schema_version: 1, items: [] }); put(empty, "contract/audit.md", "Overall verdict: PASS\n"); assert.match(externalContractResult(empty).stderr, /non-empty items/); const none = newRun(t, "external_audit"); json(none, "contract/input-manifest.json", { schema_version: 1, files: [] }); json(none, "contract/source-bundle-manifest.json", { schema_version: 1, items: bundle(none).map((item) => ({ ...item, available: false, sha256: null, missing_reason: "missing" })) }); put(none, "contract/audit.md", "Overall verdict: PASS\n"); assert.match(externalContractResult(none).stderr, /no assessable integrity check/); const falsePass = externalContract(t, "I1"); assert.match(externalAudit(falsePass, true).stderr, /reports PASS even though required source-bundle inputs are unavailable/); });
 test("validated state and attention commands keep phase aligned to receipts", (t) => { const root = contract(t); assert.equal(read(root, "run.json").phase, "investigation"); assert.match(run("set-state", root, "paused").stderr, /validated attention/); put(root, "attention.md", "Required action: Supply the missing file.\n"); assert.equal(run("set-attention", root, "attention.md").status, 0); assert.equal(run("set-state", root, "paused").status, 0); assert.match(run("set-state", root, "running").stderr, /clear-attention/); assert.equal(run("clear-attention", root).status, 0); assert.equal(run("set-state", root, "running").status, 0); const record = read(root, "run.json"); record.phase = "selection"; json(root, "run.json", record); assert.match(run("verify", root).stderr, /expected investigation, received selection/); });
-test("invalidation preserves evidence and resumes at the first invalid phase", (t) => { const root = through(t, "investigation"); put(root, "reason.md", "repair\n"); fs.appendFileSync(path.join(root, "investigation/brief.md"), "drift\n"); assert.equal(run("invalidate", root, "investigation", "reason.md").status, 0); assert.equal(read(root, "run.json").phase, "investigation"); assert.equal(JSON.parse(run("verify", root).stdout).last_checkpoint, "contract"); const [archive] = fs.readdirSync(path.join(root, "receipts/superseded")); fs.appendFileSync(path.join(root, "receipts/superseded", archive, "artifacts/investigation/brief.md"), "tamper"); assert.match(run("verify", root).stderr, /Invalid invalidation root|Superseded artifact changed/); });
+test("native launch records produce hash-bound reusable receipts and reject drift or duplicate logical work", async (t) => {
+  const root = contract(t);
+  const stateHome = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-grants-"));
+  t.after(() => fs.rmSync(stateHome, { recursive: true, force: true }));
+
+  async function completedAttempt(task, attempt, output) {
+    const prepared = await prepareRoleLaunch({
+      run_path: root,
+      task_name: task,
+      logical_task_name: "literature_map_round_1",
+      attempt,
+      role: "literature_mapper",
+      declared_inputs: ["study-plan.md"],
+      declared_outputs: [output],
+      allowed_external_sources: ["scholarly_web"],
+    }, { catalog: TEST_CATALOG, stateHome });
+    put(root, output, `{\"attempt\":${attempt}}\n`);
+    const launch = read(root, prepared.launch_record);
+    json(root, `role-receipts/${task}.json`, {
+      schema_version: 1,
+      role: launch.role,
+      agent_task: task,
+      logical_task_name: launch.logical_task_name,
+      attempt: launch.attempt,
+      contract_revision: launch.contract_revision,
+      charter_revision: launch.charter_revision,
+      predecessor: launch.predecessor,
+      model: launch.model,
+      reasoning_effort: launch.reasoning_effort,
+      model_routing_sha256: launch.model_routing_sha256,
+      role_contract_sha256: launch.role_contract_sha256,
+      gate_schema_version: launch.gate_schema_version,
+      fork_turns: "none",
+      started_at: launch.started_at,
+      completed_at: new Date(Date.parse(launch.started_at) + 1_000).toISOString(),
+      declared_inputs: launch.declared_inputs,
+      input_artifacts: launch.input_artifacts,
+      allowed_external_sources: launch.allowed_external_sources,
+      external_results_used: [],
+      environment_changes: [],
+      outputs: launch.declared_outputs,
+      output_artifacts: [{ path: output, sha256: hash(root, output) }],
+      undeclared_inputs_accessed: [],
+      limitations: [],
+      execution_status: "COMPLETE",
+      gate_verdict: "PASS",
+      launch_record: prepared.launch_record,
+      launch_record_sha256: hash(root, prepared.launch_record),
+    });
+    return `role-receipts/${task}.json`;
+  }
+
+  const first = await completedAttempt("literature_map_a1", 1, "evidence/search-log-a1.jsonl");
+  const reusable = run("verify-role", root, first);
+  assert.equal(reusable.status, 0, reusable.stderr);
+  assert.equal(JSON.parse(reusable.stdout).reusable, true);
+
+  fs.appendFileSync(path.join(root, "evidence/search-log-a1.jsonl"), "drift\n");
+  assert.match(run("verify-role", root, first).stderr, /Artifact changed after its role binding|hash/i);
+  put(root, "evidence/search-log-a1.jsonl", '{"attempt":1}\n');
+  assert.equal(run("verify-role", root, first).status, 0);
+
+  await completedAttempt("literature_map_a2", 2, "evidence/search-log-a2.jsonl");
+  assert.match(run("verify-role", root, first).stderr, /another COMPLETE\/PASS receipt|duplicate/i);
+});
+test("invalidation preserves evidence and detects every archived-tree mutation class", (t) => {
+  const root = through(t, "investigation");
+  put(root, "reason.md", "repair\n");
+  fs.appendFileSync(path.join(root, "investigation/brief.md"), "drift\n");
+  assert.equal(run("invalidate", root, "investigation", "reason.md").status, 0);
+  assert.equal(read(root, "run.json").phase, "investigation");
+  assert.equal(JSON.parse(run("verify", root).stdout).last_checkpoint, "contract");
+  const [archive] = fs.readdirSync(path.join(root, "receipts/superseded"));
+  const archived = path.join(root, "receipts/superseded", archive, "artifacts/investigation");
+  const brief = path.join(archived, "brief.md");
+  const original = fs.readFileSync(brief);
+
+  fs.appendFileSync(brief, "tamper");
+  assert.match(run("verify", root).stderr, /Invalid invalidation root|Superseded artifact changed/);
+  fs.writeFileSync(brief, original);
+  assert.equal(run("verify", root).status, 0);
+
+  const added = path.join(archived, "added.md");
+  fs.writeFileSync(added, "added\n");
+  assert.match(run("verify", root).stderr, /Invalid invalidation root|Superseded artifact changed/);
+  fs.rmSync(added);
+  assert.equal(run("verify", root).status, 0);
+
+  const renamed = path.join(archived, "brief-renamed.md");
+  fs.renameSync(brief, renamed);
+  assert.match(run("verify", root).stderr, /Invalid invalidation root|Superseded artifact changed/);
+  fs.renameSync(renamed, brief);
+  assert.equal(run("verify", root).status, 0);
+
+  fs.rmSync(brief);
+  assert.match(run("verify", root).stderr, /Invalid invalidation root|Superseded artifact changed/);
+  fs.writeFileSync(brief, original);
+  assert.equal(run("verify", root).status, 0);
+
+  const link = path.join(archived, "brief-link.md");
+  try {
+    fs.symlinkSync("brief.md", link);
+    assert.match(run("verify", root).stderr, /Invalid invalidation root|Symlinked path|Symlinks cannot|Superseded artifact changed/);
+    fs.rmSync(link);
+    assert.equal(run("verify", root).status, 0);
+  } catch (error) {
+    if (!new Set(["EPERM", "EACCES", "ENOTSUP"]).has(error?.code)) throw error;
+    t.diagnostic(`symlink mutation case unavailable on this platform: ${error.code}`);
+  }
+});
 
 test("a result-blind contract defect repairs and re-audits inside the same run", (t) => {
   const root = contract(t);
@@ -228,6 +344,7 @@ test("a result-blind contract defect repairs and re-audits inside the same run",
   assert.equal(fs.existsSync(path.join(root, "private/evaluator/evaluate.mjs")), true);
   assert.equal(run("verify", root).status, 0);
 
+  installTestRouting(root);
   writeContractArtifacts(root, "Corrected approved primary metric; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n");
   const resumed = read(root, "run.json");
   assert.equal(resumed.phase, "investigation");
@@ -264,6 +381,7 @@ test("a rejected pre-checkpoint contract is repaired without restarting the stud
   assert.equal(fs.existsSync(path.join(archive, "artifacts/role-receipts/contract_auditor.json")), true);
   assert.equal(run("verify", root).status, 0);
 
+  installTestRouting(root);
   writeContractArtifacts(root, "Approved primary metric; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n");
   assert.equal(read(root, "run.json").contract_revision, 2);
   assert.equal(run("verify", root).status, 0);

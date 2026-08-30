@@ -49,8 +49,8 @@ for (const relative of files) {
 
 const manifestPath = path.join(root, "plugins/scientistone/.codex-plugin/plugin.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-if (manifest.version !== "1.1.4" || manifest.license !== "Apache-2.0") {
-  findings.push({ file: "plugins/scientistone/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.1.4 and Apache-2.0" });
+if (manifest.version !== "1.2.0" || manifest.license !== "Apache-2.0") {
+  findings.push({ file: "plugins/scientistone/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.2.0 and Apache-2.0" });
 }
 if (manifest.mcpServers !== "./.mcp.json" || manifest.hooks !== "./hooks/hooks.json" || "apps" in manifest) {
   findings.push({ file: "plugins/scientistone/.codex-plugin/plugin.json", type: "runtime wiring", remediation: "ship only the bundled local MCP and lifecycle hooks; do not declare a competing registered app" });
@@ -69,6 +69,12 @@ const requiredRuntimeFiles = [
   "plugins/scientistone/hooks/hooks.json",
   "plugins/scientistone/hooks/enforce-role-launch.mjs",
   "plugins/scientistone/hooks/enforce-study-autonomy.mjs",
+  "plugins/scientistone/skills/scientistone/scripts/capacity-preflight.mjs",
+  "plugins/scientistone/skills/scientistone/scripts/scheduler.mjs",
+  "plugins/scientistone/LICENSE",
+  "plugins/scientistone/NOTICE",
+  "plugins/scientistone/THIRD_PARTY_NOTICES.md",
+  "plugins/scientistone/ATTRIBUTIONS.md",
   "plugins/scientistone/licenses/NEWSREADER-LICENSE",
   "plugins/scientistone/licenses/PHOSPHOR-LICENSE",
 ];

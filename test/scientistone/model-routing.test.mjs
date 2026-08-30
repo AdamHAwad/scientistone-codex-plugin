@@ -5,9 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
-import { consumeLaunchToken, createRoutingRecord, ensureRunRouting, launchGrantDirectory, loadModelPolicy, prepareRoleLaunch, resolveModelCatalog } from "../mcp/model-routing.mjs";
+import { clearLiveCatalogCache, consumeLaunchToken, createRoutingRecord, ensureRunRouting, launchGrantDirectory, loadModelPolicy, prepareRoleLaunch, resolveModelCatalog } from "../../plugins/scientistone/mcp/model-routing.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../plugins/scientistone");
 const HOOK_CONFIG = JSON.parse(fs.readFileSync(path.join(ROOT, "hooks", "hooks.json"), "utf8"));
 const HOOK_COMMAND = HOOK_CONFIG.hooks.PreToolUse[0].hooks[0].command;
 const STATE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-launch-state-"));
@@ -22,7 +22,10 @@ function catalog(strong = "gpt-6-astra", efficient = "gpt-6-luna", offset = 0) {
 function runRoot(t, name = "routing") {
   const run = fs.mkdtempSync(path.join(os.tmpdir(), `scientistone-${name}-`));
   t.after(() => fs.rmSync(run, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(run, "run.json"), "{}\n");
+  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify({ contract_revision: 1, charter_revision: 1, last_checkpoint: null, checkpoints: {} })}\n`);
+  fs.writeFileSync(path.join(run, "study-plan.md"), "# Test plan\n");
+  fs.mkdirSync(path.join(run, "selection", "selected"), { recursive: true });
+  fs.writeFileSync(path.join(run, "selection", "selected", "method.txt"), "test\n");
   return run;
 }
 
@@ -108,12 +111,40 @@ test("an unavailable frozen route returns autonomous repair guidance", async (t)
   await assert.rejects(
     ensureRunRouting(run, { catalog: catalog("generation-b-strong", "generation-b-efficient") }),
     (error) => {
-      assert.match(error.message, /keep the run repairing/i);
-      assert.match(error.message, /without asking the researcher/i);
+      assert.equal(error.code, "S1_FROZEN_ROUTE_UNAVAILABLE");
+      assert.match(error.message, /AUTOMATIC_REPAIR/i);
+      assert.match(error.message, /revise-contract/i);
+      assert.match(error.message, /ask the researcher/i);
       assert.doesNotMatch(error.message, /pause the run/i);
       return true;
     },
   );
+});
+
+test("live catalog probes are single-flight, bounded, bypassable, and recover after failure", async (t) => {
+  clearLiveCatalogCache();
+  const run = runRoot(t, "catalog-cache");
+  let calls = 0;
+  const loader = async () => { calls += 1; await new Promise((resolve) => setImmediate(resolve)); return catalog(); };
+  await Promise.all([
+    ensureRunRouting(run, { catalogLoader: loader, catalogContext: "account-a", now: 1_000 }),
+    ensureRunRouting(run, { catalogLoader: loader, catalogContext: "account-a", now: 1_000 }),
+  ]);
+  assert.equal(calls, 1);
+  await ensureRunRouting(run, { catalogLoader: loader, catalogContext: "account-a", now: 1_001 });
+  assert.equal(calls, 1);
+  await ensureRunRouting(run, { catalogLoader: loader, catalogContext: "account-a", now: 2_000, catalogTtlMs: 10 });
+  assert.equal(calls, 2);
+  await ensureRunRouting(run, { catalog: catalog(), catalogLoader: async () => { throw new Error("must not run"); }, catalogContext: "explicit" });
+  assert.equal(calls, 2);
+
+  clearLiveCatalogCache();
+  const retry = runRoot(t, "catalog-retry");
+  let attempts = 0;
+  const flaky = async () => { attempts += 1; if (attempts === 1) throw new Error("temporary catalog failure"); return catalog(); };
+  await assert.rejects(ensureRunRouting(retry, { catalogLoader: flaky, catalogContext: "account-b" }), /temporary catalog failure/);
+  await ensureRunRouting(retry, { catalogLoader: flaky, catalogContext: "account-b" });
+  assert.equal(attempts, 2);
 });
 
 test("the bundled hook rewrites an authorized spawn exactly once and leaves unrelated spawns alone", async (t) => {

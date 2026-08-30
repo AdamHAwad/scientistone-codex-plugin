@@ -11,6 +11,36 @@ ScientistOne helps one researcher direct an AI research team through a computati
 
 Treat a bare mention of ScientistOne as a request to begin setup.
 
+Before starting or resuming the setup browser, call the bundled MCP's
+`check_parallel_capacity`. This is the only capacity-setup checkpoint and it
+must occur before study approval or run initialization. Follow its `action`
+exactly:
+
+- `continue` or `continue_limited`: proceed silently. A declined, managed,
+  read-only, or otherwise unsupported configuration never reduces the study's
+  scientific requirements and never triggers another prompt.
+- `prompt`: ask exactly once: `ScientistOne can complete studies much faster
+  by allowing Codex to run up to 16 independent research specialists in
+  parallel. This only changes Codex's parallel-agent limit and does not grant
+  any additional access. It may use your Codex allowance faster while a study
+  is running. May I update this setting? You'll need to restart Codex once.`
+  Do not start intake while waiting. If the researcher declines, run
+  `decline_parallel_capacity` and continue setup with the available host
+  capacity. If they affirm, call `approve_parallel_capacity` with the exact
+  one-use `confirmation_token` returned by the check; never approve from
+  implication or prior study approval.
+- `restart_required`: report that the atomic, backed-up configuration update
+  validated successfully, ask the researcher to restart Codex once, and end
+  before creating an intake draft or run. The next invocation continues
+  silently.
+
+The helper edits only Codex's public
+`agents.max_concurrent_threads_per_session` capacity,
+preserves unrelated TOML, validates the new configuration, rolls back on
+failure, and records the one-time choice under `CODEX_HOME/scientistone/`.
+The MCP launches it with Codex's bundled runtime and fixed purpose; never run
+it through the agent terminal or edit `config.toml` by hand as a substitute.
+
 - In the Codex desktop app, the bundled local browser is the only full browser experience. For a new study or external audit, call `start_study_setup` with the active project root, the requested mode, and `resume_latest: false`. Immediately open the returned `url` in Codex's built-in browser. Do not render or substitute an inline MCP form, and do not use a remote setup page.
 - Let the researcher complete the seven-step full-page wizard, including its large file-upload field. Call `wait_for_researcher` once with the returned project root and draft ID; do not poll. When the researcher responds, call `read_study_setup` and treat the saved answers as researcher-authored intake.
 - If `wait_for_researcher` returns `wait_timed_out: true`, close the same built-in browser tab, send the returned `researcher_message` to the researcher, and end the turn. Do not keep reasoning, poll, discard the draft, or continue the study. The browser saves intake answers, the current wizard step, plan edits, and the pending change note as they are entered; it saves uploads immediately. When the researcher later asks to continue, call `start_study_setup` with the same project root and mode and `resume_latest: true`, reopen its returned URL, and call `wait_for_researcher` once again.
@@ -77,6 +107,55 @@ Before each scientific, coding, writing, evaluation, or audit assignment:
 4. Launch the native subagent with the unchanged Common Role Envelope and one role card.
 5. Compare the returned task metadata and receipt with the launch record. Record any limit that Codex could not enforce. Never claim process isolation when only prompt and file rules exist.
 
+Run the study as a dependency-ready queue, not a serial checklist. Give every
+logical task immutable input hashes, one exclusive output set, a stable ID and
+seed/repetition, and only its real predecessors. In stable task-ID order,
+dispatch as many ready tasks as the native-agent limit and frozen resource
+limits allow, with an absolute ScientistOne ceiling of 16 live specialists.
+Prepare each one-use launch grant only when a slot is ready,
+wait on the active set, and refill immediately when the first task finishes.
+Never let completion order change seeds, ranking, tie-breaking, or collation.
+Tasks that share an authoritative output, mutate the same environment, or use
+an evaluator resource not declared parallel-safe remain serial.
+
+Persist that queue as `environment/task-ledger.json` using the schema in
+`references/artifacts.md`. Before every launch wave and after the first task
+completion, run `<resolved-node-path> <scientistone-skill-root>/scripts/scheduler.mjs
+ready <run>/environment/task-ledger.json` and launch exactly its returned
+`ready_task_ids`. Mark a task `running` only after successful native dispatch
+and `complete` only after its receipt verifies. Never bypass the executable
+output-ownership, predecessor, capacity, or frozen-resource gates.
+
+The evaluator contract must say whether concurrent evaluation is valid and
+its maximum concurrency for each timing-, hardware-, license-, API-, or
+memory-sensitive resource. An omitted or false declaration means one
+evaluation at a time for that resource. This resource gate limits concurrency;
+it never lowers repetitions or drops a task.
+
+Use these dependency barriers:
+
+- Evidence Reader shards run together after literature mapping; synthesis
+  starts when all shards in that frozen round finish.
+- Independent candidate branches run together. Inside one branch, run
+  `candidate version -> evaluator -> sanitize-feedback -> optional fresh next
+  version` sequentially within the frozen ceiling. Run the Legitimacy Auditor
+  only after that branch is complete. A developer and evaluator for the same
+  branch never overlap.
+- Ablation Designer is a barrier. Then run independent per-variant
+  `Implementer -> Evaluator` chains concurrently when the evaluator resource
+  permits. Ablation Analyst waits for all variants.
+- After the final verified paper and selected artifact freeze, launch I1, every
+  I2 vote, I3, every I4 vote, and claim provenance together. Audit Reporter
+  waits for all independent reports and votes. Selection, paper resolution,
+  report aggregation, and final delivery retain their causal barriers.
+
+On resume, first run `coe.mjs verify`, then run `coe.mjs verify-role <run>
+role-receipts/<task>.json` for each COMPLETE/PASS receipt in the unfinished
+phase. Reuse only a hash-bound receipt accepted by that command, without a new
+grant; launch only missing or rejected logical tasks. Never reuse a prior
+sample as a new repetition or vote, and preserve every failed or duplicate
+attempt.
+
 Use the model and reasoning policy in `references/model-policy.json` when the current Codex runtime offers those choices. If it does not, use the best available native specialist and record the actual runtime. Do not invent a model name or enforcement result.
 
 ## Rules that do not change
@@ -92,7 +171,12 @@ Use the model and reasoning policy in `references/model-policy.json` when the cu
 
 ## Run and recovery
 
-Follow `references/protocol.md` in order. At each phase boundary, create a receipt and run the verifier commands in `references/artifacts.md`. On resume, verify saved state and continue from the first invalid or incomplete phase.
+Follow `references/protocol.md` in order. At each phase boundary, run the
+read-only `coe.mjs preflight` command with the intended checkpoint inputs and
+outputs before any downstream specialist launches. Create the receipt only
+after it passes, then run the verifier commands in `references/artifacts.md`.
+On resume, verify saved state and continue from the first invalid or incomplete
+phase.
 
 Retry the smallest failed work package and preserve every failed artifact. Use a fresh specialist when independence or scientific judgment was affected. An approved run stays `running` or `repairing` until verified completion or explicit researcher cancellation; do not set `attention`, `paused`, or `failed` as a way to end the task. Treat every generated-contract defect as autonomous repair work, not a researcher decision or terminal blocker:
 
@@ -102,6 +186,12 @@ Retry the smallest failed work package and preserve every failed artifact. Use a
 - Do not create `attention.md` after approval. Missing data, unavailable credentials, unavailable hardware, licenses, paid services, unsafe methods, exhausted compute, and repeated operational failure require an available-data, open-tool, simulated, design-only, lower-compute, or completed-with-limitations fallback. Preserve what failed and continue to the paper; do not ask the researcher to act.
 
 Operational launch errors with codes such as `S1_LAUNCH_GRANT_NOT_FOUND`, `S1_LAUNCH_GRANT_EXPIRED`, or `S1_LAUNCH_GRANT_MISMATCH` are recoverable: prepare a new one-use grant, retain the logical task name, increment the attempt, and retry the same work package. Do not require a Codex restart, a global installation, or a manually copied runtime.
+
+`S1_FROZEN_ROUTE_UNAVAILABLE` is a generated-contract defect. Write an
+`AUTOMATIC_REPAIR` reason, use `coe.mjs revise-contract` to archive the frozen
+routing record and every result-aware successor, and then prepare the role
+again so the MCP freezes a currently available semantic route. Never edit the
+routing record in place or silently downgrade a task.
 
 ## Completion
 

@@ -33,12 +33,20 @@ stop only the affected search or experiment loop; they do not stop the approved
 run. The run itself stops early only when the researcher explicitly cancels it.
 Do not pad a ceiling with duplicate or unsupported work.
 
-Use the pilot profile by default. Use the standard profile only after the
-researcher explicitly approves its larger ceiling and compute estimate; a
-custom profile records every changed value and scientific reason before audit.
+Retain the paper's pilot profile as the default so this release does not
+silently expand an approved study's compute or subscription usage. The plan
+must disclose its ceilings. Use the larger standard profile only when the
+researcher explicitly approves those larger budgets for the study; a custom
+profile records every changed value and scientific reason before audit.
+Scheduling and runtime optimization must never relabel pilot work as standard
+evidence.
 
 Freeze `contract/evaluator-contract.md` with the metric, unit, direction, split
 policy, repetitions, failure rule, and candidate-visible feedback fields.
+For every timing-, hardware-, license-, API-, or memory-sensitive evaluator
+resource, also freeze `parallel_safe` and `max_concurrency`. Missing or false
+`parallel_safe` means one evaluation at a time for that resource; it never
+reduces the frozen repetition count.
 Freeze `contract/evaluator-manifest.json` with hashes and access classes for
 evaluator code and evaluator-only inputs; do not expose their contents.
 Evaluator source, held-out material, and private raw outputs live under
@@ -119,6 +127,38 @@ Launch-authorization failures are operational. For
 `S1_LAUNCH_GRANT_MISMATCH`, prepare a fresh one-use grant for the same logical
 task, increment the attempt, and retry the same work package. Do not ask the
 researcher to restart Codex, copy a runtime, or install a global tool.
+
+An unavailable frozen model is a generated-contract repair, not permission to
+edit routing in place. Record `AUTOMATIC_REPAIR`, archive
+`environment/model-routing.json` and affected work with `revise-contract`, and
+let the next prepared role freeze a currently available semantic route. If
+candidate or downstream evidence exists, this is result-aware and invalidates
+every successor under the existing repair rule.
+
+### 0.1 Dependency-ready execution
+
+The phase order is a causal evidence order, not a requirement to serialize
+independent specialists. Maintain a stable ready queue whose tasks declare
+immutable input hashes, exclusive outputs, seeds/repetitions, real
+predecessors, and evaluator-resource claims. Dispatch the maximum ready set
+allowed by native-agent and frozen resource limits; prepare one-use grants only
+as slots open, wait on the active set, and refill on first completion. Stable
+task ID, not completion order, controls sorting, seeds, ranks, and tie-breaks.
+Tasks with overlapping authoritative outputs or undeclared parallel-safe
+resources remain serial.
+
+The authoritative queue is `environment/task-ledger.json`. Run the bundled
+`scheduler.mjs ready` command before every dispatch wave and after the first
+completion. Launch only the returned stable task IDs. The helper rejects cycles,
+unknown predecessors, overlapping live output trees, capacity above 16, and
+resource use above the frozen `parallel_safe`/`max_concurrency` contract.
+
+On resume, run the full saved-chain verifier, then `verify-role` on each
+COMPLETE/PASS receipt in the unfinished phase. Reuse only a receipt whose
+launch, revisions, predecessor, prompt contract, routing, exact input/output
+hashes, schema, role boundary, and logical-sample identity still pass. Reuse
+issues no launch grant and never counts an old sample as a new repetition or
+vote.
 
 Other environment failures are operational. For a missing tool or package, inspect
 the bootstrap, install or repair the smallest compatible run-local dependency,
@@ -248,6 +288,13 @@ Candidate refinement remains within the frozen evaluation ceiling. A failed
 execution is operational evidence, not a scientific null; a failed evaluation
 has no selection-eligible metric.
 
+Run independent candidate branches concurrently. Within one branch, a fresh
+Candidate Developer seals one version, its Evaluator finishes, the lead runs
+deterministic feedback sanitization, and only then may a fresh developer start
+the next version. The developer and evaluator for one branch never overlap.
+Run that branch's Legitimacy Auditor only after its final version and evaluation
+are frozen; it may overlap with unfinished independent branches.
+
 ### 2.3 Candidate eligibility and stopping
 
 A fresh Legitimacy Auditor reviews every completed node for:
@@ -312,8 +359,9 @@ valid variants exist. Record evidence saturation, no additional eligible
 variant, compute exhaustion, or operational failure rather than inventing a
 variant.
 
-Fresh Implementers create variants and fresh Evaluators apply the same
-protocol. A fresh Ablation Analyst writes `ablation/results.json` and
+The Ablation Designer is a barrier. Then independent variants run as concurrent
+fresh `Implementer -> Evaluator` chains when their frozen evaluator resources
+permit. A fresh Ablation Analyst waits for every chain, then writes `ablation/results.json` and
 `ablation/report.md`, preserving failures and uncertainty. Do not select a
 favorable repetition or claim causality from an observed association alone.
 
@@ -410,6 +458,11 @@ Audit specialists are fresh and do not read producer transcripts. Evaluator,
 I1, and I2 assignments may read only evaluator-only paths explicitly declared
 for their check. No candidate-visible artifact may contain held-out rows,
 labels, evaluator source, or private checks.
+
+Once the verified paper and selected artifact are frozen, dispatch I1, every
+I2 judge, I3, every I4 judge, and Claim-Provenance as one dependency-ready wave,
+subject to resource limits. They remain independent and never read each
+other's work. Audit Reporter is the barrier after all reports and votes.
 
 ### I1 score verification
 

@@ -10,9 +10,11 @@ const execFileAsync = promisify(execFile);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, "..");
 const POLICY_FILE = path.join(PLUGIN_ROOT, "skills", "scientistone", "references", "model-policy.json");
+const ROLE_CONTRACT_FILE = path.join(PLUGIN_ROOT, "skills", "scientistone", "references", "roles.md");
 const ROUTING_FILE = path.join("environment", "model-routing.json");
 const TOKEN_PATTERN = /^s1_([a-z0-9_]+)__([0-9a-f]{32})$/;
 const LAUNCH_GRANT_TTL_MS = 10 * 60 * 1000;
+const LIVE_CATALOG_TTL_MS = 15 * 60 * 1000;
 const TIERS = new Set(["strong", "efficient"]);
 const CURRENT_EFFICIENT_REASONING_EFFORT = "xhigh";
 const STRUCTURED_TIER_FIELDS = ["tier", "model_tier", "semantic_tier", "performance_tier", "capability_tier"];
@@ -20,6 +22,8 @@ const TIER_WORDS = {
   strong: ["strong", "frontier", "flagship", "most capable", "most advanced", "state of the art", "state-of-the-art"],
   efficient: ["efficient", "affordable", "fast", "low cost", "low-cost", "cost effective", "cost-effective", "lightweight", "high volume", "high-volume"],
 };
+const liveCatalogCache = new Map();
+const liveCatalogInflight = new Map();
 
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -29,6 +33,45 @@ function canonical(value) {
 
 function sha256(value) {
   return createHash("sha256").update(typeof value === "string" ? value : canonical(value)).digest("hex");
+}
+
+function addField(hash, tag, value) {
+  const data = Buffer.from(String(value));
+  const length = Buffer.alloc(8);
+  length.writeBigUInt64BE(BigInt(data.length));
+  hash.update(tag);
+  hash.update(length);
+  hash.update(data);
+}
+
+function addFile(hash, file) {
+  const descriptor = fs.openSync(file, "r");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    let count;
+    while ((count = fs.readSync(descriptor, buffer, 0, buffer.length, null)) > 0) hash.update(buffer.subarray(0, count));
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+function hashAt(target, logical) {
+  const hash = createHash("sha256");
+  function walk(current, name) {
+    const stat = fs.lstatSync(current);
+    if (stat.isSymbolicLink()) throw new Error(`Symlinks cannot be bound as ScientistOne inputs: ${name}.`);
+    if (stat.isDirectory()) {
+      addField(hash, "D", name);
+      for (const child of fs.readdirSync(current).sort()) walk(path.join(current, child), `${name}/${child}`);
+      return;
+    }
+    if (!stat.isFile()) throw new Error(`Only regular files and directories can be bound as ScientistOne inputs: ${name}.`);
+    addField(hash, "F", name);
+    addField(hash, "S", stat.size);
+    addFile(hash, current);
+  }
+  walk(target, logical);
+  return hash.digest("hex");
 }
 
 function readJson(file) {
@@ -217,6 +260,38 @@ async function readLiveCatalog(codexPath = process.env.CODEX_CLI_PATH || "codex"
   return JSON.parse(stdout);
 }
 
+function liveCatalogKey(options = {}) {
+  const env = options.env ?? process.env;
+  return JSON.stringify([
+    options.codexPath ?? env.CODEX_CLI_PATH ?? "codex",
+    options.catalogContext ?? env.CODEX_HOME ?? "",
+    options.accountContext ?? "",
+  ]);
+}
+
+async function cachedLiveCatalog(options = {}) {
+  if (options.catalog !== undefined) return options.catalog;
+  const key = liveCatalogKey(options);
+  const now = options.now ?? Date.now();
+  const cached = liveCatalogCache.get(key);
+  if (cached && now - cached.at < (options.catalogTtlMs ?? LIVE_CATALOG_TTL_MS)) return cached.catalog;
+  if (liveCatalogInflight.has(key)) return liveCatalogInflight.get(key);
+  const loader = options.catalogLoader ?? ((codexPath) => readLiveCatalog(codexPath));
+  const promise = Promise.resolve(loader(options.codexPath ?? (options.env ?? process.env).CODEX_CLI_PATH ?? "codex"))
+    .then((catalog) => {
+      liveCatalogCache.set(key, { at: now, catalog });
+      return catalog;
+    })
+    .finally(() => liveCatalogInflight.delete(key));
+  liveCatalogInflight.set(key, promise);
+  return promise;
+}
+
+function clearLiveCatalogCache() {
+  liveCatalogCache.clear();
+  liveCatalogInflight.clear();
+}
+
 function validateRunPath(runPath) {
   if (typeof runPath !== "string" || !path.isAbsolute(runPath)) throw new Error("run_path must be an absolute ScientistOne run path.");
   const run = fs.realpathSync(runPath);
@@ -228,16 +303,16 @@ function validateCurrentAvailability(record, catalog) {
   const current = normalizeCatalog(catalog);
   for (const [tier, selected] of Object.entries(record.tiers)) {
     const model = current.find((candidate) => candidate.slug === selected.model);
-    if (!model) throw new Error(`The ${tier} model frozen for this run is no longer available. Return this failure to the lead, keep the run repairing, and choose a safe compatible in-scope fallback without asking the researcher; do not silently downgrade it.`);
+    if (!model) throw Object.assign(new Error(`The ${tier} model frozen for this run is no longer available. Record an AUTOMATIC_REPAIR contract revision, archive the frozen routing record with coe.mjs revise-contract, then prepare the role again so ScientistOne freezes a currently available route. Do not silently downgrade or ask the researcher.`), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
     const required = [...new Set(Object.values(record.policy.roles).filter((setting) => setting.tier === tier).map((setting) => setting.reasoning_effort))];
-    if (required.some((effort) => !model.supported_reasoning_levels.includes(effort))) throw new Error(`The ${tier} model frozen for this run no longer supports every required reasoning effort. Return this failure to the lead, keep the run repairing, and choose a safe compatible in-scope fallback without asking the researcher; do not silently downgrade it.`);
+    if (required.some((effort) => !model.supported_reasoning_levels.includes(effort))) throw Object.assign(new Error(`The ${tier} model frozen for this run no longer supports every required reasoning effort. Record an AUTOMATIC_REPAIR contract revision, archive the frozen routing record with coe.mjs revise-contract, then prepare the role again so ScientistOne freezes a currently compatible route. Do not silently downgrade or ask the researcher.`), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
   }
 }
 
 async function ensureRunRouting(runPath, options = {}) {
   const run = validateRunPath(runPath);
   const file = path.join(run, ROUTING_FILE);
-  const liveCatalog = options.catalog ?? await readLiveCatalog(options.codexPath);
+  const liveCatalog = await cachedLiveCatalog(options);
   if (fs.existsSync(file)) {
     const record = validateRoutingRecord(readJson(file));
     validateCurrentAvailability(record, liveCatalog);
@@ -282,6 +357,24 @@ function normalizeRolePath(run, value, label) {
   return normalized;
 }
 
+function bindArtifact(run, relative) {
+  const clean = normalizeRolePath(run, relative, "declared_inputs");
+  const target = path.resolve(run, clean);
+  if (!fs.existsSync(target)) throw new Error(`Declared ScientistOne input does not exist: ${clean}.`);
+  return { path: clean, sha256: hashAt(target, clean) };
+}
+
+function currentRunBinding(run) {
+  const record = readJson(path.join(run, "run.json"));
+  if (!Number.isInteger(record.contract_revision) || !Number.isInteger(record.charter_revision) || !record.checkpoints || typeof record.checkpoints !== "object") throw new Error("ScientistOne run revisions or checkpoint anchors are malformed.");
+  const last = record.last_checkpoint;
+  const predecessor = last === null
+    ? null
+    : { path: `receipts/${last}.json`, sha256: record.checkpoints[last]?.receipt_sha256 };
+  if (predecessor && typeof predecessor.sha256 !== "string") throw new Error("ScientistOne run predecessor anchor is malformed.");
+  return { contract_revision: record.contract_revision, charter_revision: record.charter_revision, predecessor };
+}
+
 function stringArray(value, label) {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || !item)) throw new Error(`${label} must be an array of non-empty strings.`);
   if (new Set(value).size !== value.length) throw new Error(`${label} must not contain duplicates.`);
@@ -303,6 +396,8 @@ async function prepareRoleLaunch(args, options = {}) {
   const declaredOutputs = stringArray(args.declared_outputs, "declared_outputs").map((value) => normalizeRolePath(run, value, "declared_outputs"));
   if (!declaredOutputs.length) throw new Error("declared_outputs must not be empty.");
   const allowedExternalSources = stringArray(args.allowed_external_sources ?? [], "allowed_external_sources");
+  const runBinding = currentRunBinding(run);
+  const inputArtifacts = declaredInputs.map((relative) => bindArtifact(run, relative));
   const startedAt = new Date().toISOString();
   const launchRelative = `role-launches/${args.task_name}.json`;
   const launchFile = path.join(run, launchRelative);
@@ -311,13 +406,19 @@ async function prepareRoleLaunch(args, options = {}) {
     task_id: `native-${args.task_name}`,
     logical_task_name: logicalTaskName,
     attempt,
+    contract_revision: runBinding.contract_revision,
+    charter_revision: runBinding.charter_revision,
+    predecessor: runBinding.predecessor,
     role: args.role,
     fork_turns: "none",
     model_tier: runtime.tier,
     model: runtime.model,
     reasoning_effort: runtime.reasoning_effort,
     model_routing_sha256: routing.routing_sha256,
+    role_contract_sha256: createHash("sha256").update(fs.readFileSync(ROLE_CONTRACT_FILE)).digest("hex"),
+    gate_schema_version: 1,
     declared_inputs: declaredInputs,
+    input_artifacts: inputArtifacts,
     allowed_external_sources: allowedExternalSources,
     declared_outputs: declaredOutputs,
     started_at: startedAt,
@@ -393,6 +494,7 @@ function consumeLaunchToken(marker, options = {}) {
 export {
   TOKEN_PATTERN,
   LaunchAuthorizationError,
+  clearLiveCatalogCache,
   consumeLaunchToken,
   createRoutingRecord,
   ensureRunRouting,

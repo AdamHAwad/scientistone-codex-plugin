@@ -99,6 +99,13 @@ AdamHAwad/scientistone-codex-plugin
 3. Choose the folder where you want the study files to be saved.
 4. Read the prompt. Change it if needed, then send it.
 
+On first use, ScientistOne may offer to raise Codex's public parallel-agent
+limit to 16. The change is optional, affects only local Codex configuration,
+and requires one Codex restart. Declining or using a managed configuration
+does not remove any research stage, repetition, evidence check, or audit; it
+only limits how much independent work can run at once. Higher concurrency may
+consume the user's Codex allowance faster while a study is active.
+
 ScientistOne opens a full-page setup guide in Codex's built-in browser. Explain what you want to study, add any files the study needs, choose the limits, and review the plan. **Approve and start study** is the study's one approval checkpoint. After it, the same page becomes a live flowchart and ScientistOne continues autonomously through contract repair, research, writing, verification, audit, and delivery. It does not ask you to approve generated evaluator, verifier, method, or environment repairs again.
 
 A study may later need a project-specific tool, such as a Python library required by the approved method. ScientistOne first uses existing or reversible project-local tools covered by the approved plan. When a capability would exceed the plan or Codex's enforced safety boundary, ScientistOne keeps that boundary, uses a safe in-scope alternative, and records the limitation instead of pausing to request a broader study approval. That tool belongs to the study, not to ScientistOne itself.

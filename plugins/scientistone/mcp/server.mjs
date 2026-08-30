@@ -9,6 +9,7 @@ import { pipeline } from "node:stream/promises";
 import { Transform } from "node:stream";
 import { promisify } from "node:util";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { applyParallelCapacityWithCodex, capacityStatusWithCodex, declineParallelCapacity } from "../skills/scientistone/scripts/capacity-preflight.mjs";
 import { loadModelPolicy, prepareRoleLaunch } from "./model-routing.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -20,6 +21,7 @@ const UI_ROOT = path.join(HERE, "ui");
 const COE = path.join(PLUGIN_ROOT, "skills", "scientistone", "scripts", "coe.mjs");
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
+const MONITOR_VERIFY_TTL_MS = 5 * 60 * 1000;
 const RESEARCHER_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
 const RESEARCHER_TIMEOUT_MESSAGE = "I see it's been an hour. I've saved everything—don't worry. When you're ready to get back into things, send me a message and I'll open it again.";
 const APPROVAL_AUTHORITY = "The researcher approved this study once and authorized autonomous safe in-scope execution and repair through the final verified deliverables. Do not request another approval.";
@@ -28,6 +30,9 @@ const EDITABLE_REVIEW_FIELDS = ["question", "objective", "materials", "prior_wor
 const REQUIRED_REVIEW_FIELDS = new Set(["question", "objective", "evaluation", "negative_or_inconclusive", "deliverables", "study_plan_markdown"]);
 const draftLocks = new Map();
 const draftEvents = new EventEmitter();
+const monitorIntegrityCache = new Map();
+const monitorIntegrityInflight = new Map();
+let capacityApproval;
 let webServer;
 let webPort;
 const webToken = randomBytes(24).toString("base64url");
@@ -571,13 +576,41 @@ function planQuestion(run) {
   return "ScientistOne study";
 }
 
-async function verifyRun(run) {
+async function verifyRun(run, options = {}) {
   try {
-    const { stdout } = await execFileAsync(process.execPath, [COE, "verify", run], { encoding: "utf8", timeout: 20000, maxBuffer: 1024 * 1024 });
+    if (options.verifyRunner) return await options.verifyRunner(run);
+    const { stdout } = await execFileAsync(process.execPath, [COE, "verify", run], { encoding: "utf8", timeout: 120_000, maxBuffer: 1024 * 1024 });
     return { ok: true, record: JSON.parse(stdout) };
-  } catch {
-    return { ok: false, record: null };
+  } catch (error) {
+    return { ok: false, record: null, error: error.message };
   }
+}
+
+function monitorIntegritySignature(record) {
+  const last = record.last_checkpoint;
+  return JSON.stringify([record.updated_at, record.state, record.phase, last, last === null ? null : record.checkpoints?.[last]?.receipt_sha256]);
+}
+
+async function monitorIntegrity(run, record, options = {}) {
+  const signature = monitorIntegritySignature(record);
+  const key = `${run}\0${signature}`;
+  const now = options.now ?? Date.now();
+  const cached = monitorIntegrityCache.get(run);
+  const ttl = cached?.ok ? (options.verifyTtlMs ?? MONITOR_VERIFY_TTL_MS) : Math.min(options.verifyTtlMs ?? MONITOR_VERIFY_TTL_MS, 30_000);
+  if (cached?.signature === signature && now - cached.checked_ms < ttl) return { ...cached, cached: true, authoritative: false };
+  if (monitorIntegrityInflight.has(key)) return monitorIntegrityInflight.get(key);
+  const promise = verifyRun(run, options).then((result) => {
+    const value = { ok: result.ok, record: result.record, signature, checked_ms: now, checked_at: new Date(now).toISOString(), cached: false, authoritative: false };
+    monitorIntegrityCache.set(run, value);
+    return value;
+  }).finally(() => monitorIntegrityInflight.delete(key));
+  monitorIntegrityInflight.set(key, promise);
+  return promise;
+}
+
+function clearMonitorIntegrityCache() {
+  monitorIntegrityCache.clear();
+  monitorIntegrityInflight.clear();
 }
 
 function invalidationReturns(run, phases) {
@@ -609,10 +642,10 @@ function invalidationReturns(run, phases) {
   return returns.slice(-3);
 }
 
-async function monitorSnapshot(run) {
+async function monitorSnapshot(run, options = {}) {
   const record = readJson(path.join(run, "run.json"));
   const phases = record.mode === "external_audit" ? ["contract", "audit", "complete"] : ["contract", "investigation", "discovery", "selection", "ablation", "writing", "verification", "audit", "complete"];
-  const integrity = await verifyRun(run);
+  const integrity = await monitorIntegrity(run, record, options);
   const launches = readJsonDirectory(path.join(run, "role-launches"));
   const receipts = readJsonDirectory(path.join(run, "role-receipts"));
   const completedTasks = new Set(receipts.map((item) => item.agent_task));
@@ -645,7 +678,15 @@ async function monitorSnapshot(run) {
     current_label: phaseLabels[record.phase] ?? "Study in progress",
     updated_at: record.updated_at,
     attention: Boolean(record.attention),
-    integrity: { ok: integrity.ok, message: integrity.ok ? "Saved evidence is consistent through the latest checkpoint." : "The saved evidence chain needs repair before this status can be treated as verified." },
+    integrity: {
+      ok: integrity.ok,
+      authoritative: false,
+      cached: integrity.cached,
+      checked_at: integrity.checked_at,
+      message: integrity.ok
+        ? `The latest checkpoint passed its monitor verification at ${integrity.checked_at}. Final delivery and task stop always run a fresh verifier.`
+        : `The latest monitor verification at ${integrity.checked_at} found that the saved evidence chain needs repair.`,
+    },
     progress,
     returns: invalidationReturns(run, phases),
     files,
@@ -798,6 +839,29 @@ function toolResult(value) {
 
 const tools = [
   {
+    name: "check_parallel_capacity",
+    description: "Run ScientistOne's one-time local Codex parallel-capacity preflight before intake. This fixed-purpose check reads no project or study content and returns whether to continue, ask the researcher once, or require a restart.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+  },
+  {
+    name: "decline_parallel_capacity",
+    description: "Record the researcher's explicit decision not to change the local Codex parallel-agent limit, so ScientistOne continues at available capacity without asking again.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {} },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+  },
+  {
+    name: "approve_parallel_capacity",
+    description: "After the researcher explicitly approves the capacity prompt, consume its one-use token and atomically set the local Codex parallel-agent limit to 16 through Codex's configuration service. This global config mutation is backed up, validated, conflict-safe, and restart-tracked.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["confirmation_token"],
+      properties: { confirmation_token: { type: "string", pattern: "^[0-9a-f-]{36}$" } },
+    },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+  },
+  {
     name: "start_study_setup",
     description: "Start ScientistOne's guided browser setup. Call this first for a new study or explicit setup resume; never launch the bundled server through a shell command.",
     inputSchema: {
@@ -935,7 +999,21 @@ const tools = [
   },
 ];
 
-async function callTool(name, args = {}) {
+async function callTool(name, args = {}, options = {}) {
+  if (name === "check_parallel_capacity") {
+    const result = await capacityStatusWithCodex(options);
+    capacityApproval = result.action === "prompt" ? { token: randomUUID(), expires_at: Date.now() + 10 * 60 * 1000 } : undefined;
+    return capacityApproval ? { ...result, confirmation_token: capacityApproval.token } : result;
+  }
+  if (name === "decline_parallel_capacity") {
+    capacityApproval = undefined;
+    return declineParallelCapacity(options);
+  }
+  if (name === "approve_parallel_capacity") {
+    if (!capacityApproval || capacityApproval.expires_at < Date.now() || args.confirmation_token !== capacityApproval.token) throw new Error("A fresh one-use capacity confirmation token is required. Run check_parallel_capacity before asking the researcher.");
+    capacityApproval = undefined;
+    return applyParallelCapacityWithCodex({ ...options, confirmed: true });
+  }
   await ensureWebServer();
   if (name === "start_study_setup") {
     const projectRoot = safeProjectRoot(args.project_root);
@@ -1041,4 +1119,4 @@ process.once("SIGINT", shutdown);
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) void runMcp();
 
-export { RESEARCHER_TIMEOUT_MESSAGE, RESEARCHER_WAIT_TIMEOUT_MS, callTool, createDraft, handleMessage, monitorSnapshot, readDraft, stop, updateDraft, waitForResearcher };
+export { RESEARCHER_TIMEOUT_MESSAGE, RESEARCHER_WAIT_TIMEOUT_MS, callTool, clearMonitorIntegrityCache, createDraft, handleMessage, monitorSnapshot, readDraft, stop, updateDraft, waitForResearcher };

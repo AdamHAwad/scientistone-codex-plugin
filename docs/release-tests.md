@@ -13,16 +13,23 @@ trace, and result. Save a screen recording when visual behavior matters.
 
 ## Positive cases
 
-1. In Codex desktop, `ScientistOne` starts the bundled MCP and opens the full-page setup guide in the built-in browser, with no inline form or remote page.
-2. Upload a file with the large drop field. Verify its bytes and SHA-256 under the active project's `.scientistone/intake/` tree.
-3. Submit the seven-step intake. Verify that the same tab shows the editable study plan and that no run exists before approval.
-4. Approve a smoke-test plan, initialize its run, and attach it. Verify that the same tab becomes the interactive flowchart and reads status from local `run.json` and receipts.
-5. Select a stage and specialist, pan, zoom, fit, reload, and change the run checkpoint. Verify the inspector, camera controls, integrity state, and live refresh.
-6. `Show the status of my latest ScientistOne study` reopens the local interactive monitor.
-7. `Audit this paper and evidence bundle with ScientistOne` creates an external-audit plan and does not start candidate research.
-8. Approve a research study, force a result-blind evaluator or verifier defect, and verify that the lead repairs and re-audits the same run without asking for approval, permission, authority, a restart, or a reply.
-9. Attempt to end the owning task while its approved run is `running`, `repairing`, `paused`, `failed`, or complete with a failing final verifier. Verify that the bundled Stop hook creates a continuation prompt. Verify that it permits stopping only after explicit cancellation or complete-state final verification.
-10. Remove an optional dependency, credential, hardware capability, or paid service from the approved environment. Verify that the run selects a safe in-scope fallback, writes the limitation, and continues through the paper and delivery audit without `attention.md`.
+1. With a fresh writable Codex profile below 16, invoke ScientistOne and verify
+   the exact one-time capacity prompt appears before intake. Decline and verify
+   later invocations continue silently without losing any study requirement.
+2. In another fresh profile, accept the capacity change. Verify an exact
+   private backup, canonical `[agents]` value 16, successful Codex validation,
+   and restart-required state until Codex restarts. Verify an existing value
+   above 16 is never lowered.
+3. In Codex desktop, `ScientistOne` starts the bundled MCP and opens the full-page setup guide in the built-in browser, with no inline form or remote page.
+4. Upload a file with the large drop field. Verify its bytes and SHA-256 under the active project's `.scientistone/intake/` tree.
+5. Submit the seven-step intake. Verify that the same tab shows the editable study plan and that no run exists before approval.
+6. Approve a smoke-test plan, initialize its run, and attach it. Verify that the same tab becomes the interactive flowchart and reads status from local `run.json` and receipts.
+7. Select a stage and specialist, pan, zoom, fit, reload, and change the run checkpoint. Verify the inspector, camera controls, latest-checkpoint integrity state, and live refresh.
+8. `Show the status of my latest ScientistOne study` reopens the local interactive monitor.
+9. `Audit this paper and evidence bundle with ScientistOne` creates an external-audit plan and does not start candidate research.
+10. Approve a research study, force a result-blind evaluator or verifier defect, and verify that the lead repairs and re-audits the same run without asking for approval, permission, authority, a restart, or a reply.
+11. Attempt to end the owning task while its approved run is `running`, `repairing`, `paused`, `failed`, or complete with a failing final verifier. Verify that the bundled Stop hook creates a continuation prompt. Verify that it permits stopping only after explicit cancellation or complete-state final verification.
+12. Remove an optional dependency, credential, hardware capability, or paid service from the approved environment. Verify that the run selects a safe in-scope fallback, writes the limitation, and continues through the paper and delivery audit without `attention.md`.
 
 ## Negative cases
 
@@ -31,6 +38,12 @@ trace, and result. Save a screen recording when visual behavior matters.
 3. Confirm that the browser UI makes no request to a ScientistOne-owned domain and exposes no remote upload path.
 4. On any surface that cannot start the bundled MCP or show the built-in browser, use the text setup without claiming that the browser opened.
 5. On a surface without project files, a terminal, or native subagents, report the missing capability and do not claim that a study started.
+6. Make Codex config read-only, symlink-managed, malformed, or explicitly
+   V2-overridden. Verify the preflight does not rewrite it, records a durable
+   limited decision when possible, and proceeds without reducing study depth.
+7. Force validation failure, state-write failure, timeout, and a concurrent
+   external config edit. Verify safe rollback where ownership is unchanged and
+   verify the external edit is never overwritten.
 
 ## Privacy checks
 

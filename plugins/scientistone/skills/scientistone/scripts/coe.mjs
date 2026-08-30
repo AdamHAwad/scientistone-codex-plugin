@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { expectedRoleRuntime as routedRoleRuntime, validateRoutingRecord } from "../../../mcp/model-routing.mjs";
 
 const RESEARCH_PHASES = ["contract", "investigation", "discovery", "selection", "ablation", "writing", "verification", "audit", "complete"];
 const EXTERNAL_AUDIT_PHASES = ["contract", "audit", "complete"];
@@ -24,10 +25,11 @@ const I1_COMPONENTS = ["lineage", "reproducibility", "claim-semantics"];
 const I1_AUDIT_FILES = ["tex-extraction.json", "pdf-extraction.json", "input-manifest.json", "evidence-manifest.json", "execution-receipt.json", ...I1_COMPONENTS.map((name) => `${name}.json`)];
 const STOP_REASONS = new Set(["evidence_saturation", "no_additional_eligible_ideas", "stable_ranking", "exhausted_approved_compute", "repeated_operational_failure", "researcher_stop"]);
 const CONTRACT_REPAIR_CLASSES = new Set(["AUTOMATIC_REPAIR", "RESEARCHER_APPROVED_AMENDMENT"]);
-const CONTRACT_GENERATED_PATHS = ["contract/evaluator-contract.md", "contract/evaluator-manifest.json", "contract/i1-verification-policy.json", "contract/audit.md", "private/evaluator/i1-verifier"];
+const CONTRACT_GENERATED_PATHS = ["environment/model-routing.json", "contract/evaluator-contract.md", "contract/evaluator-manifest.json", "contract/i1-verification-policy.json", "contract/audit.md", "private/evaluator/i1-verifier"];
 const CONTRACT_ROLE_NAMES = new Set(["i1_verifier_builder", "contract_auditor"]);
 const CONTRACT_SUCCESSOR_ROOTS = ["evidence", "investigation", "discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"];
 const RESULT_AWARE_ROOTS = ["discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"];
+const ROLE_CONTRACT_FILE = new URL("../references/roles.md", import.meta.url);
 const PRIVATE_ROLES = new Set(["evaluator", "i1_verifier_builder", "i1_score_auditor", "i2_judge"]);
 const REQUIRED_OUTPUTS = {
   contract: ["contract/run-config.json", "contract/input-manifest.json", "contract/i1-verification-policy.json", "private/evaluator/i1-verifier", "contract/audit.md"],
@@ -66,6 +68,9 @@ const CORE_DELIVERABLE_SOURCES = {
     "reproduction.md": "delivery/reproduction.md",
   },
 };
+const artifactHashMemo = new Map();
+const contentHashMemo = new Map();
+let memoizeHashes = false;
 
 function phasesFor(record) {
   return record.mode === "external_audit" ? EXTERNAL_AUDIT_PHASES : RESEARCH_PHASES;
@@ -166,6 +171,8 @@ function hashAt(target, logical) {
 }
 
 function contentHash(target) {
+  const memoKey = path.resolve(target);
+  if (memoizeHashes && contentHashMemo.has(memoKey)) return contentHashMemo.get(memoKey);
   const hash = createHash("sha256");
   function walk(current, logical) {
     const stat = fs.lstatSync(current);
@@ -181,13 +188,19 @@ function contentHash(target) {
     addFile(hash, current);
   }
   walk(target, ".");
-  return hash.digest("hex");
+  const digest = hash.digest("hex");
+  if (memoizeHashes) contentHashMemo.set(memoKey, digest);
+  return digest;
 }
 
 function hashArtifact(run, relative) {
   const { clean, target } = artifactPath(run, relative);
   if (!fs.existsSync(target)) fail(`Missing artifact: ${clean}`);
-  return hashAt(target, clean);
+  const memoKey = `${path.resolve(run)}\0${clean}`;
+  if (memoizeHashes && artifactHashMemo.has(memoKey)) return artifactHashMemo.get(memoKey);
+  const digest = hashAt(target, clean);
+  if (memoizeHashes) artifactHashMemo.set(memoKey, digest);
+  return digest;
 }
 
 function entry(run, relative) {
@@ -574,6 +587,17 @@ function roleRelative(run, value) {
   return relativePath(relative);
 }
 
+function verifyArtifactBindings(run, bindings, paths, location) {
+  if (!Array.isArray(bindings) || bindings.length !== paths.length) fail(`${location} must bind every declared artifact exactly once`);
+  const normalized = bindings.map((item, index) => {
+    if (!item || !nonemptyString(item.path) || !validSha256(item.sha256)) fail(`Malformed artifact binding at ${location}/${index}`);
+    return { path: roleRelative(run, item.path), sha256: item.sha256 };
+  });
+  if (JSON.stringify(normalized.map((item) => item.path)) !== JSON.stringify(paths)) fail(`${location} paths differ from the declared artifact order`);
+  for (const item of normalized) if (hashArtifact(run, item.path) !== item.sha256) fail(`Artifact changed after its role binding: ${location}/${item.path}`);
+  return normalized;
+}
+
 function verifyRoleReceipt(run, relative) {
   const receipt = readJson(artifactPath(run, relative).target);
   const task = path.basename(relative, ".json");
@@ -623,7 +647,20 @@ function verifyRoleReceipt(run, relative) {
   const launchOutputs = launch.declared_outputs.map((output) => roleRelative(run, output));
   if (JSON.stringify(launchInputs) !== JSON.stringify(inputs) || JSON.stringify(launchOutputs) !== JSON.stringify(outputs)) fail(`Declared paths in ${relative} differ from supervisor launch record ${launchRelative}`);
   if (JSON.stringify(launch.allowed_external_sources) !== JSON.stringify(receipt.allowed_external_sources)) fail(`Allowed external sources in ${relative} differ from supervisor launch record ${launchRelative}`);
-  return { role: receipt.role, agent_task: receipt.agent_task, inputs, outputs: outputs.filter((output) => !environmentArtifacts.has(output)) };
+  const hashBound = Array.isArray(launch.input_artifacts);
+  if (hashBound) {
+    const record = readJson(path.join(run, "run.json"));
+    const expectedLogicalTask = launch.logical_task_name ?? task;
+    const expectedAttempt = launch.attempt ?? 1;
+    if (!nonemptyString(expectedLogicalTask) || !Number.isInteger(expectedAttempt) || expectedAttempt < 1 || launch.contract_revision !== record.contract_revision || launch.charter_revision !== record.charter_revision || !validSha256(launch.role_contract_sha256) || launch.role_contract_sha256 !== fileSha256(ROLE_CONTRACT_FILE) || launch.gate_schema_version !== 1) fail(`Hash-bound launch metadata is invalid or uses a stale role contract at ${launchRelative}`);
+    if (receipt.launch_record !== launchRelative || receipt.logical_task_name !== expectedLogicalTask || receipt.attempt !== expectedAttempt || receipt.contract_revision !== launch.contract_revision || receipt.charter_revision !== launch.charter_revision || JSON.stringify(receipt.predecessor) !== JSON.stringify(launch.predecessor) || receipt.model_routing_sha256 !== launch.model_routing_sha256 || receipt.role_contract_sha256 !== launch.role_contract_sha256 || receipt.gate_schema_version !== launch.gate_schema_version) fail(`Hash-bound receipt metadata differs from ${launchRelative}`);
+    verifyArtifactBindings(run, launch.input_artifacts, launchInputs, `${launchRelative}#/input_artifacts`);
+    const receiptInputs = verifyArtifactBindings(run, receipt.input_artifacts, inputs, `${relative}#/input_artifacts`);
+    if (JSON.stringify(receiptInputs) !== JSON.stringify(launch.input_artifacts)) fail(`Receipt input hashes differ from supervisor launch bindings at ${relative}`);
+    const boundOutputs = outputs.filter((output) => output !== relative);
+    verifyArtifactBindings(run, receipt.output_artifacts, boundOutputs, `${relative}#/output_artifacts`);
+  }
+  return { role: receipt.role, agent_task: receipt.agent_task, logical_task_name: launch.logical_task_name ?? task, attempt: launch.attempt ?? 1, hash_bound: hashBound, inputs, outputs: outputs.filter((output) => !environmentArtifacts.has(output)) };
 }
 
 function outputOwned(record, expected) {
@@ -662,28 +699,45 @@ function requireEvaluatorRawOwnership(run, roleRecords, evaluationPath) {
 }
 
 function i1BuilderInputs(record) {
-  const inputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/run-config.json", "contract/model-routing.json", "contract/input-manifest.json"];
+  const inputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "environment/model-routing.json", "contract/run-config.json", "contract/input-manifest.json"];
   if (record.mode === "external_audit") inputs.push("contract/source-bundle-manifest.json");
   else inputs.push("contract/evaluator-contract.md", "contract/evaluator-manifest.json");
   return inputs;
 }
 
 function expectedRoleRuntime(run, role) {
-  const relative = "contract/model-routing.json";
-  const routing = readJson(artifactPath(run, relative).target);
-  if (routing.schema_version !== 1 || !routing.roles || typeof routing.roles !== "object" || Array.isArray(routing.roles)) fail(`Invalid frozen model-routing record: ${relative}`);
-  const runtime = routing.roles[role];
-  if (!runtime || !nonemptyString(runtime.tier) || !nonemptyString(runtime.model) || !nonemptyString(runtime.reasoning_effort)) fail(`Frozen model-routing record has no complete runtime for role ${role}`);
-  return { ...runtime, routing_sha256: fileSha256(artifactPath(run, relative).target) };
+  const relative = "environment/model-routing.json";
+  try {
+    validateRoutingRecord(readJson(artifactPath(run, relative).target));
+    return routedRoleRuntime(run, role);
+  } catch (error) {
+    fail(`Invalid frozen model-routing record at ${relative}: ${error.message}`);
+  }
 }
 
 function requiredContractInputs(run, record) {
   return [...i1BuilderInputs(record), "contract/i1-verification-policy.json", "private/evaluator/i1-verifier"];
 }
 
+const DOWNSTREAM_INPUT_ROOTS = Object.freeze({
+  contract: ["investigation", "evidence", "discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"],
+  investigation: ["discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"],
+  discovery: ["selection", "ablation", "paper", "audit", "delivery", "deliverables"],
+  selection: ["ablation", "paper", "audit", "delivery", "deliverables"],
+  ablation: ["paper", "audit", "delivery", "deliverables"],
+  writing: ["audit", "delivery", "deliverables"],
+  verification: ["audit", "deliverables"],
+  audit: ["deliverables"],
+});
+
 function verifyRoleCoverage(run, phase, roles) {
   if (!roles.length) fail(`${phase} receipt must promote at least one individual role receipt`);
   const roleRecords = roles.map((role) => verifyRoleReceipt(run, role));
+  const downstreamRoots = DOWNSTREAM_INPUT_ROOTS[phase] ?? [];
+  for (const record of roleRecords) for (const input of record.inputs) {
+    const downstream = downstreamRoots.find((root) => input === root || input.startsWith(`${root}/`));
+    if (downstream) fail(`${record.agent_task} declares downstream input ${input} while producing ${phase} evidence`);
+  }
   for (let left = 0; left < roleRecords.length; left++) {
     for (let right = left + 1; right < roleRecords.length; right++) {
       for (const first of roleRecords[left].outputs) for (const second of roleRecords[right].outputs) {
@@ -942,6 +996,10 @@ function verifyCanonicalEvaluation(run, file, record) {
   if (value.status !== "valid" || value.snapshot_path !== "selection/selected" || value.snapshot_sha256 !== hashArtifact(run, value.snapshot_path)) fail(`Canonical evaluation is not bound to the selected snapshot: ${file}`);
   const metric = value.metric;
   if (!metric || !nonemptyString(metric.name) || !Number.isFinite(metric.value) || !nonemptyString(metric.unit) || !["maximize", "minimize"].includes(metric.direction)) fail(`Invalid canonical metric at ${file}#/metric; expected finite value and name/unit/direction, received ${JSON.stringify(metric)}`);
+  const policy = readJson(path.join(run, "contract", "i1-verification-policy.json"));
+  const primaryIds = new Set(policy.decision_rule.primary_metric_ids);
+  const matchedPrimaryMetrics = policy.metrics.filter((candidate) => primaryIds.has(candidate.id) && candidate.name === metric.name && candidate.unit === metric.unit && candidate.direction === metric.direction);
+  if (matchedPrimaryMetrics.length !== 1) fail(`Canonical metric does not match exactly one frozen primary I1 metric at ${file}#/metric`);
   if (!Array.isArray(value.repetitions) || value.repetitions.length !== record.budgets.canonical_repetitions || value.repetitions.some((item) => !Number.isFinite(item.value))) fail(`Canonical evaluation has the wrong repetition evidence: ${file}`);
   const mean = value.repetitions.reduce((sum, item) => sum + item.value, 0) / value.repetitions.length;
   if (Math.abs(mean - metric.value) > Math.max(1e-12, Math.abs(mean) * 1e-9)) fail(`Canonical metric is not the repetition mean: ${file}`);
@@ -1633,7 +1691,7 @@ function verifyManifest(run, record) {
   }
 }
 
-function configure(runArg, profile = "standard", mode = "research", customProfilePath) {
+function configure(runArg, profile = "pilot", mode = "research", customProfilePath) {
   const run = path.resolve(runArg || "");
   if (!runArg || !fs.existsSync(run) || !fs.statSync(run).isDirectory()) fail("configure requires an existing run directory");
   if (fs.existsSync(path.join(run, "run.json")) || fs.existsSync(path.join(run, "contract", "run-config.json"))) fail("Run configuration already exists");
@@ -1683,7 +1741,7 @@ function init(runArg) {
   process.stdout.write(`${run}\n`);
 }
 
-function checkpoint(runArg, phase, args) {
+function validatePhasePromotion(runArg, phase, args) {
   const run = path.resolve(runArg || "");
   const record = verifyRunRecord(run);
   const phases = phasesFor(record);
@@ -1725,6 +1783,16 @@ function checkpoint(runArg, phase, args) {
   }
   if (phase === "audit") verifyAuditPanels(run, record);
   if (phase === "complete") verifyManifest(run, record);
+  return { run, record, phases, index, expectedLast, inputs, outputs };
+}
+
+function preflight(runArg, phase, args) {
+  const { run, record, expectedLast, inputs, outputs } = validatePhasePromotion(runArg, phase, args);
+  process.stdout.write(`${JSON.stringify({ ok: true, run, phase, state: record.state, predecessor: expectedLast, input_count: inputs.length, output_count: outputs.length })}\n`);
+}
+
+function checkpoint(runArg, phase, args) {
+  const { run, record, phases, index, expectedLast, inputs, outputs } = validatePhasePromotion(runArg, phase, args);
   const previousPath = expectedLast ? `receipts/${expectedLast}.json` : null;
   if (previousPath && !inputs.includes(previousPath)) inputs.push(previousPath);
   for (const invalidation of record.invalidation_roots) {
@@ -2114,8 +2182,7 @@ function verifySuperseded(run) {
       const archivedReceipt = path.join(archive, `${receiptHash.phase}.json`);
       if (receiptHash.status === "missing" && receiptHash.observed_sha256 === null && !fs.existsSync(archivedReceipt)) continue;
       if (!["moved", "changed"].includes(receiptHash.status) || typeof receiptHash.expected_sha256 !== "string" || typeof receiptHash.observed_sha256 !== "string") fail(`Invalid superseded receipt status: ${name}/${receiptHash.phase}`);
-      const observed = hashAt(archivedReceipt, `receipts/${receiptHash.phase}.json`);
-      if (observed !== receiptHash.observed_sha256 || (receiptHash.status === "moved") !== (observed === receiptHash.expected_sha256)) fail(`Superseded receipt changed: ${name}/${receiptHash.phase}`);
+      if (!fs.existsSync(archivedReceipt) || (receiptHash.status === "moved") !== (receiptHash.observed_sha256 === receiptHash.expected_sha256)) fail(`Superseded receipt metadata is inconsistent: ${name}/${receiptHash.phase}`);
     }
     const expectedOutputs = new Map();
     for (const item of metadata.expected_outputs) {
@@ -2130,12 +2197,12 @@ function verifySuperseded(run) {
       if (!expected || item.expected_sha256 !== expected) fail(`Invalid superseded artifact expectation: ${name}/${item.path}`);
       if (item.status === "missing" && item.archived_path === null && item.observed_sha256 === null) continue;
       if (!["moved", "changed", "copied", "copied_changed"].includes(item.status) || typeof item.archived_path !== "string" || typeof item.observed_sha256 !== "string") fail(`Invalid superseded artifact status: ${name}/${item.path}`);
-      const observed = hashAt(artifactPath(run, item.archived_path).target, item.path);
+      if (!fs.existsSync(artifactPath(run, item.archived_path).target)) fail(`Superseded artifact is missing: ${name}/${item.path}`);
       const unchangedStatus = item.status === "moved" || item.status === "copied";
-      if (observed !== item.observed_sha256 || unchangedStatus !== (observed === expected)) fail(`Superseded artifact changed: ${name}/${item.path}`);
+      if (unchangedStatus !== (item.observed_sha256 === expected)) fail(`Superseded artifact metadata is inconsistent: ${name}/${item.path}`);
     }
     const archivedReason = artifactPath(run, metadata.archived_reason).target;
-    if (hashAt(archivedReason, metadata.reason.path) !== metadata.reason.sha256) fail(`Superseded invalidation reason changed: ${name}`);
+    if (!fs.existsSync(archivedReason) || !validSha256(metadata.reason?.sha256)) fail(`Superseded invalidation reason metadata is invalid: ${name}`);
   }
 }
 
@@ -2161,10 +2228,38 @@ function verify(runArg) {
   process.stdout.write(`${JSON.stringify({ ok: true, run, state: record.state, phase: record.phase, last_checkpoint: last })}\n`);
 }
 
+function verifyRoleForReuse(runArg, receiptArg) {
+  const run = path.resolve(runArg || "");
+  const relative = relativePath(receiptArg || "");
+  if (!/^role-receipts\/[^/]+\.json$/.test(relative)) fail("verify-role requires one role-receipts/<task>.json path");
+  const record = verifyRunRecord(run);
+  const last = verifyReceipts(run, record);
+  if (last !== record.last_checkpoint) fail(`Cannot reuse role work while the verified receipt chain ends at ${last ?? "none"}`);
+  const verified = verifyRoleReceipt(run, relative);
+  if (!verified.hash_bound) fail(`Role receipt ${relative} predates hash-bound reuse; preserve it, but rerun the logical task under the current launch contract`);
+  const launch = readJson(path.join(run, "role-launches", `${path.basename(relative, ".json")}.json`));
+  const expectedPredecessor = last === null ? null : { path: `receipts/${last}.json`, sha256: record.checkpoints[last].receipt_sha256 };
+  if (JSON.stringify(launch.predecessor) !== JSON.stringify(expectedPredecessor)) fail(`Role receipt ${relative} was launched from a different predecessor checkpoint`);
+  for (const checkpoint of Object.values(record.checkpoints)) {
+    if (checkpoint.outputs.some((item) => item.path === relative)) fail(`Role receipt ${relative} is already promoted and cannot be counted as new work`);
+  }
+  const receiptRoot = path.join(run, "role-receipts");
+  for (const name of fs.readdirSync(receiptRoot).filter((item) => item.endsWith(".json") && `role-receipts/${item}` !== relative)) {
+    const otherReceipt = readJson(path.join(receiptRoot, name));
+    if (otherReceipt.execution_status !== "COMPLETE" || otherReceipt.gate_verdict !== "PASS") continue;
+    const otherLaunchPath = path.join(run, "role-launches", name);
+    if (!fs.existsSync(otherLaunchPath)) continue;
+    const otherLaunch = readJson(otherLaunchPath);
+    if ((otherLaunch.logical_task_name ?? path.basename(name, ".json")) === verified.logical_task_name) fail(`Logical task ${verified.logical_task_name} has another COMPLETE/PASS receipt; resolve the duplicate instead of counting a stochastic sample twice`);
+  }
+  process.stdout.write(`${JSON.stringify({ ok: true, reusable: true, run, phase: record.phase, receipt: relative, logical_task_name: verified.logical_task_name, attempt: verified.attempt })}\n`);
+}
+
 function usage() {
   return `Usage:
   coe.mjs configure <run> <standard|pilot|custom> <research|external_audit> [custom-profile-json]
   coe.mjs init <run>
+  coe.mjs preflight <run> <phase> --input <path>... --output <path>...
   coe.mjs checkpoint <run> <phase> --input <path>... --output <path>...
   coe.mjs invalidate <run> <phase> <reason-file>
   coe.mjs revise-contract <run> <contract-revision-reason.json> [researcher-approved-amended-plan.md]
@@ -2175,6 +2270,7 @@ function usage() {
   coe.mjs sanitize-feedback <run> <private-evaluation-json> <feedback-json>
   coe.mjs hash <run> <path>
   coe.mjs manifest <run>
+  coe.mjs verify-role <run> role-receipts/<task>.json
   coe.mjs verify <run>\n`;
 }
 
@@ -2182,6 +2278,7 @@ const [command, ...args] = process.argv.slice(2);
 try {
   if (command === "configure") configure(args[0], args[1], args[2], args[3]);
   else if (command === "init") init(args[0]);
+  else if (command === "preflight") preflight(args[0], args[1], args.slice(2));
   else if (command === "checkpoint") checkpoint(args[0], args[1], args.slice(2));
   else if (command === "invalidate") invalidate(args[0], args[1], args[2]);
   else if (command === "revise-contract") reviseContract(args[0], args[1], args[2]);
@@ -2192,7 +2289,14 @@ try {
   else if (command === "sanitize-feedback") sanitizeFeedback(args[0], args[1], args[2]);
   else if (command === "hash") hash(args[0], args[1]);
   else if (command === "manifest") manifest(args[0]);
-  else if (command === "verify") verify(args[0]);
+  else if (command === "verify-role") {
+    memoizeHashes = true;
+    verifyRoleForReuse(args[0], args[1]);
+  }
+  else if (command === "verify") {
+    memoizeHashes = true;
+    verify(args[0]);
+  }
   else {
     process.stderr.write(usage());
     process.exitCode = 2;

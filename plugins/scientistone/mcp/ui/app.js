@@ -1059,7 +1059,7 @@ function renderMonitor(data) {
   const focusedTask = document.activeElement?.dataset?.task;
   if (hadMonitor) announce(`${data.current_label}. The study monitor has new saved progress.`);
   lastMonitorSignature = signature;
-  const integrityLabel = data.integrity.ok ? "Study record verified" : "Study record needs repair";
+  const integrityLabel = data.integrity.ok ? "Latest checkpoint verified" : "Study record needs repair";
   app.innerHTML = `
     <main class="monitor-shell">
       <header class="monitor-bar">

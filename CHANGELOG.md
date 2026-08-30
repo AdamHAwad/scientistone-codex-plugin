@@ -2,6 +2,24 @@
 
 This project follows Semantic Versioning.
 
+## 1.2.0 - 2026-08-30
+
+- Added dependency-ready scheduling for independent literature, candidate,
+  ablation, and final-audit work while retaining every causal barrier,
+  repetition, evidence requirement, and evaluator resource limit.
+- Added exact hash-bound role launches and read-only resume validation so an
+  interrupted run can reuse valid work without duplicating a sample or trusting
+  stale prompt, routing, predecessor, input, or output state.
+- Added a one-time opt-in Codex capacity preflight for up to 16 parallel
+  specialists, with a private exact backup, atomic validation and rollback,
+  durable restart detection, managed-config fallback, and no repeated prompt.
+- Cached the live model catalog and unchanged in-progress monitor verification
+  with single-flight loading; final delivery and task stopping still verify
+  freshly, and frozen route changes still require an audited contract revision.
+- Compacted the repeated role envelope, kept xhigh reasoning and the paper's
+  pilot profile as the default, left larger standard budgets opt-in, and added
+  adversarial scheduler, routing, resume, mutation, cache, and capacity tests.
+
 ## 1.1.4 - 2026-08-29
 
 - Made **Approve and start study** the single durable approval for safe in-scope execution and same-run contract repair through verified delivery.

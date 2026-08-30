@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { markerPath, registerActiveRun, stopDecision } from "../hooks/enforce-study-autonomy.mjs";
+import { markerPath, registerActiveRun, stopDecision } from "../../plugins/scientistone/hooks/enforce-study-autonomy.mjs";
 
 function fixture(t, state = "running", phase = "contract") {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-autonomy-project-"));

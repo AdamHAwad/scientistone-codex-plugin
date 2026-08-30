@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import process from "node:process";
@@ -10,75 +10,78 @@ const destination = path.join(root, "dist", "scientistone");
 const files = [
   ".codex-plugin/plugin.json",
   ".mcp.json",
+  "ATTRIBUTIONS.md",
   "DESIGN.md",
+  "LICENSE",
+  "NOTICE",
+  "THIRD_PARTY_NOTICES.md",
   "assets/logo.png",
   "assets/logo.svg",
-];
+  "hooks/enforce-role-launch.mjs",
+  "hooks/enforce-study-autonomy.mjs",
+  "hooks/hooks.json",
+  "licenses/NEWSREADER-LICENSE",
+  "licenses/PHOSPHOR-LICENSE",
+  "mcp/model-routing.mjs",
+  "mcp/server.mjs",
+  "mcp/ui/app.css",
+  "mcp/ui/app.js",
+  "mcp/ui/index.html",
+  "mcp/ui/newsreader-latin-600-normal.woff2",
+  "scripts/launch-scientistone-mcp",
+  "scripts/launch-scientistone-mcp.cmd",
+  "skills/scientistone-monitor/SKILL.md",
+  "skills/scientistone-monitor/agents/openai.yaml",
+  "skills/scientistone-monitor/assets/logo.svg",
+  "skills/scientistone-results/SKILL.md",
+  "skills/scientistone-results/agents/openai.yaml",
+  "skills/scientistone-results/assets/logo.svg",
+  "skills/scientistone/SKILL.md",
+  "skills/scientistone/agents/openai.yaml",
+  "skills/scientistone/assets/logo.svg",
+  "skills/scientistone/references/artifacts.md",
+  "skills/scientistone/references/doctrine.md",
+  "skills/scientistone/references/i1-verification-policy.schema.json",
+  "skills/scientistone/references/i1-verification.md",
+  "skills/scientistone/references/intake.md",
+  "skills/scientistone/references/model-policy.json",
+  "skills/scientistone/references/protocol.md",
+  "skills/scientistone/references/roles.md",
+  "skills/scientistone/scripts/capacity-preflight.mjs",
+  "skills/scientistone/scripts/coe.mjs",
+  "skills/scientistone/scripts/scheduler.mjs",
+].sort();
 
-async function requireRegularFile(relative) {
-  const absolute = path.join(source, relative);
-  let info;
-  try {
-    info = await stat(absolute);
-  } catch {
-    throw new Error(`Missing release file: plugins/scientistone/${relative}`);
+async function inventory(directory, relative = "") {
+  const found = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const childRelative = path.posix.join(relative, entry.name);
+    if (entry.isSymbolicLink()) throw new Error(`Plugin source entry must not be a symbolic link: ${childRelative}`);
+    if (entry.isDirectory()) found.push(...await inventory(path.join(directory, entry.name), childRelative));
+    else if (entry.isFile()) found.push(childRelative);
+    else throw new Error(`Plugin source entry must be a regular file or directory: ${childRelative}`);
   }
-  if (!info.isFile() || info.isSymbolicLink()) {
-    throw new Error(`Release file must be a regular file: plugins/scientistone/${relative}`);
-  }
-  return absolute;
+  return found.sort();
+}
+
+const observed = await inventory(source);
+if (JSON.stringify(observed) !== JSON.stringify(files)) {
+  const allowed = new Set(files);
+  const actual = new Set(observed);
+  const missing = files.filter((file) => !actual.has(file));
+  const extra = observed.filter((file) => !allowed.has(file));
+  throw new Error(`Plugin source differs from the release allowlist. Missing: ${missing.join(", ") || "none"}. Extra: ${extra.join(", ") || "none"}.`);
 }
 
 await rm(destination, { recursive: true, force: true });
 await mkdir(destination, { recursive: true });
-
 for (const relative of files) {
-  const from = await requireRegularFile(relative);
-  const to = path.join(destination, relative);
-  await mkdir(path.dirname(to), { recursive: true });
-  await cp(from, to, { dereference: false, errorOnExist: true });
+  const target = path.join(destination, relative);
+  await mkdir(path.dirname(target), { recursive: true });
+  await cp(path.join(source, relative), target, { dereference: false, errorOnExist: true });
 }
 
-const packagedManifestPath = path.join(destination, ".codex-plugin", "plugin.json");
-const packagedManifest = JSON.parse(await readFile(packagedManifestPath, "utf8"));
-packagedManifest.mcpServers = "./.mcp.json";
-packagedManifest.hooks = "./hooks/hooks.json";
-await writeFile(packagedManifestPath, `${JSON.stringify(packagedManifest, null, 2)}\n`, "utf8");
+const packaged = await inventory(destination);
+if (JSON.stringify(packaged) !== JSON.stringify(files)) throw new Error("Packaged plugin differs from the exact release allowlist.");
 
-for (const relative of ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "ATTRIBUTIONS.md"]) {
-  await cp(path.join(root, relative), path.join(destination, relative), {
-    dereference: false,
-    errorOnExist: true,
-  });
-}
-
-await cp(path.join(source, "skills"), path.join(destination, "skills"), {
-  recursive: true,
-  dereference: false,
-  filter: (entry) => !entry.endsWith(".DS_Store"),
-});
-
-for (const directory of ["mcp", "scripts", "hooks", "licenses"]) {
-  await cp(path.join(source, directory), path.join(destination, directory), {
-    recursive: true,
-    dereference: false,
-    filter: (entry) => !entry.endsWith(".DS_Store"),
-  });
-}
-
-await rm(path.join(destination, ".DS_Store"), { force: true });
-
-async function verifyBundle(directory, relative = "") {
-  for (const entry of await readdir(directory, { withFileTypes: true })) {
-    const childRelative = path.join(relative, entry.name);
-    if (entry.name === ".DS_Store" || entry.name === "node_modules" || entry.name === "test") {
-      throw new Error(`Forbidden release entry: ${childRelative}`);
-    }
-    if (entry.isSymbolicLink()) throw new Error(`Release entry must not be a symbolic link: ${childRelative}`);
-    if (entry.isDirectory()) await verifyBundle(path.join(directory, entry.name), childRelative);
-  }
-}
-
-await verifyBundle(destination);
-
-process.stdout.write(`Built ${destination}\n`);
+process.stdout.write(`Built ${destination} from ${files.length} allowlisted files\n`);
