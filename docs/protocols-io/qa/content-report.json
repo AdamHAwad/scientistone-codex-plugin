@@ -9,7 +9,11 @@
     "no_personal_absolute_paths": true,
     "no_secret_assignments": true,
     "all_images_have_descriptive_alt_text": true,
+    "setup_screenshots_keep_desktop_proportions": true,
     "no_em_dash": true,
+    "uses_approve_for_me": true,
+    "does_not_teach_ask_for_approval": true,
+    "research_teams_are_named_ai_teams": true,
     "no_terminal_install_path": true,
     "no_public_directory_assumption": true
   },
@@ -25,6 +29,44 @@
     "mean_difference_cm": 1.292,
     "personal_path_hits": [],
     "secret_assignment_count": 0,
-    "weak_alt_texts": []
+    "weak_alt_texts": [],
+    "screenshot_sizes": {
+      "01-research-question.png": [
+        1320,
+        1000
+      ],
+      "02-purpose.png": [
+        1320,
+        1000
+      ],
+      "03-files.png": [
+        1320,
+        1000
+      ],
+      "04-prior-work.png": [
+        1320,
+        1000
+      ],
+      "05-evaluation.png": [
+        1320,
+        1000
+      ],
+      "06-limits.png": [
+        1320,
+        1000
+      ],
+      "07-review-request.png": [
+        1268,
+        1323
+      ],
+      "08-waiting.png": [
+        1280,
+        720
+      ],
+      "09-plan-review.png": [
+        1308,
+        991
+      ]
+    }
   }
 }

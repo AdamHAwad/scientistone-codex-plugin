@@ -22,10 +22,10 @@ The browser UI bundles its HTML, CSS, JavaScript, logo, icon data, and font. It 
 The optional model-routing tool may execute the Codex CLI already supplied by
 Codex to read the local model catalog. The capacity preflight uses that same
 bundled CLI's App Server `config/read` and versioned `config/batchWrite`
-methods. Neither contacts a ScientistOne service.
+methods. Neither contacts a Scientist1 service.
 
 ## Study dependencies
 
-A research method may need a package, compiler, dataset, or system capability named by the approved study. ScientistOne uses the smallest compatible existing or project-local dependency covered by the approved plan. If that exact path is unavailable or would require authority outside the plan, it chooses a safe in-scope alternative and carries the limitation into the paper instead of pausing for another study approval. These are study dependencies, not plugin installation dependencies.
+A research method may need a package, compiler, dataset, or system capability named by the approved study. Scientist1 uses the smallest compatible existing or project-local dependency covered by the approved plan. If that exact path is unavailable or would require authority outside the plan, it chooses a safe in-scope alternative and carries the limitation into the paper instead of pausing for another study approval. These are study dependencies, not plugin installation dependencies.
 
 Codex may contact OpenAI services and sources approved by the study. Those calls run through Codex or project tools under the researcher's settings.

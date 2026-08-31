@@ -1,6 +1,6 @@
 # Practice data
 
-`bean-seedling-growth.csv` is a made-up dataset for the ScientistOne beginner protocol. It has 24 rows, with 12 seedlings in each light group. No real experiment, person, animal, or private record is represented.
+`bean-seedling-growth.csv` is a made-up dataset for the Scientist1 beginner protocol. It has 24 rows, with 12 seedlings in each light group. No real experiment, person, animal, or private record is represented.
 
 For each row:
 

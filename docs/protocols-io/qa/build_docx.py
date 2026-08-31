@@ -10,6 +10,7 @@ from PIL import Image
 from docx import Document
 from docx.enum.section import WD_SECTION
 from docx.enum.style import WD_STYLE_TYPE
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -17,8 +18,8 @@ from docx.shared import Inches, Pt, RGBColor
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "scientistone-beginner-protocol.md"
-OUTPUT = ROOT / "scientistone-beginner-protocol.docx"
+SOURCE = ROOT / "scientist1-beginner-protocol.md"
+OUTPUT = ROOT / "scientist1-beginner-protocol.docx"
 
 NAVY = "1D3230"
 TEAL = "2E6B62"
@@ -67,6 +68,80 @@ def left_border(paragraph, color: str, size="18", space="8"):
     left.set(qn("w:space"), space)
     left.set(qn("w:color"), color)
     borders.append(left)
+
+
+def set_cell_margins(cell, top=180, start=240, bottom=180, end=240):
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_mar = tc_pr.find(qn("w:tcMar"))
+    if tc_mar is None:
+        tc_mar = OxmlElement("w:tcMar")
+        tc_pr.append(tc_mar)
+    for name, value in (("top", top), ("start", start), ("bottom", bottom), ("end", end)):
+        margin = tc_mar.find(qn(f"w:{name}"))
+        if margin is None:
+            margin = OxmlElement(f"w:{name}")
+            tc_mar.append(margin)
+        margin.set(qn("w:w"), str(value))
+        margin.set(qn("w:type"), "dxa")
+
+
+def style_callout_cell(cell, fill: str, border: str):
+    tc_pr = cell._tc.get_or_add_tcPr()
+    shading = tc_pr.find(qn("w:shd"))
+    if shading is None:
+        shading = OxmlElement("w:shd")
+        tc_pr.append(shading)
+    shading.set(qn("w:fill"), fill)
+
+    borders = tc_pr.find(qn("w:tcBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tcBorders")
+        tc_pr.append(borders)
+    left = OxmlElement("w:left")
+    left.set(qn("w:val"), "single")
+    left.set(qn("w:sz"), "8")
+    left.set(qn("w:color"), border)
+    borders.append(left)
+    set_cell_margins(cell)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
+def add_spacer(document: Document, points: float):
+    paragraph = document.add_paragraph()
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(points)
+    paragraph.paragraph_format.line_spacing = Pt(1)
+    set_font(paragraph.add_run(" "), size=1, color="FFFFFF")
+
+
+def add_callout(document: Document, text: str, fill: str, border: str, *, code=False, center=False, width=None):
+    add_spacer(document, 2)
+    table = document.add_table(rows=1, cols=1)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER if center else WD_TABLE_ALIGNMENT.LEFT
+    row_properties = table.rows[0]._tr.get_or_add_trPr()
+    cannot_split = OxmlElement("w:cantSplit")
+    row_properties.append(cannot_split)
+    # These single-row tables are self-contained callouts. Marking their only
+    # row as a header gives assistive tools an explicit table structure.
+    table_header = OxmlElement("w:tblHeader")
+    row_properties.append(table_header)
+    if width is not None:
+        table.autofit = False
+        table.columns[0].width = Inches(width)
+        table.cell(0, 0).width = Inches(width)
+    cell = table.cell(0, 0)
+    style_callout_cell(cell, fill, border)
+    paragraph = cell.paragraphs[0]
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if center else WD_ALIGN_PARAGRAPH.LEFT
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.line_spacing = 1.18
+    if code:
+        set_font(paragraph.add_run(text), name="Consolas", size=9.5, color=NAVY)
+    else:
+        add_inline(paragraph, text)
+    add_spacer(document, 5)
+    return table
 
 
 def add_hyperlink(paragraph, text: str, url: str):
@@ -305,7 +380,7 @@ def configure_page(document: Document):
         header = section.header.paragraphs[0]
         header.alignment = WD_ALIGN_PARAGRAPH.LEFT
         header.paragraph_format.space_after = Pt(0)
-        set_font(header.add_run("ScientistOne beginner protocol"), size=9, color=GRAY, bold=True)
+        set_font(header.add_run("Scientist1 beginner protocol"), size=9, color=GRAY, bold=True)
 
         footer = section.footer.paragraphs[0]
         footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -325,7 +400,7 @@ def add_cover(document: Document):
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     title.paragraph_format.space_before = Pt(0)
     title.paragraph_format.space_after = Pt(6)
-    set_font(title.add_run("Run a checked research study\nwith ScientistOne in Codex"), size=26, color=NAVY, bold=True)
+    set_font(title.add_run("Run a checked research study\nwith Scientist1 in Codex"), size=26, color=NAVY, bold=True)
 
     subtitle = document.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -339,14 +414,17 @@ def add_cover(document: Document):
     shape._inline.docPr.set("descr", "A researcher guides several AI research roles from a question to checked evidence and a paper.")
     pic.paragraph_format.space_after = Pt(14)
 
-    note = document.add_paragraph()
-    note.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    note.paragraph_format.left_indent = Inches(0.55)
-    note.paragraph_format.right_indent = Inches(0.55)
-    note.paragraph_format.space_before = Pt(0)
-    note.paragraph_format.space_after = Pt(10)
-    shade(note, GREEN_PALE)
-    set_font(note.add_run("No coding experience is needed. You will review the plan and each important permission."), size=11, color=NAVY, bold=True)
+    note_table = add_callout(
+        document,
+        "No coding experience is needed. You will review the plan and any decision that reaches you.",
+        GREEN_PALE,
+        TEAL,
+        center=True,
+        width=5.35,
+    )
+    note = note_table.cell(0, 0).paragraphs[0]
+    for run in note.runs:
+        set_font(run, size=11, color=NAVY, bold=True)
 
     meta = document.add_paragraph()
     meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -368,6 +446,9 @@ def add_image(document: Document, alt: str, relative: str):
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
     paragraph.paragraph_format.space_before = Pt(6)
     paragraph.paragraph_format.space_after = Pt(0)
+    paragraph.paragraph_format.keep_together = True
+    if relative.endswith("02-purpose.png"):
+        paragraph.paragraph_format.page_break_before = True
     shape = paragraph.add_run().add_picture(str(path), width=Inches(width))
     shape._inline.docPr.set("descr", alt)
     caption = document.add_paragraph(style="Caption")
@@ -376,15 +457,20 @@ def add_image(document: Document, alt: str, relative: str):
 
 
 def add_paragraph(document: Document, text: str, style=None):
-    paragraph = document.add_paragraph(style=style)
-    add_inline(paragraph, text)
     if text.startswith("Why this"):
-        paragraph.paragraph_format.left_indent = Inches(0.18)
-        paragraph.paragraph_format.right_indent = Inches(0.18)
-        paragraph.paragraph_format.space_before = Pt(4)
-        paragraph.paragraph_format.space_after = Pt(8)
-        shade(paragraph, GREEN_PALE)
-        left_border(paragraph, TEAL)
+        return add_callout(document, text, GREEN_PALE, TEAL)
+    paragraph = document.add_paragraph(style=style)
+    if text.rstrip().endswith(":"):
+        paragraph.paragraph_format.keep_with_next = True
+    if text == "Ask:":
+        paragraph.paragraph_format.page_break_before = True
+    if text in {
+        "Keep the page open.",
+        "Return to the Codex chat only if it asks you a question.",
+        "Do not send the setup form again.",
+    }:
+        paragraph.paragraph_format.keep_with_next = True
+    add_inline(paragraph, text)
     return paragraph
 
 
@@ -405,9 +491,7 @@ def build():
         line = raw.rstrip()
         if line.startswith("```"):
             if in_code:
-                paragraph = document.add_paragraph(style="S1 Code")
-                shade(paragraph, LIGHT_GRAY)
-                set_font(paragraph.add_run("\n".join(code_lines)), name="Consolas", size=9.5, color=NAVY)
+                add_callout(document, "\n".join(code_lines), LIGHT_GRAY, TEAL, code=True)
                 code_lines = []
                 in_code = False
             else:
@@ -434,8 +518,6 @@ def build():
         if line.startswith("## "):
             title = line[3:]
             paragraph = document.add_paragraph(style="Heading 1")
-            if title.startswith("Section "):
-                paragraph.paragraph_format.page_break_before = True
             add_inline(paragraph, title)
             continue
         if line.startswith("### "):
@@ -447,14 +529,7 @@ def build():
             add_inline(paragraph, line[5:])
             continue
         if line.lstrip().startswith("> "):
-            paragraph = document.add_paragraph()
-            paragraph.paragraph_format.left_indent = Inches(0.28)
-            paragraph.paragraph_format.right_indent = Inches(0.2)
-            paragraph.paragraph_format.space_before = Pt(4)
-            paragraph.paragraph_format.space_after = Pt(8)
-            shade(paragraph, SAND)
-            left_border(paragraph, TEAL)
-            add_inline(paragraph, line.lstrip()[2:])
+            add_callout(document, line.lstrip()[2:], SAND, TEAL)
             continue
         if re.match(r"^\s*-\s+", line):
             paragraph = add_paragraph(document, re.sub(r"^\s*-\s+", "", line), style="List Bullet")
@@ -469,11 +544,11 @@ def build():
             continue
         add_paragraph(document, line.strip())
 
-    document.core_properties.title = "Run a checked research study with ScientistOne in Codex"
-    document.core_properties.subject = "Beginner Protocols.io guide for ScientistOne"
-    document.core_properties.keywords = "ScientistOne, Codex, research workflow, beginner guide"
-    document.core_properties.author = "ScientistOne contributors"
-    document.core_properties.last_modified_by = "ScientistOne contributors"
+    document.core_properties.title = "Run a checked research study with Scientist1 in Codex"
+    document.core_properties.subject = "Beginner Protocols.io guide for Scientist1"
+    document.core_properties.keywords = "Scientist1, Codex, research workflow, beginner guide"
+    document.core_properties.author = "Scientist1 contributors"
+    document.core_properties.last_modified_by = "Scientist1 contributors"
     document.save(OUTPUT)
     print(OUTPUT)
 

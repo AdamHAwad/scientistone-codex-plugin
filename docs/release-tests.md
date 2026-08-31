@@ -7,30 +7,30 @@ trace, and result. Save a screen recording when visual behavior matters.
 ## Marketplace installation
 
 1. Add the repository with `codex plugin marketplace add AdamHAwad/scientistone-codex-plugin --ref main`.
-2. Confirm that Codex discovers `scientistone@scientistone` at the expected version.
-3. Install it with `codex plugin add scientistone@scientistone`.
+2. Confirm that Codex discovers `scientist1@scientist1` at the expected version.
+3. Install it with `codex plugin add scientist1@scientist1`.
 4. Confirm Codex reports the plugin hook as untrusted, open `/hooks`, review
-   the exact ScientistOne launch-authorization hook, and trust it.
+   the exact Scientist1 launch-authorization hook, and trust it.
 5. Confirm an authorized smoke-test specialist launch runs the hook and creates
    its immutable accepted-attempt record. Installation alone is not hook trust.
-6. Confirm that the installed copy comes from `plugins/scientistone/` and starts without a global Node.js installation or another ScientistOne service.
+6. Confirm that the installed copy comes from `plugins/scientist1/` and starts without a global Node.js installation or another Scientist1 service.
 
 ## Positive cases
 
-1. With a fresh writable Codex profile below 16, invoke ScientistOne and verify
+1. With a fresh writable Codex profile below 16, invoke Scientist1 and verify
    the exact one-time capacity prompt appears before intake. Decline and verify
    later invocations continue silently without losing any study requirement.
 2. In another fresh profile, accept the capacity change. Verify an exact
    private backup, canonical `[agents]` value 16, successful Codex validation,
    and restart-required state until Codex restarts. Verify an existing value
    above 16 is never lowered.
-3. In Codex desktop, `ScientistOne` starts the bundled MCP and opens the full-page setup guide in the built-in browser, with no inline form or remote page.
-4. Upload a file with the large drop field. Verify its bytes and SHA-256 under the active project's `.scientistone/intake/` tree.
+3. In Codex desktop, `Scientist1` starts the bundled MCP and opens the full-page setup guide in the built-in browser, with no inline form or remote page.
+4. Upload a file with the large drop field. Verify its bytes and SHA-256 under the active project's `.scientist1/intake/` tree.
 5. Submit the seven-step intake. Verify that the same tab shows the editable study plan and that no run exists before approval.
 6. Approve a smoke-test plan, initialize its run, and attach it. Verify that the same tab becomes the interactive flowchart and reads status from local `run.json` and receipts.
 7. Select a stage and specialist, pan, zoom, fit, reload, and change the run checkpoint. Verify the inspector, camera controls, latest-checkpoint integrity state, and live refresh.
-8. `Show the status of my latest ScientistOne study` reopens the local interactive monitor.
-9. `Audit this paper and evidence bundle with ScientistOne` creates an external-audit plan and does not start candidate research.
+8. `Show the status of my latest Scientist1 study` reopens the local interactive monitor.
+9. `Audit this paper and evidence bundle with Scientist1` creates an external-audit plan and does not start candidate research.
 10. Approve a research study, force a result-blind evaluator or I1-policy defect, and verify that the lead makes the smallest repair and re-audits the same run without asking for approval, permission, authority, a restart, or a reply.
 11. Exhaust two accepted attempts for one logical specialist task, then exhaust the single automatic repair wave at one gate. Verify that task aliases or deleted failure receipts cannot reset either counter, the run closes `blocked_exhausted` with an exact `terminal/incomplete.json`, and the exhausted run cannot resume or launch more specialists. Corrected work must start in a new run that references the terminal record.
 12. Remove an optional dependency, credential, hardware capability, or paid service from the approved environment. Verify that the run selects a safe in-scope fallback, writes the limitation, and continues through the paper and delivery audit without `attention.md`.
@@ -40,7 +40,7 @@ trace, and result. Save a screen recording when visual behavior matters.
 
 1. Reject a forged draft ID, a run path outside the selected run, a symbolic-link intake directory, a bad token, or a non-loopback browser request.
 2. Prevent file uploads from writing outside the active project through traversal segments, absolute paths, or symbolic links.
-3. Confirm that the browser UI makes no request to a ScientistOne-owned domain and exposes no remote upload path.
+3. Confirm that the browser UI makes no request to a Scientist1-owned domain and exposes no remote upload path.
 4. On any surface that cannot start the bundled MCP or show the built-in browser, use the text setup without claiming that the browser opened.
 5. On a surface without project files, a terminal, or native subagents, report the missing capability and do not claim that a study started.
 6. Make Codex config read-only, symlink-managed, malformed, or explicitly
@@ -55,7 +55,7 @@ trace, and result. Save a screen recording when visual behavior matters.
 For every case, inspect the loopback listener, local project writes, browser
 network requests, cookies, MCP messages, and process tree. Study content should
 travel only between Codex, the loopback page, and the active project. There
-must be no remote ScientistOne request, cookie, session, database write,
+must be no remote Scientist1 request, cookie, session, database write,
 analytics call, or telemetry call.
 
 ## Clean-machine matrix

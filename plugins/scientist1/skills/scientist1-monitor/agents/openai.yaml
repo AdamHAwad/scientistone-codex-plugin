@@ -1,0 +1,7 @@
+interface:
+  display_name: "Scientist1 Monitor"
+  short_description: "Check a Scientist1 run without changing it"
+  icon_small: "./assets/logo.svg"
+  icon_large: "./assets/logo.svg"
+  brand_color: "#347DF5"
+  default_prompt: "Use $scientist1-monitor to check a Scientist1 run without changing it."

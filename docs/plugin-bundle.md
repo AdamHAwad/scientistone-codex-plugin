@@ -1,10 +1,10 @@
 # Plugin bundle
 
-The repository marketplace catalog points Codex to `plugins/scientistone/`.
-That directory is the installable ScientistOne plugin.
+The repository marketplace catalog points Codex to `plugins/scientist1/`.
+That directory is the installable Scientist1 plugin.
 
 Maintainers can run `npm run package:plugin` to copy the same installable files
-into `dist/scientistone/` from an explicit allowlist. The generated directory is
+into `dist/scientist1/` from an explicit allowlist. The generated directory is
 used for release verification; users install from the repository marketplace.
 
 ## Included
@@ -28,32 +28,32 @@ mcp/ui/app.css
 mcp/ui/app.js
 mcp/ui/index.html
 mcp/ui/newsreader-latin-600-normal.woff2
-scripts/launch-scientistone-mcp
-scripts/launch-scientistone-mcp.cmd
-skills/scientistone/SKILL.md
-skills/scientistone/agents/openai.yaml
-skills/scientistone/assets/logo.svg
-skills/scientistone/references/artifacts.md
-skills/scientistone/references/doctrine.md
-skills/scientistone/references/i1-verification-policy.schema.json
-skills/scientistone/references/i1-verification.md
-skills/scientistone/references/intake.md
-skills/scientistone/references/legacy-model-policy-1.2.0.json
-skills/scientistone/references/legacy-roles-1.2.0.md
-skills/scientistone/references/model-policy.json
-skills/scientistone/references/protocol.md
-skills/scientistone/references/roles.md
-skills/scientistone/scripts/capacity-preflight.mjs
-skills/scientistone/scripts/coe.mjs
-skills/scientistone/scripts/i1-interpreter.mjs
-skills/scientistone/scripts/legacy-coe-1.2.0.mjs
-skills/scientistone/scripts/scheduler.mjs
-skills/scientistone-monitor/SKILL.md
-skills/scientistone-monitor/agents/openai.yaml
-skills/scientistone-monitor/assets/logo.svg
-skills/scientistone-results/SKILL.md
-skills/scientistone-results/agents/openai.yaml
-skills/scientistone-results/assets/logo.svg
+scripts/launch-scientist1-mcp
+scripts/launch-scientist1-mcp.cmd
+skills/scientist1/SKILL.md
+skills/scientist1/agents/openai.yaml
+skills/scientist1/assets/logo.svg
+skills/scientist1/references/artifacts.md
+skills/scientist1/references/doctrine.md
+skills/scientist1/references/i1-verification-policy.schema.json
+skills/scientist1/references/i1-verification.md
+skills/scientist1/references/intake.md
+skills/scientist1/references/legacy-model-policy-1.2.0.json
+skills/scientist1/references/legacy-roles-1.2.0.md
+skills/scientist1/references/model-policy.json
+skills/scientist1/references/protocol.md
+skills/scientist1/references/roles.md
+skills/scientist1/scripts/capacity-preflight.mjs
+skills/scientist1/scripts/coe.mjs
+skills/scientist1/scripts/i1-interpreter.mjs
+skills/scientist1/scripts/legacy-coe-1.2.0.mjs
+skills/scientist1/scripts/scheduler.mjs
+skills/scientist1-monitor/SKILL.md
+skills/scientist1-monitor/agents/openai.yaml
+skills/scientist1-monitor/assets/logo.svg
+skills/scientist1-results/SKILL.md
+skills/scientist1-results/agents/openai.yaml
+skills/scientist1-results/assets/logo.svg
 ```
 
 The manifest points to three packaged skills and the bundled local MCP. Codex
@@ -69,7 +69,7 @@ contributor documents, explanatory images, tests, CI configuration,
 package-manager metadata, and maintainer scripts. Those files support discovery,
 development, and verification but are not part of the installed plugin bundle.
 
-Repository-only tests live under `test/scientistone/`, outside the marketplace
+Repository-only tests live under `test/scientist1/`, outside the marketplace
 source. The packaging script compares every source file to the exact allowlist
 before copying, so an ignored or newly added file cannot enter an install by
 accident. It excludes tests, caches, secrets, local run output, development

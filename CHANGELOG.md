@@ -2,6 +2,18 @@
 
 This project follows Semantic Versioning.
 
+## 1.3.1 - 2026-08-31
+
+- Applied the Scientist1 identity across marketplace metadata, bundled skills
+  and MCP wiring, runtime state and run paths, UI copy, documentation, tests,
+  packaging, and release tooling.
+- Reserved the name ScientistOne for citations to the Google research paper
+  and its published artifacts.
+- Removed the non-binary fallback verdict and the researcher-facing
+  negative-outcome design field. Scientist1 now handles null findings and failed integrity checks
+  autonomously within the approved end-to-end study: null findings remain valid
+  scientific outcomes, while failed checks trigger bounded repair and fail closed.
+
 ## 1.3.0 - 2026-08-30
 
 - Replaced generated per-study I1 verifier projects with one release-tested,
@@ -66,11 +78,11 @@ This project follows Semantic Versioning.
 ## 1.1.2 - 2026-08-27
 
 - Removed the redundant in-task updater and its network, Codex CLI, cache, documentation, and test surface.
-- Returned update ownership to Codex's configured Git marketplace startup lifecycle so a running ScientistOne task never replaces its own plugin bundle.
+- Returned update ownership to Codex's configured Git marketplace startup lifecycle so a running Scientist1 task never replaces its own plugin bundle.
 
 ## 1.1.1 - 2026-08-27
 
-- Added a first-step update check that refreshes the configured Git marketplace through Codex and installs a newer ScientistOne bundle when available.
+- Added a first-step update check that refreshes the configured Git marketplace through Codex and installs a newer Scientist1 bundle when available.
 - Kept update failures non-blocking, while requiring a fresh Codex session after an installed update so skills, tools, and hooks come from one version.
 - Added isolated updater tests for current, updated, local-development, ambiguous-install, and offline states.
 

@@ -18,4 +18,4 @@ Scope: Blind adversarial review of accuracy, privacy, permissions, product claim
 
 ## Resolution
 
-The guide now covers the OpenAI data boundary, Data Controls, safe permissions, exact run labels, outcome limits, Linux scope, reproducible practice values, and draft status. The DOCX and reports were rebuilt after those changes. The installation screenshot and a hands-on novice trial remain pre-publication checks.
+The guide now covers the OpenAI data boundary, Data Controls, safe permissions, exact run labels, outcome limits, Linux scope, and reproducible practice values. It also explains the current **Approve for me** mode and the plugin refresh path. The DOCX and reports were rebuilt after those changes. A hands-on novice trial remains useful before publication.

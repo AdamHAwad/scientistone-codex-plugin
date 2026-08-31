@@ -16,4 +16,4 @@ Scope: Blind editorial and Protocols.io structure review. The reviewer read the 
 
 ## Resolution
 
-The field map now has five sections. The guide now includes success checks, plain definitions, shorter plan guidance, caption rules, and mobile crop guidance. The DOCX and reports were rebuilt after those changes. The installation screenshot remains a pre-publication visual check.
+The field map now has five sections. The guide now includes success checks, plain definitions, shorter plan guidance, and caption rules. Setup images keep their desktop proportions so fields and buttons remain readable. The DOCX and reports were rebuilt after those changes.

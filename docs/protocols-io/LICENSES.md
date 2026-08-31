@@ -4,7 +4,7 @@
 
 The protocol text, cover, and original guide diagrams are offered under the [Creative Commons Attribution 4.0 International license](https://creativecommons.org/licenses/by/4.0/).
 
-Suggested credit: `ScientistOne beginner protocol by Adam Hani Awad, CC BY 4.0.`
+Suggested credit: `Scientist1 beginner protocol by Adam Hani Awad, CC BY 4.0.`
 
 ## Practice data
 

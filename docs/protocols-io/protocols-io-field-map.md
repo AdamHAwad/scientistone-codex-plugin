@@ -1,14 +1,14 @@
 # Protocols.io upload map
 
-Use this file when entering the guide in the Protocols.io editor. The source text is `scientistone-beginner-protocol.md`.
+Use this file when entering the guide in the Protocols.io editor. The source text is `scientist1-beginner-protocol.md`.
 
 ## Main details
 
-- Title: Run a checked research study with ScientistOne in Codex
+- Title: Run a checked research study with Scientist1 in Codex
 - Short description: Use the two paragraphs under `Protocols.io description`.
 - Keywords: Copy the line under `Keywords`.
 - Author: Adam Hani Awad. Add any coauthors, affiliations, and ORCID records in Protocols.io before publication.
-- Thumbnail: Use `assets/00-thumbnail.png`. It is the square, centered ScientistOne logo with a white background.
+- Thumbnail: Use `assets/00-thumbnail.png`. It is the square, centered Scientist1 logo with a white background.
 - License: Select CC BY 4.0 for the protocol text. The attached practice CSV is CC0 1.0. Use `LICENSES.md` for the file and image credits.
 - Version: 1.0 for the first public version.
 - Status: Keep the protocol **In development** until a person who has never used Codex completes the novice trial.
@@ -29,7 +29,7 @@ Use this file when entering the guide in the Protocols.io editor. The source tex
 Create five sections in this order:
 
 1. Get ChatGPT and open Codex
-2. Install ScientistOne
+2. Install Scientist1
 3. Run the practice study
 4. Start your own study
 5. Troubleshooting
@@ -46,13 +46,14 @@ Create one Protocols.io step for each `Step` heading in the source file. Put eac
 - `assets/04-prior-work.png`: Step 18.
 - `assets/05-evaluation.png`: Step 19.
 - `assets/06-limits.png`: Step 20.
+- `assets/07-review-request.png`: Step 21.
 - `assets/08-waiting.png`: Step 22.
 - `assets/09-plan-review.png`: Step 23.
 - `assets/11-chain-of-evidence.png`: Step 28.
 
 Use the alt text from each Markdown image line in the source file. Do not use filenames as alt text.
 
-Add a visible caption under every image. For example: “Screen 3. Select **Add files**, then choose `bean-seedling-growth.csv`.” Crop screenshots closely enough that the named button and field remain readable on a phone.
+Add a visible caption under every image. For example: "Screen 3. Select **Add files**, then choose `bean-seedling-growth.csv`." Keep the desktop proportions shown in the supplied screenshots. Check that the named button and field remain readable at the size Protocols.io uses.
 
 ## Final checks before publishing
 

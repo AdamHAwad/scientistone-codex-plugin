@@ -4,8 +4,8 @@ import path from "node:path";
 import process from "node:process";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const source = path.join(root, "plugins", "scientistone");
-const destination = path.join(root, "dist", "scientistone");
+const source = path.join(root, "plugins", "scientist1");
+const destination = path.join(root, "dist", "scientist1");
 
 const files = [
   ".codex-plugin/plugin.json",
@@ -26,32 +26,32 @@ const files = [
   "mcp/ui/app.js",
   "mcp/ui/index.html",
   "mcp/ui/newsreader-latin-600-normal.woff2",
-  "scripts/launch-scientistone-mcp",
-  "scripts/launch-scientistone-mcp.cmd",
-  "skills/scientistone-monitor/SKILL.md",
-  "skills/scientistone-monitor/agents/openai.yaml",
-  "skills/scientistone-monitor/assets/logo.svg",
-  "skills/scientistone-results/SKILL.md",
-  "skills/scientistone-results/agents/openai.yaml",
-  "skills/scientistone-results/assets/logo.svg",
-  "skills/scientistone/SKILL.md",
-  "skills/scientistone/agents/openai.yaml",
-  "skills/scientistone/assets/logo.svg",
-  "skills/scientistone/references/artifacts.md",
-  "skills/scientistone/references/doctrine.md",
-  "skills/scientistone/references/i1-verification-policy.schema.json",
-  "skills/scientistone/references/i1-verification.md",
-  "skills/scientistone/references/intake.md",
-  "skills/scientistone/references/legacy-model-policy-1.2.0.json",
-  "skills/scientistone/references/legacy-roles-1.2.0.md",
-  "skills/scientistone/references/model-policy.json",
-  "skills/scientistone/references/protocol.md",
-  "skills/scientistone/references/roles.md",
-  "skills/scientistone/scripts/capacity-preflight.mjs",
-  "skills/scientistone/scripts/coe.mjs",
-  "skills/scientistone/scripts/i1-interpreter.mjs",
-  "skills/scientistone/scripts/legacy-coe-1.2.0.mjs",
-  "skills/scientistone/scripts/scheduler.mjs",
+  "scripts/launch-scientist1-mcp",
+  "scripts/launch-scientist1-mcp.cmd",
+  "skills/scientist1-monitor/SKILL.md",
+  "skills/scientist1-monitor/agents/openai.yaml",
+  "skills/scientist1-monitor/assets/logo.svg",
+  "skills/scientist1-results/SKILL.md",
+  "skills/scientist1-results/agents/openai.yaml",
+  "skills/scientist1-results/assets/logo.svg",
+  "skills/scientist1/SKILL.md",
+  "skills/scientist1/agents/openai.yaml",
+  "skills/scientist1/assets/logo.svg",
+  "skills/scientist1/references/artifacts.md",
+  "skills/scientist1/references/doctrine.md",
+  "skills/scientist1/references/i1-verification-policy.schema.json",
+  "skills/scientist1/references/i1-verification.md",
+  "skills/scientist1/references/intake.md",
+  "skills/scientist1/references/legacy-model-policy-1.2.0.json",
+  "skills/scientist1/references/legacy-roles-1.2.0.md",
+  "skills/scientist1/references/model-policy.json",
+  "skills/scientist1/references/protocol.md",
+  "skills/scientist1/references/roles.md",
+  "skills/scientist1/scripts/capacity-preflight.mjs",
+  "skills/scientist1/scripts/coe.mjs",
+  "skills/scientist1/scripts/i1-interpreter.mjs",
+  "skills/scientist1/scripts/legacy-coe-1.2.0.mjs",
+  "skills/scientist1/scripts/scheduler.mjs",
 ].sort();
 
 async function inventory(directory, relative = "") {

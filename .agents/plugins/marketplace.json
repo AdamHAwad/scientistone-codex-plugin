@@ -1,14 +1,14 @@
 {
-  "name": "scientistone",
+  "name": "scientist1",
   "interface": {
-    "displayName": "ScientistOne"
+    "displayName": "Scientist1"
   },
   "plugins": [
     {
-      "name": "scientistone",
+      "name": "scientist1",
       "source": {
         "source": "local",
-        "path": "./plugins/scientistone"
+        "path": "./plugins/scientist1"
       },
       "policy": {
         "installation": "AVAILABLE",

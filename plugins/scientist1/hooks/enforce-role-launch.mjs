@@ -1,0 +1,51 @@
+#!/usr/bin/env node
+
+import { consumeLaunchToken, peekLaunchAssignment, TOKEN_PATTERN } from "../mcp/model-routing.mjs";
+
+function response(value) {
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+function deny(reason, code = "S1_LAUNCH_REJECTED") {
+  const message = /^\[S1_[A-Z_]+\]/.test(reason) ? reason : `[${code}] ${reason}`;
+  response({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: message,
+    },
+  });
+}
+
+let text = "";
+for await (const chunk of process.stdin) text += chunk;
+
+try {
+  const event = JSON.parse(text);
+  const input = event?.tool_input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) process.exit(0);
+  const scientist1Message = typeof input.message === "string" && input.message.includes("This is one Scientist1 assignment. You are a fresh specialist");
+  if (typeof input.task_name !== "string" || !input.task_name.startsWith("s1_")) {
+    if (scientist1Message) throw new Error("Scientist1 specialist launches must be authorized by prepare_role_launch.");
+    process.exit(0);
+  }
+  if (!TOKEN_PATTERN.test(input.task_name)) throw new Error("Malformed Scientist1 launch authorization.");
+  if (typeof input.message !== "string" || !input.message) throw new Error("Scientist1 specialist launches require the canonical assignment returned by prepare_role_launch.");
+  const pending = peekLaunchAssignment(input.task_name);
+  if (!pending) throw new Error("Scientist1 launch authorization is missing.");
+  if (input.message !== pending.assignment) throw new Error("Scientist1 specialist message differs from the hash-bound canonical assignment.");
+  const runtime = consumeLaunchToken(input.task_name);
+  if (!runtime) throw new Error("Scientist1 launch authorization is missing.");
+  if (input.message !== runtime.assignment) throw new Error("Scientist1 specialist message differs from the hash-bound canonical assignment.");
+  const updatedInput = { ...input, task_name: runtime.task_name, fork_turns: "none", model: runtime.model, reasoning_effort: runtime.reasoning_effort };
+  delete updatedInput.agent_type;
+  response({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "allow",
+      updatedInput,
+    },
+  });
+} catch (error) {
+  deny(error.message || "Scientist1 rejected an invalid specialist launch.", error.code);
+}

@@ -9,9 +9,11 @@ import re
 import statistics
 from pathlib import Path
 
+from PIL import Image
+
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "scientistone-beginner-protocol.md"
+SOURCE = ROOT / "scientist1-beginner-protocol.md"
 DATA = ROOT / "example-data" / "bean-seedling-growth.csv"
 
 REQUIRED_TEXT = [
@@ -20,9 +22,10 @@ REQUIRED_TEXT = [
     "Download the desktop app",
     "Open Codex",
     "Try one simple Codex task",
+    "Approve for me",
     "Check your data controls",
-    "Add the ScientistOne marketplace",
-    "Install and open ScientistOne",
+    "Add the Scientist1 marketplace",
+    "Install and open Scientist1",
     "Add from Marketplace",
     "AdamHAwad/scientistone-codex-plugin",
     "Try now",
@@ -42,6 +45,8 @@ REQUIRED_TEXT = [
     "Needs your input",
     "Checked",
     "Study record verified",
+    "Keep Codex and Scientist1 up to date",
+    "select **Refresh**",
     "Open the completed results",
     "Safety and privacy warning",
     "Troubleshooting",
@@ -82,6 +87,15 @@ def main() -> int:
     secret_terms = re.findall(r"(?i)(?:api[_ -]?key|password|secret|token)\s*[:=]\s*\S+", text)
     alt_texts = re.findall(r"!\[([^]]*)\]\([^)]+\)", text)
     weak_alt_texts = [alt for alt in alt_texts if len(alt.split()) < 5 or re.fullmatch(r"(?i)(?:image|screenshot|figure)\s*\d*", alt)]
+    screenshot_sizes = {}
+    for name in REQUIRED_ASSETS[:9]:
+        with Image.open(ROOT / "assets" / name) as image:
+            screenshot_sizes[name] = image.size
+    desktop_screenshots = all(
+        width / height >= 1.2
+        for name, (width, height) in screenshot_sizes.items()
+        if name != "07-review-request.png"
+    )
 
     checks = {
         "required_text_present": not missing_text,
@@ -93,7 +107,11 @@ def main() -> int:
         "no_personal_absolute_paths": not personal_path_hits,
         "no_secret_assignments": not secret_terms,
         "all_images_have_descriptive_alt_text": not weak_alt_texts,
+        "setup_screenshots_keep_desktop_proportions": desktop_screenshots,
         "no_em_dash": "—" not in text,
+        "uses_approve_for_me": "Approve for me" in text,
+        "does_not_teach_ask_for_approval": "Ask for approval" not in text,
+        "research_teams_are_named_ai_teams": not re.search(r"(?<!AI )\bteams?\b", text),
         "no_terminal_install_path": not re.search(r"(?i)(terminal|powershell|codex plugin marketplace add|codex plugin add)", text),
         "no_public_directory_assumption": "Plugin Directory" not in text,
     }
@@ -109,6 +127,7 @@ def main() -> int:
             "personal_path_hits": personal_path_hits,
             "secret_assignment_count": len(secret_terms),
             "weak_alt_texts": weak_alt_texts,
+            "screenshot_sizes": screenshot_sizes,
         },
     }
     output = ROOT / "qa" / "content-report.json"

@@ -21,7 +21,7 @@ SYLLABLE_OVERRIDES = {
     "orcid": 2,
     "powershell": 3,
     "protocols": 3,
-    "scientistone": 4,
+    "scientist1": 4,
     "url": 3,
     "windows": 2,
 }

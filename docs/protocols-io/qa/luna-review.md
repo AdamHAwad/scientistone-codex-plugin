@@ -17,4 +17,4 @@ Scope: Blind review for a first-time, nontechnical researcher. The reviewer read
 
 ## Resolution
 
-The text, practice calculation, billing warning, saved-file paths, and image formats were corrected. The DOCX and its reports were rebuilt after those changes. An installation screenshot remains a pre-publication visual check because this run could not control or capture the Codex app shell.
+The text, practice calculation, billing warning, saved-file paths, and image formats were corrected. The current revision also uses clean desktop captures for all seven setup screens, the waiting screen, and the plan review. The DOCX and its reports were rebuilt after those changes.

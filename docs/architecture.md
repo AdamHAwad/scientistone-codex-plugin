@@ -1,10 +1,10 @@
 # Architecture
 
-ScientistOne has three parts with different jobs.
+Scientist1 has three parts with different jobs.
 
 ## Installed plugin
 
-The repository marketplace installs the plugin bundle from `plugins/scientistone/`. The bundle contains the manifest, skills, references, validation scripts, brand assets, and a loopback-only MCP with the complete browser intake and monitor. It gives Codex the workflow and routing rules. It does not contain a database, persistent daemon, model provider, or second agent runtime.
+The repository marketplace installs the plugin bundle from `plugins/scientist1/`. The bundle contains the manifest, skills, references, validation scripts, brand assets, and a loopback-only MCP with the complete browser intake and monitor. It gives Codex the workflow and routing rules. It does not contain a database, persistent daemon, model provider, or second agent runtime.
 
 The plugin uses tools that Codex supplies, including the project filesystem, terminal, web tools when allowed, native subagents, and the bundled MCP. Research dependencies belong in the approved project or run. They are not hidden installation requirements.
 
@@ -36,9 +36,9 @@ cannot start more specialists.
 
 Codex starts the bundled MCP automatically from `.mcp.json` with the Node.js runtime included with Codex. The launcher checks Codex-provided runtime paths before falling back to a compatible `node` already on `PATH`; the user does not install Node or another package. The server speaks MCP over stdio and opens an HTTP server on a random `127.0.0.1` port.
 
-The browser provides the complete seven-step intake, direct project-local file upload, editable study-plan review, and interactive study flowchart. Drafts live under `.scientistone/intake/` in the active project. The monitor reads `run.json`, receipts, role launches, and delivery files from the selected run. A random token protects its local API, and paths are canonicalized and constrained to the active project or selected run.
+The browser provides the complete seven-step intake, direct project-local file upload, editable study-plan review, and interactive study flowchart. Drafts live under `.scientist1/intake/` in the active project. The monitor reads `run.json`, receipts, role launches, and delivery files from the selected run. A random token protects its local API, and paths are canonicalized and constrained to the active project or selected run.
 
-The publisher operates no remote ScientistOne service. Any Codex surface that cannot start the bundled MCP or show the built-in browser uses the text intake. There is no application database, object store, queue, telemetry service, update service, or plugin-owned model API.
+The publisher operates no remote Scientist1 service. Any Codex surface that cannot start the bundled MCP or show the built-in browser uses the text intake. There is no application database, object store, queue, telemetry service, update service, or plugin-owned model API.
 
 The live monitor may reuse a recent integrity result only to render an
 unchanged in-progress checkpoint. Final delivery and task stopping always run
@@ -46,7 +46,7 @@ a fresh verifier; cached UI state is never completion authority.
 
 ## Local study runtime
 
-Codex creates `scientistone-runs/<timestamp>-<slug>/` in the researcher's project. Files carry authority between roles. A run can contain:
+Codex creates `scientist1-runs/<timestamp>-<slug>/` in the researcher's project. Files carry authority between roles. A run can contain:
 
 - `contract/` for the approved plan, input hashes, evaluator, declarative I1 policy, and frozen common interpreter;
 - `investigation/` and `discovery/` for literature and candidate directions;
@@ -69,7 +69,7 @@ declare the quantity being estimated, comparison design, uncertainty method,
 bounds, hardware conditions, and failure rules before results. Audit variance
 cannot widen the tolerance. A policy repair creates a new contract revision in
 the same run and consumes the frozen repair budget. If results already exist,
-ScientistOne archives and reruns every affected successor under the repaired
+Scientist1 archives and reruns every affected successor under the repaired
 contract. Unsupported semantics close `INCOMPLETE`; they are never approximated
 with an easier generic rule.
 
@@ -111,7 +111,7 @@ migrated or silently reinterpreted. New runs never enter that path and use only
 1.3.
 
 Codex model catalogs can change between sessions. If the active semantic route
-disappears, ScientistOne preserves the original record and activates a currently
+disappears, Scientist1 preserves the original record and activates a currently
 available content-addressed route for future launches. This execution-routing change
 does not revise the scientific contract or invalidate a valid completed role
 receipt. Result-aware scientific-contract changes still archive and rerun every

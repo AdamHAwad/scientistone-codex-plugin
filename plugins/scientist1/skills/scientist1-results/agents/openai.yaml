@@ -1,0 +1,7 @@
+interface:
+  display_name: "Scientist1 Results"
+  short_description: "Read verified Scientist1 findings and limits"
+  icon_small: "./assets/logo.svg"
+  icon_large: "./assets/logo.svg"
+  brand_color: "#347DF5"
+  default_prompt: "Use $scientist1-results to explain a verified Scientist1 study."

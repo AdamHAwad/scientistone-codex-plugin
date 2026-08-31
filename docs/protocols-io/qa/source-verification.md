@@ -15,6 +15,9 @@ Checked on August 27, 2026.
 - Workspace administrators may control Codex and plugin access: https://help.openai.com/en/articles/11369540
 - Personal ChatGPT workspaces can turn off model training under Profile > Settings > Data Controls > Improve the model for everyone: https://help.openai.com/en/articles/7730893-how-chatgpt-uses-browser-history-and-data
 - Business, Enterprise, and Edu inputs and outputs are not used for model training by default: https://help.openai.com/en/articles/8983130-how-does-chatgpt-use-my-data
+- The current permission label is **Approve for me**. It routes eligible requests to a separate reviewer AI while the main Codex agent stays inside the same sandbox. Some requests can still require the person's decision: https://learn.chatgpt.com/docs/sandboxing and https://learn.chatgpt.com/docs/sandboxing/auto-review
+- The desktop app normally handles its own updates. A full quit and reopen may be needed to apply them: https://learn.chatgpt.com/docs/enterprise/manage-app-updates
+- Current Codex versions start a background check for configured Git marketplaces when the app server starts. OpenAI's user guidance still recommends **Refresh** when someone wants the latest version of an imported marketplace plugin: https://raw.githubusercontent.com/openai/codex/main/codex-rs/core-plugins/src/manager.rs and https://help.openai.com/en/articles/20001256-plugins-in-codex
 
 ## Protocols.io structure
 
@@ -23,10 +26,10 @@ Checked on August 27, 2026.
 
 ## Local product evidence
 
-- The seven ScientistOne setup titles and button names were checked against the bundled UI and a temporary local run.
-- Screens 1 through 7, the waiting page, and the plan-review page were captured from that local run.
+- The seven Scientist1 setup titles and button names were checked against the bundled UI and a temporary local run.
+- Screens 1 through 7, the waiting page, and the plan-review page were recaptured from one local run in a 1920 by 993 desktop browser viewport. Focus was moved away from headings before each capture. The review request shows the attached synthetic CSV.
 - The installed Codex desktop app was checked for the current marketplace labels: Plugins, Add a marketplace, Source, Add marketplace, Search plugins, Install, and Try now.
 - The installed Codex desktop build checked for those labels was 26.818.61809.
-- The plugin source was checked against repository base commit `17ec9784ece5e7ac9a68fcf4fc0d8b19a3b2fc72`. The guide and README edits in this package were not committed during this task.
+- The plugin source was checked against release commit `9c0a8779b842c1e3b0131e89f9214ea3cc6c60c9`. The guide edits in this package were not committed during this task.
 - No real research data, credentials, or private project files were used.
 - The practice results were recalculated from `example-data/bean-seedling-growth.csv` by `qa/content_check.py`.

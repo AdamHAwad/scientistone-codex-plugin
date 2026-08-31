@@ -1,11 +1,11 @@
-# ScientistOne Protocols.io package
+# Scientist1 Protocols.io package
 
-This folder contains a ready-to-enter beginner protocol for ScientistOne.
+This folder contains a ready-to-enter beginner protocol for Scientist1.
 
 ## Files
 
-- `scientistone-beginner-protocol.md`: the full protocol text.
-- `scientistone-beginner-protocol.docx`: an editable upload and review copy.
+- `scientist1-beginner-protocol.md`: the full protocol text.
+- `scientist1-beginner-protocol.docx`: an editable upload and review copy.
 - `protocols-io-field-map.md`: where each part belongs in the Protocols.io editor.
 - `LICENSES.md`: licenses and image credits for the public protocol.
 - `example-data/bean-seedling-growth.csv`: the small practice dataset.
