@@ -7,18 +7,16 @@ description: Interpret a ScientistOne run only after its final state and deliver
 
 This skill interprets an existing evidence chain. It does not improve the result, rerun analysis, fill missing evidence, or strengthen conclusions. Resolve and verify the completed local run, then explain it in chat and link its saved files.
 
-Before acting, read completely:
-
-- `../scientistone/references/doctrine.md`
-- `../scientistone/references/artifacts.md`
-- the integrity-audit and delivery sections of `../scientistone/references/protocol.md`
+This file contains the complete interpretation algorithm. Do not preload the
+full doctrine, artifact catalog, or protocol. After verification, read only the
+approved plan and the audit/delivery evidence listed below.
 
 ## Find and verify the run
 
 Resolve the run exactly as in `scientistone-monitor`. If no matching run exists, state that no ScientistOne run was found and ask for an absolute run path or offer to begin planning a new study. Ask which run only when several active runs are equally plausible. Do not inspect a legacy `runs/` directory as a native ScientistOne run.
 
-1. Read `run.json` and require `state: complete` and `phase: complete`. Read `environment/bootstrap.json` and the run's frozen verification record. Resolve only paths recorded by that run.
-2. Run the exact verifier and runtime frozen by the run. For a run that chose the bundled JavaScript reference implementation, the command is:
+1. Read `run.json` and require `state: complete` and `phase: complete`. Read `environment/bootstrap.json`. Resolve only paths recorded by that run.
+2. Run the bundled CoE chain verifier with the recorded Node runtime:
 
 ```sh
 <recorded-node-path> <scientistone-skill-root>/scripts/coe.mjs verify <absolute-run-path>
@@ -26,7 +24,9 @@ Resolve the run exactly as in `scientistone-monitor`. If no matching run exists,
 
 A nonzero result blocks completed interpretation.
 
-The JavaScript verifier is one supported implementation, not a plugin-install prerequisite. A study may freeze an equivalent task-local verifier in another runtime already available to Codex. Do not install a runtime while interpreting results. If the recorded verifier cannot execute on this machine, completed interpretation remains blocked and any portability repair routes through `scientistone`.
+Do not install a runtime while interpreting results. The run's task-specific I1
+policy and common interpreter are verified evidence inside this chain; there is
+no task-local replacement verifier to discover or rebuild.
 
 3. For `mode: research`, require valid contract-through-complete receipts and these manifest-verified outputs:
    - the final paper source and every rendered format required by the approved plan;

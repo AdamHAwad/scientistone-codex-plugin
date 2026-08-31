@@ -229,7 +229,7 @@ function codexConfigRequest(method, params, options = {}) {
         }
       }
     });
-    child.stdin.write(`${JSON.stringify({ id: 0, method: "initialize", params: { clientInfo: { name: "scientistone", title: "ScientistOne", version: "1.2.0" } } })}\n`);
+    child.stdin.write(`${JSON.stringify({ id: 0, method: "initialize", params: { clientInfo: { name: "scientistone", title: "ScientistOne", version: "1.3.0" } } })}\n`);
   });
 }
 

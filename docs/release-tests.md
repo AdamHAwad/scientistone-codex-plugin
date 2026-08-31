@@ -9,7 +9,11 @@ trace, and result. Save a screen recording when visual behavior matters.
 1. Add the repository with `codex plugin marketplace add AdamHAwad/scientistone-codex-plugin --ref main`.
 2. Confirm that Codex discovers `scientistone@scientistone` at the expected version.
 3. Install it with `codex plugin add scientistone@scientistone`.
-4. Confirm that the installed copy comes from `plugins/scientistone/` and starts without a global Node.js installation or another ScientistOne service.
+4. Confirm Codex reports the plugin hook as untrusted, open `/hooks`, review
+   the exact ScientistOne launch-authorization hook, and trust it.
+5. Confirm an authorized smoke-test specialist launch runs the hook and creates
+   its immutable accepted-attempt record. Installation alone is not hook trust.
+6. Confirm that the installed copy comes from `plugins/scientistone/` and starts without a global Node.js installation or another ScientistOne service.
 
 ## Positive cases
 
@@ -27,9 +31,10 @@ trace, and result. Save a screen recording when visual behavior matters.
 7. Select a stage and specialist, pan, zoom, fit, reload, and change the run checkpoint. Verify the inspector, camera controls, latest-checkpoint integrity state, and live refresh.
 8. `Show the status of my latest ScientistOne study` reopens the local interactive monitor.
 9. `Audit this paper and evidence bundle with ScientistOne` creates an external-audit plan and does not start candidate research.
-10. Approve a research study, force a result-blind evaluator or verifier defect, and verify that the lead repairs and re-audits the same run without asking for approval, permission, authority, a restart, or a reply.
-11. Attempt to end the owning task while its approved run is `running`, `repairing`, `paused`, `failed`, or complete with a failing final verifier. Verify that the bundled Stop hook creates a continuation prompt. Verify that it permits stopping only after explicit cancellation or complete-state final verification.
+10. Approve a research study, force a result-blind evaluator or I1-policy defect, and verify that the lead makes the smallest repair and re-audits the same run without asking for approval, permission, authority, a restart, or a reply.
+11. Exhaust two accepted attempts for one logical specialist task, then exhaust the single automatic repair wave at one gate. Verify that task aliases or deleted failure receipts cannot reset either counter, the run closes `blocked_exhausted` with an exact `terminal/incomplete.json`, and the exhausted run cannot resume or launch more specialists. Corrected work must start in a new run that references the terminal record.
 12. Remove an optional dependency, credential, hardware capability, or paid service from the approved environment. Verify that the run selects a safe in-scope fallback, writes the limitation, and continues through the paper and delivery audit without `attention.md`.
+13. Create independent literature, candidate, ablation, and final-audit tasks with explicit causal barriers. Verify that every ready task launches up to the available capacity, resource-conflicting tasks remain serial, and completion order does not alter seeds, ranks, or tie-breaks.
 
 ## Negative cases
 

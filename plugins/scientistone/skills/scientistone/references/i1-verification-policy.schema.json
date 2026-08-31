@@ -17,11 +17,12 @@
     "metrics",
     "decision_rule",
     "variance_policy",
-    "verifier",
+    "interpreter",
+    "execution",
     "verdicts"
   ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "policy_id": { "type": "string", "minLength": 1 },
     "mode": { "enum": ["research", "external_audit"] },
     "profile": {
@@ -73,31 +74,34 @@
         "rationale": { "type": "string", "minLength": 1 }
       }
     },
-    "verifier": {
+    "interpreter": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "manifest_path",
-        "source_root",
-        "fixtures_root",
-        "self_test_path",
-        "runtime_path",
-        "runtime_sha256",
-        "argv",
+        "version",
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "version": { "const": "1.1.0" },
+        "path": { "const": "contract/control-plane/i1-interpreter.mjs" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evaluator_argv",
         "network",
         "allowed_input_classes",
         "private_execution_root",
+        "evaluator_output_name",
         "safe_output_paths",
         "determinism"
       ],
       "properties": {
-        "manifest_path": { "type": "string", "minLength": 1 },
-        "source_root": { "type": "string", "minLength": 1 },
-        "fixtures_root": { "type": "string", "minLength": 1 },
-        "self_test_path": { "type": "string", "minLength": 1 },
-        "runtime_path": { "type": "string", "minLength": 1 },
-        "runtime_sha256": { "$ref": "#/$defs/sha256" },
-        "argv": {
+        "evaluator_argv": {
           "type": "array",
           "minItems": 1,
           "items": { "type": "string", "minLength": 1 }
@@ -122,11 +126,19 @@
           }
         },
         "private_execution_root": { "const": "private/evaluator/i1-runs" },
+        "evaluator_output_name": { "const": "result.json" },
         "safe_output_paths": {
           "type": "array",
-          "minItems": 4,
+          "minItems": 3,
+          "maxItems": 3,
           "uniqueItems": true,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "enum": [
+              "audit/i1/lineage.json",
+              "audit/i1/reproducibility.json",
+              "audit/i1/claim-semantics.json"
+            ]
+          }
         },
         "determinism": {
           "type": "object",
@@ -279,7 +291,7 @@
         "estimand": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "definition"],
+          "required": ["type", "semantics_version", "parameters"],
           "properties": {
             "type": {
               "enum": [
@@ -288,14 +300,47 @@
                 "median",
                 "quantile",
                 "rate",
-                "ratio",
-                "paired_difference",
-                "aggregate"
+                "ratio"
               ]
             },
-            "definition": { "type": "string", "minLength": 1 },
+            "semantics_version": { "const": "scientistone_i1_v1" },
             "parameters": { "type": "object" }
-          }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "type": { "const": "quantile" } }, "required": ["type"] },
+              "then": {
+                "properties": {
+                  "parameters": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["probability", "method"],
+                    "properties": {
+                      "probability": { "type": "number", "minimum": 0, "maximum": 1 },
+                      "method": { "const": "linear_type7" }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "enum": ["rate", "ratio"] } }, "required": ["type"] },
+              "then": {
+                "properties": {
+                  "parameters": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["denominator"],
+                    "properties": { "denominator": { "type": "number", "exclusiveMinimum": 0 } }
+                  }
+                }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "enum": ["single_seed", "mean", "median"] } }, "required": ["type"] },
+              "then": { "properties": { "parameters": { "type": "object", "maxProperties": 0 } } }
+            }
+          ]
         },
         "transformation": { "type": "string", "minLength": 1 },
         "presentation": {
@@ -315,11 +360,23 @@
         "repetitions": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["canonical", "audit", "valid_required", "rationale"],
+          "required": ["canonical", "audit", "valid_required", "canonical_run_ids", "audit_run_ids", "rationale"],
           "properties": {
             "canonical": { "type": "integer", "minimum": 1 },
             "audit": { "type": "integer", "minimum": 1 },
             "valid_required": { "type": "integer", "minimum": 1 },
+            "canonical_run_ids": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "audit_run_ids": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1 }
+            },
             "rationale": { "type": "string", "minLength": 1 }
           }
         },
@@ -352,11 +409,12 @@
         "uncertainty": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["method", "confidence_level", "noise_measure", "noise_ceiling"],
+          "required": ["method", "computed_by", "confidence_level", "noise_measure", "noise_ceiling"],
           "properties": {
             "method": {
               "enum": ["none", "exact", "student_t", "welch_t", "bootstrap", "permutation", "binomial", "custom_frozen"]
             },
+            "computed_by": { "const": "frozen_evaluator" },
             "confidence_level": { "type": ["number", "null"], "exclusiveMinimum": 0, "exclusiveMaximum": 1 },
             "noise_measure": { "type": "string", "minLength": 1 },
             "noise_ceiling": { "type": ["number", "null"] }
@@ -385,7 +443,13 @@
             "exhausted_retry_outcome": { "const": "INCONCLUSIVE" }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "determinism_class": { "const": "deterministic" } }, "required": ["determinism_class"] },
+          "then": { "properties": { "comparison_design": { "const": "exact" } } }
+        }
+      ]
     },
     "decisionRule": {
       "type": "object",

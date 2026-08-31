@@ -8,7 +8,10 @@ marketplace version.
 - [ ] `.agents/plugins/marketplace.json` parses and exposes `scientistone@scientistone`
 - [ ] The catalog source resolves to `plugins/scientistone/`
 - [ ] The plugin manifest has one semantic version shared by the MCP server and package metadata
-- [ ] The manifest declares exactly three skills, one bundled MCP, and one lifecycle hook
+- [ ] The manifest declares exactly three skills and one bundled MCP; Codex
+      discovers the lifecycle hook from the default `hooks/hooks.json` path
+- [ ] A fresh install reviews and trusts the ScientistOne hook through `/hooks`,
+      then proves an accepted launch creates its immutable attempt record
 - [ ] Identity, URLs, permissions, descriptions, and logos are current
 - [ ] `npm run package:plugin` succeeds and the result matches `docs/plugin-bundle.md`
 - [ ] The generated bundle contains no tests, caches, development files, secrets, run output, or registered app mapping

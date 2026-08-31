@@ -2,6 +2,36 @@
 
 This project follows Semantic Versioning.
 
+## 1.3.0 - 2026-08-30
+
+- Replaced generated per-study I1 verifier projects with one release-tested,
+  run-snapshotted interpreter plus a declarative task-specific policy, while
+  retaining score lineage, fresh reproduction, and claim-semantics checks.
+- Added canonical task briefs and exact assignments with compact saved handoffs
+  so every specialist receives the relevant upstream evidence and acceptance
+  gate without inheriting chat history or rediscovering prior work.
+- Bounded accepted specialist launches at two and each gate to one automatic repair wave;
+  exhausted work now closes truthfully as terminal `INCOMPLETE` instead of
+  triggering an unbounded self-repair loop or manufacturing a scientific null.
+- Made checkpoint the sole failure-atomic promotion gate, kept preflight as an
+  optional diagnostic, preserved valid receipts across model-route changes, and
+  added drained-queue/exhaustion visibility plus bounded least-constraining
+  ready selection to the scheduler.
+- Bound retry identity to the frozen contract/charter revision, role, and
+  exclusive outputs, so aliases or deleted receipts cannot reset an attempt;
+  launches are rejected after a run becomes terminal.
+- Made I1 results enumerate every frozen canonical and audit run under closed,
+  executable estimand semantics, preventing dropped reruns or free-text
+  estimand substitution from passing verification.
+- Made invalidation, checkpointing, and terminalization failure-atomic, with an
+  exact repair-gate record and an archived affected chain before exhaustion.
+- Kept genuine in-progress 1.2 runs resumable through a narrow compatibility
+  controller plus the exact released 1.2 role and model-policy assets; new
+  studies use only the leaner 1.3 control plane.
+- Removed the Stop-hook continuation loop, lowered reasoning effort for
+  mechanical roles, retained deep reasoning for scientific judgment, and added
+  YAGNI constraints against speculative frameworks and duplicate test systems.
+
 ## 1.2.0 - 2026-08-30
 
 - Added dependency-ready scheduling for independent literature, candidate,

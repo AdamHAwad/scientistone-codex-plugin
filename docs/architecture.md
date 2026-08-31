@@ -15,7 +15,22 @@ does not rewrite internal V2 overrides or symlink-managed configuration. The
 remembered choice contains no study content, and a successful change remains
 restart-required until a new Codex desktop instance is detected.
 
-After **Approve and start study**, the lead creates an outcome goal when Codex exposes goal tools. A plugin-bundled Stop hook also records the active run when its monitor attaches or its first specialist is prepared. If the lead attempts to end a turn while that run is incomplete, paused, failed, or not finally verified, the hook creates an automatic continuation prompt. The marker is scoped to the Codex session and project and is cleared only after explicit cancellation or a complete run whose final CoE verification passes. This is a persistence guardrail, not a bypass of Codex permissions.
+After **Approve and start study**, the lead advances the saved run through
+dependency-ready work. When native goal tooling is both available and
+authorized for the request, one bounded goal may track progress only until
+freshly verified completion or terminal `blocked_exhausted`; the run ledger
+remains the authority.
+Each logical specialist task has at most two accepted launch attempts and each gate has
+at most one automatic repair wave. A drained run with no accepted path closes
+with a terminal `INCOMPLETE` record instead of spawning continuation work
+indefinitely. Completion still requires fresh final CoE verification.
+
+Accepted-attempt identity is derived from the frozen contract and charter
+revisions, role, and exclusive output set. Changing a caller-selected task name
+or deleting a receipt therefore cannot replenish the budget. A genuine
+contract revision creates a new work identity. Launch authorization checks the
+run state both before and when consuming its one-use grant, so terminal runs
+cannot start more specialists.
 
 ## Bundled Codex MCP and browser
 
@@ -33,45 +48,71 @@ a fresh verifier; cached UI state is never completion authority.
 
 Codex creates `scientistone-runs/<timestamp>-<slug>/` in the researcher's project. Files carry authority between roles. A run can contain:
 
-- `contract/` for the approved plan, input hashes, evaluator, and frozen I1 verifier;
+- `contract/` for the approved plan, input hashes, evaluator, declarative I1 policy, and frozen common interpreter;
 - `investigation/` and `discovery/` for literature and candidate directions;
 - `candidates/` and `evaluation/` for implementation and canonical measurement;
 - `private/` for evaluator-only inputs and raw audit output;
 - `evidence/`, `audit/`, and `delivery/` for provenance and review files.
 
-## Agent-written, frozen verification
+## Declarative, frozen I1 verification
 
 The I1 score check changes with the task.
 
-1. A fresh verifier-builder reads the approved evaluation contract before candidate work.
-2. It writes a task-specific policy, code, fixtures, and self-test.
-3. A contract auditor checks and hashes that bundle.
+1. A fresh result-blind I1 policy author reads the approved evaluation contract before candidate work.
+2. It writes a task-specific declarative policy that binds the release-tested run-local interpreter and exact evaluator interface.
+3. A contract auditor checks the policy, supported semantics, and hashes against a closed essential checklist.
 4. Candidate roles build methods without access to evaluator-only inputs.
-5. A fresh score auditor runs the frozen verifier against the selected result and paper.
+5. A fresh score auditor independently reruns the evaluator, then applies the frozen policy and interpreter to the selected result and paper.
 
-The builder may choose a suitable exact or statistical check. It must declare the quantity being estimated, comparison design, uncertainty method, bounds, hardware conditions, and failure rules before results. Audit variance cannot widen the tolerance. A verifier repair creates a new contract revision in the same run. If results already exist, ScientistOne archives and reruns every later stage under the repaired contract.
+The policy author may choose a supported exact or statistical check. It must
+declare the quantity being estimated, comparison design, uncertainty method,
+bounds, hardware conditions, and failure rules before results. Audit variance
+cannot widen the tolerance. A policy repair creates a new contract revision in
+the same run and consumes the frozen repair budget. If results already exist,
+ScientistOne archives and reruns every affected successor under the repaired
+contract. Unsupported semantics close `INCOMPLETE`; they are never approximated
+with an easier generic rule.
 
 ## Role separation
 
-Native Codex subagents receive one role card, declared inputs, declared outputs, and allowed source classes. They save receipts. This makes access and decisions reviewable. It does not create a process sandbox. Projects with stronger secrecy needs must provide outside isolation.
+Native Codex subagents receive one role card plus a hash-bound task brief with
+the objective, relevant upstream summary, acceptance gate, constraints,
+declared inputs/outputs, and allowed source classes. They save compact handoffs
+and receipts. This makes access and decisions reviewable. It does not create a
+process sandbox. Projects with stronger secrecy needs must provide outside
+isolation.
 
 The lead schedules those roles from a dependency-ready queue. Independent
 evidence readers, candidate branches, ablation variants, and final auditors
 can run concurrently, while evaluator resources and causal dependencies remain
 barriers. Every reusable role result is bound to the exact contract revision,
-predecessor, role contract, routing record, and input/output hashes. This lets
+predecessor, role contract, assignment, task brief, routing record, and
+input/output hashes. This lets
 an interrupted study reuse valid independent work without treating an old
 sample as a new repetition or weakening any scientific gate.
 
 The run persists this graph in `environment/task-ledger.json`; the bundled
-deterministic scheduler selects each ready wave and rejects cycles, overlapping
-live outputs, capacity above 16, and shared-resource overcommit. A read-only
-phase preflight runs the same scientific and provenance gates as promotion
-before any downstream wave starts.
+deterministic scheduler uses a bounded least-constraining scan for each ready
+wave and rejects cycles, overlapping lifetime outputs, capacity above 16, and
+shared-resource overcommit. Optional
+read-only preflight can diagnose a phase; the failure-atomic checkpoint command
+is the sole authority that promotes it.
 
-Codex model catalogs can change between sessions. If a frozen semantic route
-disappears, this adaptation archives the affected work and performs an audited
-contract revision before choosing a currently available route; it never
-silently downgrades. This is a deliberate host-durability extension beyond the
-paper's pause behavior. The existing result-aware invalidation rule still
-reruns every successor when candidate or downstream evidence already exists.
+Checkpoint revalidates the candidate receipt and every bound input/output
+immediately before atomically advancing `run.json`. Invalidation first archives
+the entire affected chain. If its gate has exhausted the frozen repair budget,
+the same transaction records the exact gate and a verifiable terminal
+`INCOMPLETE` state rather than attempting another repair.
+
+An existing run created by 1.2 remains bound to its saved 1.2 contracts and is
+verified by one narrow compatibility controller derived from the released 1.2
+verifier, alongside the exact released role and model-policy assets. It is not
+migrated or silently reinterpreted. New runs never enter that path and use only
+1.3.
+
+Codex model catalogs can change between sessions. If the active semantic route
+disappears, ScientistOne preserves the original record and activates a currently
+available content-addressed route for future launches. This execution-routing change
+does not revise the scientific contract or invalidate a valid completed role
+receipt. Result-aware scientific-contract changes still archive and rerun every
+affected successor.

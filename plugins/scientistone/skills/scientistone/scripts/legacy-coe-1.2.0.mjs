@@ -1,16 +1,13 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { validateRoutingRecord } from "../../../mcp/model-routing.mjs";
-import { aggregateVerdicts, evaluateReproducibilityMetric, executionId as computeI1ExecutionId, gatedMetricIds, INTERPRETER_VERSION, summarize, validatePolicySupport } from "./i1-interpreter.mjs";
 
 const RESEARCH_PHASES = ["contract", "investigation", "discovery", "selection", "ablation", "writing", "verification", "audit", "complete"];
 const EXTERNAL_AUDIT_PHASES = ["contract", "audit", "complete"];
-const STATES = new Set(["running", "repairing", "complete", "blocked_exhausted"]);
+const STATES = new Set(["running", "repairing", "paused", "complete", "cancelled", "failed"]);
 const RESEARCH_OUTCOMES = new Set(["positive", "scientific_null", "completed_with_limitations"]);
 const AUDIT_OUTCOMES = new Set(["audit_passed", "audit_failed", "audit_incomplete"]);
 const PROFILES = new Set(["standard", "pilot", "custom"]);
@@ -21,26 +18,23 @@ const PROFILE_BUDGETS = {
   standard: { idea_ceiling: 18, minimum_eligible_ideas: 5, candidate_node_ceiling: 25, minimum_evaluated_candidates: 5, evaluation_ceiling_per_node: 4, ablation_ceiling: 4, minimum_valid_ablations: 1, canonical_repetitions: 5, audit_panel_size: 5 },
   pilot: { idea_ceiling: 4, minimum_eligible_ideas: 2, candidate_node_ceiling: 4, minimum_evaluated_candidates: 2, evaluation_ceiling_per_node: 2, ablation_ceiling: 2, minimum_valid_ablations: 1, canonical_repetitions: 3, audit_panel_size: 3 },
 };
-const DEFAULT_ORCHESTRATION_LIMITS = { max_task_attempts: 2, max_repair_waves_per_gate: 1 };
 const BUDGET_KEYS = Object.keys(PROFILE_BUDGETS.standard);
 const AUDIT_CHECKS = ["I1", "I2", "I3", "I4", "claim_provenance"];
 const I1_VERDICTS = ["PASS", "FAIL", "INCONCLUSIVE", "NOT_ASSESSED"];
 const I1_COMPONENTS = ["lineage", "reproducibility", "claim-semantics"];
 const I1_AUDIT_FILES = ["tex-extraction.json", "pdf-extraction.json", "input-manifest.json", "evidence-manifest.json", "execution-receipt.json", ...I1_COMPONENTS.map((name) => `${name}.json`)];
-const STOP_REASONS = new Set(["evidence_saturation", "no_additional_eligible_ideas", "stable_ranking", "exhausted_approved_compute"]);
+const STOP_REASONS = new Set(["evidence_saturation", "no_additional_eligible_ideas", "stable_ranking", "exhausted_approved_compute", "repeated_operational_failure", "researcher_stop"]);
 const CONTRACT_REPAIR_CLASSES = new Set(["AUTOMATIC_REPAIR", "RESEARCHER_APPROVED_AMENDMENT"]);
-const PERMANENT_BLOCKER_CLASSES = new Set(["required_input_unavailable", "required_authority_unavailable"]);
-const I1_INTERPRETER_PATH = "contract/control-plane/i1-interpreter.mjs";
-const BUNDLED_I1_INTERPRETER = new URL("./i1-interpreter.mjs", import.meta.url);
-const ROLE_CONTRACT_FILE = new URL("../references/roles.md", import.meta.url);
-const LEGACY_COE_1_2 = fileURLToPath(new URL("./legacy-coe-1.2.0.mjs", import.meta.url));
-const CONTRACT_GENERATED_PATHS = ["contract/evaluator-contract.md", "contract/evaluator-manifest.json", "contract/i1-verification-policy.json", "contract/audit.md"];
+const CONTRACT_GENERATED_PATHS = ["environment/model-routing.json", "contract/evaluator-contract.md", "contract/evaluator-manifest.json", "contract/i1-verification-policy.json", "contract/audit.md", "private/evaluator/i1-verifier"];
 const CONTRACT_ROLE_NAMES = new Set(["i1_verifier_builder", "contract_auditor"]);
+// Immutable SHA-256 of the roles.md shipped in ScientistOne 1.2.0. The legacy
+// verifier must never bind a 1.2 receipt to the active 1.3 role contract.
+const LEGACY_ROLE_CONTRACT_SHA256 = "952424e8886f5641f0133ff74b8d07226484ba094205978bef934141ab91c973";
 const CONTRACT_SUCCESSOR_ROOTS = ["evidence", "investigation", "discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"];
 const RESULT_AWARE_ROOTS = ["discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"];
 const PRIVATE_ROLES = new Set(["evaluator", "i1_verifier_builder", "i1_score_auditor", "i2_judge"]);
 const REQUIRED_OUTPUTS = {
-  contract: ["contract/run-config.json", "contract/input-manifest.json", I1_INTERPRETER_PATH, "contract/i1-verification-policy.json", "contract/audit.md"],
+  contract: ["contract/run-config.json", "contract/input-manifest.json", "contract/i1-verification-policy.json", "private/evaluator/i1-verifier", "contract/audit.md"],
   investigation: ["evidence/search-log.jsonl", "evidence/sources.jsonl", "investigation/notes", "investigation/directions", "investigation/protocol-audit.md", "investigation/brief.md", "investigation/references.bib", "investigation/critic.md"],
   discovery: ["discovery/ideas.jsonl", "discovery/idea-critique.jsonl", "discovery/index.json", "discovery/nodes"],
   selection: ["selection/selection.md", "selection/selection-audit.md", "selection/lineage.json", "selection/selected/manifest.json", "selection/canonical-evaluation.json"],
@@ -80,12 +74,6 @@ const artifactHashMemo = new Map();
 const contentHashMemo = new Map();
 let memoizeHashes = false;
 
-function clearHashMemo() {
-  memoizeHashes = false;
-  artifactHashMemo.clear();
-  contentHashMemo.clear();
-}
-
 function phasesFor(record) {
   return record.mode === "external_audit" ? EXTERNAL_AUDIT_PHASES : RESEARCH_PHASES;
 }
@@ -104,12 +92,6 @@ function readJson(file) {
   }
 }
 
-function canonicalJson(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-  return JSON.stringify(value);
-}
-
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.tmp`;
@@ -119,55 +101,6 @@ function writeJson(file, value) {
 
 function appendEvent(run, event) {
   fs.appendFileSync(path.join(run, "events.jsonl"), `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`);
-}
-
-function markIncomplete(run, record, details) {
-  const file = path.join(run, "terminal", "incomplete.json");
-  const terminal = {
-    schema_version: 1,
-    disposition: "INCOMPLETE",
-    at: new Date().toISOString(),
-    phase: record.phase,
-    failure_class: details.failure_class,
-    exhausted_counter: details.exhausted_counter,
-    exhausted_limit: details.exhausted_limit,
-    logical_task_name: details.logical_task_name ?? null,
-    repair_gate: details.repair_gate ?? null,
-    last_failure: details.last_failure,
-    evidence_paths: details.evidence_paths ?? [],
-    remaining_work: details.remaining_work ?? [],
-    resume_requirement: details.resume_requirement,
-  };
-  if (fs.existsSync(file)) {
-    const existing = readJson(file);
-    const reconciled = { ...terminal, at: existing.at };
-    if (canonicalJson(existing) !== canonicalJson(reconciled) || !Number.isFinite(Date.parse(existing.at))) {
-      const stamp = new Date().toISOString().replaceAll(/[-:.]/g, "");
-      writeJson(path.join(run, "terminal", "superseded", `${stamp}-incomplete.json`), existing);
-      writeJson(file, terminal);
-    }
-  } else {
-    writeJson(file, terminal);
-  }
-  if (record.pending_checkpoint) {
-    const pendingReceipt = receiptFile(run, record.pending_checkpoint.phase);
-    if (!record.checkpoints[record.pending_checkpoint.phase] && fs.existsSync(pendingReceipt)) fs.unlinkSync(pendingReceipt);
-    record.pending_checkpoint = null;
-  }
-  record.state = "blocked_exhausted";
-  record.outcome = "incomplete";
-  record.terminal_anchor = { path: "terminal", sha256: hashArtifact(run, "terminal") };
-  record.updated_at = new Date().toISOString();
-  writeJson(path.join(run, "run.json"), record);
-  appendEvent(run, { event: "run_blocked_exhausted", phase: record.phase, failure_class: details.failure_class, terminal: "terminal/incomplete.json" });
-}
-
-function consumeRepairWave(run, record, gate, reason) {
-  const current = record.repair_waves[gate] ?? 0;
-  const limit = record.orchestration.max_repair_waves_per_gate;
-  if (current >= limit) return false;
-  record.repair_waves[gate] = current + 1;
-  return true;
 }
 
 function relativePath(value) {
@@ -315,18 +248,6 @@ function requiredOutputs(run, record, phase) {
   return outputs;
 }
 
-function hasEvidenceLimitedStop(run, record) {
-  if (record.mode !== "research") return false;
-  const discoveryIndex = path.join(run, "discovery", "index.json");
-  if (fs.existsSync(discoveryIndex)) {
-    const index = readJson(discoveryIndex);
-    if (STOP_REASONS.has(index.stop_reason)) return true;
-  }
-  const ablationPlan = path.join(run, "ablation", "plan.json");
-  if (fs.existsSync(ablationPlan) && STOP_REASONS.has(readJson(ablationPlan).stop_reason)) return true;
-  return false;
-}
-
 function minimalPaths(paths) {
   const ordered = [...new Set(paths)].sort((left, right) => left.split("/").length - right.split("/").length || left.localeCompare(right));
   return ordered.filter((candidate, index) => !ordered.slice(0, index).some((parent) => candidate.startsWith(`${parent}/`)));
@@ -344,28 +265,9 @@ function validateBudgets(budgets) {
   return budgets;
 }
 
-function validateOrchestrationLimits(value) {
-  if (!value || Object.keys(value).sort().join() !== Object.keys(DEFAULT_ORCHESTRATION_LIMITS).sort().join()) fail(`Run orchestration limits must contain exactly ${Object.keys(DEFAULT_ORCHESTRATION_LIMITS).join(", ")}`);
-  for (const [key, expected] of Object.entries(DEFAULT_ORCHESTRATION_LIMITS)) {
-    if (value[key] !== expected) fail(`Invalid orchestration limit at contract/run-config.json#/orchestration/${key}; ScientistOne 1.3 requires exactly ${expected}, received ${JSON.stringify(value[key])}`);
-  }
-  return value;
-}
-
-function verifyRunRecord(run, { allowReceiptDrift = false, allowUnanchoredTerminal = false } = {}) {
+function verifyRunRecord(run, { allowReceiptDrift = false } = {}) {
   const file = path.join(run, "run.json");
-  let record = readJson(file);
-  if (record.pending_invalidation) {
-    fail(`Run has an interrupted ${record.pending_invalidation.kind ?? "invalidation"}; retry invalidate or revise-contract to recover it`);
-  } else {
-    const transactionRoot = path.join(run, ".transactions");
-    if (fs.existsSync(transactionRoot)) {
-      for (const name of fs.readdirSync(transactionRoot)) {
-        if (name.startsWith("invalidation-")) fs.rmSync(path.join(transactionRoot, name), { recursive: true, force: true });
-      }
-      if (!fs.readdirSync(transactionRoot).length) fs.rmdirSync(transactionRoot);
-    }
-  }
+  const record = readJson(file);
   if (record.schema_version !== 1) fail(`Unsupported run schema in ${file}`);
   if (!record.id) fail(`Invalid run id at ${file}#/id; expected a non-empty string, received ${JSON.stringify(record.id)}`);
   if (!STATES.has(record.state)) fail(`Invalid run state at ${file}#/state; expected ${[...STATES].join("|")}, received ${JSON.stringify(record.state)}`);
@@ -377,42 +279,15 @@ function verifyRunRecord(run, { allowReceiptDrift = false, allowUnanchoredTermin
   record.charter_revision ??= 1;
   if (!Number.isInteger(record.charter_revision) || record.charter_revision < 1) fail(`Invalid charter revision at ${file}#/charter_revision`);
   const config = readJson(path.join(run, "contract", "run-config.json"));
-  if (config.schema_version !== 2) fail(`ScientistOne 1.3 runs require contract/run-config.json schema_version 2`);
   validateBudgets(config.budgets);
-  const orchestration = config.orchestration;
-  validateOrchestrationLimits(orchestration);
-  if (!record.orchestration || !record.repair_waves) fail("ScientistOne 1.3 run state lacks frozen orchestration or repair counters");
   if (config.search_profile !== "custom" && JSON.stringify(config.budgets) !== JSON.stringify(PROFILE_BUDGETS[config.search_profile])) fail(`${config.search_profile} budgets do not match the built-in profile`);
   const configHash = hashArtifact(run, "contract/run-config.json");
-  if (record.contract_parameters_sha256 !== configHash || config.mode !== record.mode || config.search_profile !== record.search_profile || config.budgets.audit_panel_size !== record.audit_panel_size || JSON.stringify(config.budgets) !== JSON.stringify(record.budgets) || JSON.stringify(orchestration) !== JSON.stringify(record.orchestration)) fail(`Run mode/profile or orchestration limits do not match contract/run-config.json`);
-  if (!record.repair_waves || Array.isArray(record.repair_waves) || typeof record.repair_waves !== "object" || Object.values(record.repair_waves).some((count) => !Number.isInteger(count) || count < 0)) fail("Run repair counters are malformed");
-  const terminalPath = path.join(run, "terminal", "incomplete.json");
-  if (record.state === "blocked_exhausted") {
-    if (record.outcome !== "incomplete" || !fs.existsSync(terminalPath)) fail("blocked_exhausted requires outcome incomplete and terminal/incomplete.json");
-    if (record.terminal_anchor?.path !== "terminal" || !validSha256(record.terminal_anchor?.sha256) || hashArtifact(run, "terminal") !== record.terminal_anchor.sha256) fail("blocked_exhausted terminal evidence differs from its immutable anchor");
-    const terminal = readJson(terminalPath);
-    exactKeys(terminal, ["schema_version", "disposition", "at", "phase", "failure_class", "exhausted_counter", "exhausted_limit", "logical_task_name", "repair_gate", "last_failure", "evidence_paths", "remaining_work", "resume_requirement"], "terminal/incomplete.json");
-    if (terminal.schema_version !== 1 || terminal.disposition !== "INCOMPLETE" || terminal.phase !== record.phase || !Number.isFinite(Date.parse(terminal.at)) || !["task_attempts_exhausted", "repair_budget_exhausted", ...PERMANENT_BLOCKER_CLASSES].includes(terminal.failure_class) || !Number.isInteger(terminal.exhausted_counter) || !Number.isInteger(terminal.exhausted_limit) || terminal.exhausted_counter !== terminal.exhausted_limit || !nonemptyString(terminal.last_failure) || !Array.isArray(terminal.evidence_paths) || !terminal.evidence_paths.length || terminal.evidence_paths.some((item) => !nonemptyString(item)) || !Array.isArray(terminal.remaining_work) || !terminal.remaining_work.length || terminal.remaining_work.some((item) => !nonemptyString(item)) || !nonemptyString(terminal.resume_requirement)) fail("Malformed terminal incomplete record");
-    for (const evidence of terminal.evidence_paths) hashArtifact(run, evidence);
-    if (terminal.failure_class === "task_attempts_exhausted") {
-      if (terminal.repair_gate !== null || !nonemptyString(terminal.logical_task_name) || terminal.exhausted_limit !== record.orchestration.max_task_attempts || acceptedAttemptCount(run, terminal.logical_task_name, record) !== terminal.exhausted_limit) fail("Terminal task-attempt exhaustion does not match immutable accepted attempts");
-    } else if (terminal.failure_class === "repair_budget_exhausted" && (terminal.logical_task_name !== null || !nonemptyString(terminal.repair_gate) || terminal.phase !== terminal.repair_gate || terminal.exhausted_limit !== record.orchestration.max_repair_waves_per_gate || record.repair_waves[terminal.repair_gate] !== terminal.exhausted_limit)) {
-      fail("Terminal repair exhaustion does not match the frozen repair budget");
-    } else if (PERMANENT_BLOCKER_CLASSES.has(terminal.failure_class) && (terminal.logical_task_name !== null || terminal.repair_gate !== null || terminal.exhausted_counter !== 0 || terminal.exhausted_limit !== 0)) {
-      fail("Terminal permanent blocker must be pre-attempt and unrelated to a repair gate");
-    }
-  } else if (record.outcome === "incomplete" || record.terminal_anchor !== null || (!allowUnanchoredTerminal && fs.existsSync(terminalPath))) {
-    fail("Terminal evidence and outcome incomplete are reserved for blocked_exhausted runs");
-  }
+  if (record.contract_parameters_sha256 !== configHash || config.mode !== record.mode || config.search_profile !== record.search_profile || config.budgets.audit_panel_size !== record.audit_panel_size || JSON.stringify(config.budgets) !== JSON.stringify(record.budgets)) fail(`Run mode/profile does not match contract/run-config.json; expected ${config.mode}/${config.search_profile}/${config.budgets.audit_panel_size}, received ${record.mode}/${record.search_profile}/${record.audit_panel_size}`);
   if (!record.checkpoints || Array.isArray(record.checkpoints) || typeof record.checkpoints !== "object") fail("Run checkpoint anchors are malformed");
-  if (record.pending_checkpoint !== null && (!record.pending_checkpoint || !phasesFor(record).includes(record.pending_checkpoint.phase) || !Number.isFinite(Date.parse(record.pending_checkpoint.started_at)) || record.pending_checkpoint.phase !== record.phase || record.checkpoints[record.pending_checkpoint.phase])) fail("Run pending checkpoint journal is malformed");
-  if (record.pending_invalidation !== null) fail("Run invalidation journal did not recover");
   const receiptDirectory = path.join(run, "receipts");
   const actualReceipts = fs.existsSync(receiptDirectory) ? fs.readdirSync(receiptDirectory).filter((name) => name.endsWith(".json")).map((name) => path.basename(name, ".json")).sort() : [];
   const anchoredReceipts = Object.keys(record.checkpoints).sort();
-  const permittedReceipts = [...anchoredReceipts];
-  if (record.pending_checkpoint && fs.existsSync(receiptFile(run, record.pending_checkpoint.phase))) permittedReceipts.push(record.pending_checkpoint.phase);
-  if (JSON.stringify(actualReceipts) !== JSON.stringify([...new Set(permittedReceipts)].sort())) fail("Current receipt files do not match checkpoint anchors or the pending checkpoint journal");
+  if (JSON.stringify(actualReceipts) !== JSON.stringify(anchoredReceipts)) fail("Current receipt files do not match checkpoint anchors");
   for (const [phase, checkpoint] of Object.entries(record.checkpoints)) {
     if (!phasesFor(record).includes(phase) || !checkpoint || typeof checkpoint.receipt_sha256 !== "string" || !Array.isArray(checkpoint.outputs)) fail(`Invalid checkpoint anchor: ${phase}`);
     for (const item of checkpoint.outputs) if (!item || typeof item.path !== "string" || typeof item.sha256 !== "string") fail(`Invalid checkpoint output anchor: ${phase}`);
@@ -426,26 +301,14 @@ function verifyRunRecord(run, { allowReceiptDrift = false, allowUnanchoredTermin
   for (const item of record.invalidation_roots) {
     if (typeof item.path !== "string" || typeof item.sha256 !== "string" || hashArtifact(run, item.path) !== item.sha256) fail(`Invalid invalidation root: ${item.path}`);
   }
-  const archivedRepairWaves = {};
-  let archivedContractRevision = 1;
-  let archivedCharterRevision = 1;
-  for (const item of record.invalidation_roots) {
-    const metadata = readJson(path.join(artifactPath(run, item.path).target, "invalidation.json"));
-    if (!phasesFor(record).includes(metadata.from_phase)) fail(`Invalid repair gate in ${item.path}/invalidation.json`);
-    if (metadata.contract_revision_before !== archivedContractRevision || metadata.charter_revision_before !== archivedCharterRevision || ![archivedContractRevision, archivedContractRevision + 1].includes(metadata.contract_revision_after) || ![archivedCharterRevision, archivedCharterRevision + 1].includes(metadata.charter_revision_after) || (metadata.from_phase !== "contract" && (metadata.contract_revision_after !== archivedContractRevision || metadata.charter_revision_after !== archivedCharterRevision)) || (metadata.contract_revision_after === archivedContractRevision && metadata.charter_revision_after !== archivedCharterRevision)) fail(`Invalid revision transition in ${item.path}/invalidation.json`);
-    archivedContractRevision = metadata.contract_revision_after;
-    archivedCharterRevision = metadata.charter_revision_after;
-    if (metadata.repair_wave_consumed === true) archivedRepairWaves[metadata.from_phase] = (archivedRepairWaves[metadata.from_phase] ?? 0) + 1;
-    else if (metadata.repair_wave_consumed !== false) fail(`Invalid repair-wave accounting in ${item.path}/invalidation.json`);
-  }
-  const recordedRepairWaves = Object.fromEntries(Object.entries(record.repair_waves).filter(([, count]) => count > 0));
-  if (canonicalJson(recordedRepairWaves) !== canonicalJson(archivedRepairWaves)) fail("Run repair counters do not match immutable invalidation history");
-  if (record.contract_revision !== archivedContractRevision || record.charter_revision !== archivedCharterRevision) fail("Run revisions do not match immutable invalidation history");
   const requestHash = hashArtifact(run, "request.md");
   if (record.request_sha256 !== requestHash) fail("request.md no longer matches the frozen verbatim request");
   const studyHash = hashArtifact(run, "study-plan.md");
   if (record.study_plan_sha256 !== studyHash) fail("study-plan.md no longer matches the frozen run contract");
-  if (record.attention !== null) fail(`ScientistOne 1.3 runs cannot pause for post-approval attention at ${file}#/attention`);
+  if (record.attention !== null) {
+    if (!record.attention || record.attention.path !== "attention.md" || typeof record.attention.sha256 !== "string") fail(`Invalid attention record at ${file}#/attention`);
+    if (hashArtifact(run, "attention.md") !== record.attention.sha256) fail("attention.md no longer matches run.json#/attention");
+  }
   return record;
 }
 
@@ -539,6 +402,7 @@ function verifySourceBundleManifest(run) {
   }
   for (const [check, items] of checkItems) if (!items.length) fail(`Source bundle does not identify a required item for ${check}; add an available file or an unavailable item with missing_reason`);
   const assessable = [...checkItems].filter(([, items]) => items.every((item) => item.available));
+  if (!assessable.length) fail(`Source bundle provides no assessable integrity check; required checks are ${AUDIT_CHECKS.join(", ")}`);
   return { ...manifest, checkItems, assessable: new Set(assessable.map(([check]) => check)) };
 }
 
@@ -575,19 +439,38 @@ function verifyI1PathBinding(run, binding, expected, location) {
   return clean;
 }
 
+function verifyI1FileInventory(run, root, entries, location) {
+  const cleanRoot = relativePath(root);
+  const rootTarget = artifactPath(run, cleanRoot).target;
+  nonemptyDirectory(rootTarget);
+  if (!Array.isArray(entries) || !entries.length) fail(`${location} requires a non-empty file inventory`);
+  const paths = [];
+  for (const [index, item] of entries.entries()) {
+    if (!item || !nonemptyString(item.path) || !validSha256(item.sha256)) fail(`Malformed I1 file inventory entry at ${location}/${index}`);
+    const clean = relativePath(item.path);
+    if (!clean.startsWith(`${cleanRoot}/`) || paths.includes(clean)) fail(`Invalid or duplicate I1 file inventory path at ${location}/${index}: ${clean}`);
+    const target = artifactPath(run, clean).target;
+    if (!fs.statSync(target).isFile() || hashArtifact(run, clean) !== item.sha256) fail(`I1 file inventory hash mismatch at ${location}/${index}: ${clean}`);
+    paths.push(clean);
+  }
+  const actual = filesWithin(rootTarget).map((file) => `${cleanRoot}/${file}`);
+  if (JSON.stringify([...paths].sort()) !== JSON.stringify(actual)) fail(`I1 file inventory at ${location} is not exhaustive for ${cleanRoot}`);
+  return paths;
+}
+
 function verifyI1MetricPolicy(metric, location) {
   const required = ["id", "claim_role", "name", "unit", "direction", "population", "estimand", "transformation", "presentation", "determinism_class", "comparison_design", "repetitions", "randomness", "equivalence_margin", "uncertainty", "hardware", "failure_policy"];
   if (!metric || required.some((field) => metric[field] === undefined) || !nonemptyString(metric.id) || !nonemptyString(metric.name) || !nonemptyString(metric.unit) || !nonemptyString(metric.population) || !nonemptyString(metric.transformation)) fail(`I1 metric policy is incomplete at ${location}`);
   if (!["primary", "constraint", "secondary"].includes(metric.claim_role) || !["maximize", "minimize", "target", "signed"].includes(metric.direction) || !["deterministic", "seeded_stochastic", "irreducibly_stochastic", "hardware_sensitive"].includes(metric.determinism_class) || !["exact", "paired", "independent"].includes(metric.comparison_design)) fail(`I1 metric policy has invalid classes at ${location}`);
-  if (!metric.estimand || !["single_seed", "mean", "median", "quantile", "rate", "ratio"].includes(metric.estimand.type) || metric.estimand.semantics_version !== "scientistone_i1_v1" || !metric.estimand.parameters || Array.isArray(metric.estimand.parameters) || typeof metric.estimand.parameters !== "object") fail(`I1 estimand is invalid at ${location}`);
+  if (!metric.estimand || !["single_seed", "mean", "median", "quantile", "rate", "ratio", "paired_difference", "aggregate"].includes(metric.estimand.type) || !nonemptyString(metric.estimand.definition)) fail(`I1 estimand is invalid at ${location}`);
   if (!metric.presentation || !["none", "half_even", "half_away_from_zero", "truncate"].includes(metric.presentation.rounding) || !Number.isInteger(metric.presentation.digits) || metric.presentation.digits < 0 || !nonemptyString(metric.presentation.lineage_rule)) fail(`I1 presentation rule is invalid at ${location}`);
   const repetitions = metric.repetitions;
-  if (!repetitions || !Number.isInteger(repetitions.canonical) || repetitions.canonical < 1 || !Number.isInteger(repetitions.audit) || repetitions.audit < 1 || !Number.isInteger(repetitions.valid_required) || repetitions.valid_required < 1 || repetitions.valid_required > repetitions.audit || !nonemptyString(repetitions.rationale) || !Array.isArray(repetitions.canonical_run_ids) || repetitions.canonical_run_ids.length !== repetitions.canonical || new Set(repetitions.canonical_run_ids).size !== repetitions.canonical || !Array.isArray(repetitions.audit_run_ids) || repetitions.audit_run_ids.length !== repetitions.audit || new Set(repetitions.audit_run_ids).size !== repetitions.audit || [...repetitions.canonical_run_ids, ...repetitions.audit_run_ids].some((id) => !nonemptyString(id))) fail(`I1 repetitions are invalid at ${location}`);
+  if (!repetitions || !Number.isInteger(repetitions.canonical) || repetitions.canonical < 1 || !Number.isInteger(repetitions.audit) || repetitions.audit < 1 || !Number.isInteger(repetitions.valid_required) || repetitions.valid_required < 1 || repetitions.valid_required > repetitions.audit || !nonemptyString(repetitions.rationale)) fail(`I1 repetitions are invalid at ${location}`);
   if (!metric.randomness || !nonemptyString(metric.randomness.seed_policy) || !Array.isArray(metric.randomness.paired_keys) || (metric.randomness.resampling_seed !== null && !Number.isInteger(metric.randomness.resampling_seed))) fail(`I1 randomness policy is invalid at ${location}`);
   const margin = metric.equivalence_margin;
   if (!margin || !["exact", "absolute", "fixed_scale_relative", "asymmetric"].includes(margin.type) || !Number.isFinite(margin.lower) || !Number.isFinite(margin.upper) || margin.lower > margin.upper || (margin.reference_scale !== null && !Number.isFinite(margin.reference_scale)) || !nonemptyString(margin.rationale)) fail(`I1 equivalence margin is invalid at ${location}`);
   const uncertainty = metric.uncertainty;
-  if (!uncertainty || !["none", "exact", "student_t", "welch_t", "bootstrap", "permutation", "binomial", "custom_frozen"].includes(uncertainty.method) || uncertainty.computed_by !== "frozen_evaluator" || (uncertainty.confidence_level !== null && (!Number.isFinite(uncertainty.confidence_level) || uncertainty.confidence_level <= 0 || uncertainty.confidence_level >= 1)) || !nonemptyString(uncertainty.noise_measure) || (uncertainty.noise_ceiling !== null && !Number.isFinite(uncertainty.noise_ceiling))) fail(`I1 uncertainty policy is invalid at ${location}`);
+  if (!uncertainty || !["none", "exact", "student_t", "welch_t", "bootstrap", "permutation", "binomial", "custom_frozen"].includes(uncertainty.method) || (uncertainty.confidence_level !== null && (!Number.isFinite(uncertainty.confidence_level) || uncertainty.confidence_level <= 0 || uncertainty.confidence_level >= 1)) || !nonemptyString(uncertainty.noise_measure) || (uncertainty.noise_ceiling !== null && !Number.isFinite(uncertainty.noise_ceiling))) fail(`I1 uncertainty policy is invalid at ${location}`);
   const hardware = metric.hardware;
   if (!hardware || !["not_applicable", "exact_environment", "equivalence_class", "same_host_normalized"].includes(hardware.mode) || !Array.isArray(hardware.requirements) || (hardware.reference !== null && !nonemptyString(hardware.reference)) || hardware.external_unavailable_outcome !== "NOT_ASSESSED" || hardware.research_unavailable_outcome !== "INCONCLUSIVE") fail(`I1 hardware policy is invalid at ${location}`);
   const failure = metric.failure_policy;
@@ -597,7 +480,7 @@ function verifyI1MetricPolicy(metric, location) {
 function verifyI1Contract(run, record, live = false) {
   const policyPath = "contract/i1-verification-policy.json";
   const policy = readJson(path.join(run, policyPath));
-  if (policy.schema_version !== 2 || policy.mode !== record.mode || !["task_adaptive_v1", "adrs_legacy_v1"].includes(policy.profile) || policy.result_blind_authoring !== true || !nonemptyString(policy.policy_id)) fail(`Invalid frozen I1 policy at ${policyPath}`);
+  if (policy.schema_version !== 1 || policy.mode !== record.mode || !["task_adaptive_v1", "adrs_legacy_v1"].includes(policy.profile) || policy.result_blind_authoring !== true || !nonemptyString(policy.policy_id)) fail(`Invalid frozen I1 policy at ${policyPath}`);
   if (record.mode === "research" && (policy.freeze_stage !== "pre_candidate" || policy.frozen_before_candidate_generation !== true)) fail(`Research I1 policy must be frozen before candidate generation at ${policyPath}`);
   if (record.mode === "external_audit" && !((policy.freeze_stage === "pre_candidate" && policy.frozen_before_candidate_generation === true) || (policy.freeze_stage === "pre_i1_execution_external" && policy.frozen_before_candidate_generation === false))) fail(`External I1 policy has an invalid freeze stage at ${policyPath}`);
   const authored = policy.authored_by;
@@ -621,13 +504,44 @@ function verifyI1Contract(run, record, live = false) {
   if (policy.profile === "task_adaptive_v1" && (policy.variance_policy.widens_equivalence_margin !== false || policy.legacy !== undefined)) fail(`Task-adaptive I1 policy cannot widen margins or declare ADRS legacy settings`);
   if (policy.profile === "adrs_legacy_v1" && (policy.metrics.length !== 1 || policy.variance_policy.widens_equivalence_margin !== true || policy.legacy?.reruns !== 5 || policy.legacy?.standard_deviation !== "sample_n_minus_1" || policy.legacy?.relative_acceptance !== "max(0.01, 3*sample_sd/abs(rerun_mean))" || policy.legacy?.scope !== "ScientistOne paper ADRS audit reproduction only")) fail(`Invalid ADRS legacy I1 profile at ${policyPath}`);
   if (JSON.stringify(policy.verdicts?.allowed) !== JSON.stringify(I1_VERDICTS) || policy.verdicts?.research_required !== "PASS" || policy.verdicts?.not_assessed_mode !== "external_audit_only") fail(`Invalid I1 verdict policy at ${policyPath}#/verdicts`);
-  try { validatePolicySupport(policy); } catch (error) { fail(`Unsupported I1 policy at ${policyPath}: ${error.message}`); }
-  const interpreter = policy.interpreter;
-  if (!interpreter || interpreter.version !== INTERPRETER_VERSION || interpreter.path !== I1_INTERPRETER_PATH || interpreter.sha256 !== hashArtifact(run, I1_INTERPRETER_PATH)) fail(`I1 policy does not bind the frozen release-tested interpreter at ${policyPath}#/interpreter`);
-  const execution = policy.execution;
-  if (!execution || execution.private_execution_root !== "private/evaluator/i1-runs" || execution.evaluator_output_name !== "result.json" || execution.network !== false || !Array.isArray(execution.evaluator_argv) || !execution.evaluator_argv.length || execution.evaluator_argv.some((value) => !nonemptyString(value)) || !Array.isArray(execution.allowed_input_classes) || !execution.allowed_input_classes.length || JSON.stringify([...execution.safe_output_paths ?? []].sort()) !== JSON.stringify(I1_COMPONENTS.map((name) => `audit/i1/${name}.json`).sort())) fail(`Invalid I1 execution declaration at ${policyPath}#/execution`);
-  if (!execution.determinism || execution.determinism.canonical_json !== true || execution.determinism.stable_ordering !== true || execution.determinism.same_input_same_payload !== true || !nonemptyString(execution.determinism.fixed_locale) || !nonemptyString(execution.determinism.fixed_timezone) || !Number.isInteger(execution.determinism.fixed_concurrency) || execution.determinism.fixed_concurrency < 1) fail(`Invalid I1 deterministic-execution declaration at ${policyPath}#/execution/determinism`);
-  return { policy, interpreter, execution };
+
+  const verifier = policy.verifier;
+  if (!verifier || verifier.manifest_path !== "private/evaluator/i1-verifier/manifest.json" || verifier.source_root !== "private/evaluator/i1-verifier/source" || verifier.fixtures_root !== "private/evaluator/i1-verifier/fixtures" || verifier.self_test_path !== "private/evaluator/i1-verifier/self-test.json" || verifier.private_execution_root !== "private/evaluator/i1-runs" || verifier.network !== false || !Array.isArray(verifier.argv) || !verifier.argv.length || verifier.argv.some((value) => !nonemptyString(value)) || !Array.isArray(verifier.safe_output_paths) || I1_COMPONENTS.some((name) => !verifier.safe_output_paths.includes(`audit/i1/${name}.json`))) fail(`Invalid I1 verifier declaration at ${policyPath}#/verifier`);
+  if (!verifier.determinism || verifier.determinism.canonical_json !== true || verifier.determinism.stable_ordering !== true || verifier.determinism.same_input_same_payload !== true || !nonemptyString(verifier.determinism.fixed_locale) || !nonemptyString(verifier.determinism.fixed_timezone) || !Number.isInteger(verifier.determinism.fixed_concurrency) || verifier.determinism.fixed_concurrency < 1) fail(`Invalid I1 deterministic-execution declaration at ${policyPath}#/verifier/determinism`);
+  const runtimePath = verifier.runtime_path;
+  if (!nonemptyString(runtimePath) || !validSha256(verifier.runtime_sha256)) fail(`Invalid I1 runtime binding at ${policyPath}#/verifier`);
+  const runtimeTarget = path.isAbsolute(runtimePath) ? runtimePath : artifactPath(run, runtimePath).target;
+  if ((live || !path.isAbsolute(runtimePath)) && (!fs.existsSync(runtimeTarget) || !fs.statSync(runtimeTarget).isFile())) fail(`I1 verifier runtime is unavailable: ${runtimePath}`);
+  if (fs.existsSync(runtimeTarget) && fileSha256(runtimeTarget) !== verifier.runtime_sha256) fail(`I1 verifier runtime hash mismatch: ${runtimePath}`);
+
+  const manifestPath = "private/evaluator/i1-verifier/manifest.json";
+  const manifest = readJson(path.join(run, manifestPath));
+  if (manifest.schema_version !== 1 || manifest.policy_path !== policyPath || manifest.policy_sha256 !== hashArtifact(run, policyPath) || manifest.source_root !== verifier.source_root || manifest.fixtures_root !== verifier.fixtures_root || manifest.runtime_path !== runtimePath || manifest.runtime_sha256 !== verifier.runtime_sha256 || JSON.stringify(manifest.argv) !== JSON.stringify(verifier.argv) || manifest.network !== false || JSON.stringify(manifest.allowed_input_classes) !== JSON.stringify(verifier.allowed_input_classes) || JSON.stringify(manifest.safe_output_paths) !== JSON.stringify(verifier.safe_output_paths) || !Array.isArray(manifest.dependencies)) fail(`I1 verifier manifest does not match its policy at ${manifestPath}`);
+  const sourcePaths = verifyI1FileInventory(run, manifest.source_root, manifest.source_files, `${manifestPath}#/source_files`);
+  const fixturePaths = verifyI1FileInventory(run, manifest.fixtures_root, manifest.fixture_files, `${manifestPath}#/fixture_files`);
+  if (manifest.source_tree_sha256 !== hashArtifact(run, manifest.source_root) || manifest.fixtures_tree_sha256 !== hashArtifact(run, manifest.fixtures_root)) fail(`I1 verifier manifest tree hashes are invalid at ${manifestPath}`);
+  for (const [index, dependency] of manifest.dependencies.entries()) {
+    const location = `${manifestPath}#/dependencies/${index}`;
+    if (!dependency || !nonemptyString(dependency.name) || !nonemptyString(dependency.version) || !nonemptyString(dependency.lock_or_manifest) || !validSha256(dependency.sha256)) fail(`Malformed I1 dependency at ${location}`);
+    const lock = relativePath(dependency.lock_or_manifest);
+    if (!lock.startsWith("private/evaluator/i1-verifier/") || hashArtifact(run, lock) !== dependency.sha256) fail(`I1 dependency lock hash mismatch at ${location}`);
+  }
+
+  const selfTestPath = "private/evaluator/i1-verifier/self-test.json";
+  const selfTest = readJson(path.join(run, selfTestPath));
+  const requiredClasses = ["positive", "boundary", "mismatch", "malformed_input", "missing_run"];
+  if (selfTest.schema_version !== 1 || selfTest.verdict !== "PASS" || !Array.isArray(selfTest.cases) || !selfTest.cases.length || requiredClasses.some((kind) => !selfTest.cases.some((item) => item.class === kind))) fail(`I1 verifier self-test lacks required passing fixture classes at ${selfTestPath}`);
+  const caseIds = new Set();
+  for (const [index, item] of selfTest.cases.entries()) {
+    const location = `${selfTestPath}#/cases/${index}`;
+    if (!item || !nonemptyString(item.id) || caseIds.has(item.id) || !requiredClasses.includes(item.class) || !fixturePaths.includes(relativePath(item.fixture_path)) || item.fixture_sha256 !== hashArtifact(run, item.fixture_path) || !I1_VERDICTS.includes(item.expected_verdict) || item.actual_verdict !== item.expected_verdict || !validSha256(item.output_sha256) || item.passed !== true) fail(`Malformed or failed I1 self-test case at ${location}`);
+    caseIds.add(item.id);
+  }
+
+  const buildPath = "private/evaluator/i1-verifier/build-receipt.json";
+  const build = readJson(path.join(run, buildPath));
+  if (build.schema_version !== 1 || build.verdict !== "PASS" || build.builder_launch_record !== launchPath || build.builder_launch_record_sha256 !== authored.launch_record_sha256 || build.policy_path !== policyPath || build.policy_sha256 !== hashArtifact(run, policyPath) || build.manifest_path !== manifestPath || build.manifest_sha256 !== hashArtifact(run, manifestPath) || build.source_tree_sha256 !== manifest.source_tree_sha256 || build.fixtures_tree_sha256 !== manifest.fixtures_tree_sha256 || build.self_test_path !== selfTestPath || build.self_test_sha256 !== hashArtifact(run, selfTestPath) || build.network_used !== false || !Array.isArray(build.undeclared_inputs_accessed) || build.undeclared_inputs_accessed.length || !Array.isArray(build.limitations) || build.limitations.length) fail(`Invalid I1 verifier build receipt at ${buildPath}`);
+  return { policy, manifest, sourcePaths, fixturePaths };
 }
 
 function externalInputsFor(bundle, check) {
@@ -636,6 +550,7 @@ function externalInputsFor(bundle, check) {
 
 function roleMayRead(run, role, input) {
   if (PRIVATE_ROLES.has(role)) return true;
+  if (role === "contract_auditor" && (input === "private/evaluator/i1-verifier" || input.startsWith("private/evaluator/i1-verifier/"))) return true;
   if (input.startsWith("private/")) return false;
   const inputManifest = verifyInputManifest(run);
   if (inputManifest.files.some((item) => item.classification === "evaluator_only" && (input === item.frozen_path || input.startsWith(`${item.frozen_path}/`)))) return false;
@@ -685,39 +600,6 @@ function verifyArtifactBindings(run, bindings, paths, location) {
   return normalized;
 }
 
-function routingForLaunch(run, routingSha256) {
-  const candidates = [path.join(run, "environment", "model-routing.json")];
-  const history = path.join(run, "environment", "routing-history");
-  if (fs.existsSync(history)) for (const name of fs.readdirSync(history).sort()) if (name.endsWith(".json")) candidates.push(path.join(history, name));
-  for (const file of candidates) {
-    if (!fs.existsSync(file)) continue;
-    let value;
-    try {
-      value = validateRoutingRecord(readJson(file));
-    } catch (error) {
-      fail(`Invalid saved ScientistOne routing record ${path.relative(run, file).replaceAll(path.sep, "/")}: ${error.message}`);
-    }
-    if (value.routing_sha256 === routingSha256) return value;
-  }
-  fail(`No saved ScientistOne routing record matches launch routing ${routingSha256}`);
-}
-
-function verifyAttemptRecord(run, launchRelative, launch) {
-  if (!nonemptyString(launch.logical_task_name) || !Number.isInteger(launch.attempt) || launch.attempt < 1) fail(`Launch ${launchRelative} lacks a valid logical task and accepted-attempt number`);
-  const limit = readJson(path.join(run, "run.json")).orchestration?.max_task_attempts;
-  if (!Number.isInteger(limit) || launch.attempt > limit) fail(`Launch ${launchRelative} exceeds the frozen accepted-attempt limit`);
-  if (!nonemptyString(launch.role) || !Array.isArray(launch.declared_outputs) || !launch.declared_outputs.length) fail(`Launch ${launchRelative} lacks a stable role/output work identity`);
-  const workKey = createHash("sha256").update(canonicalJson({ contract_revision: launch.contract_revision ?? 1, charter_revision: launch.charter_revision ?? 1, role: launch.role, declared_outputs: [...launch.declared_outputs].sort() })).digest("hex");
-  if (launch.work_key_sha256 !== workKey) fail(`Launch ${launchRelative} has an invalid role/output work identity`);
-  const versionedRelative = `role-attempts/${launch.logical_task_name}/${workKey}/attempt-${launch.attempt}.json`;
-  const relative = versionedRelative;
-  const value = readJson(artifactPath(run, relative).target);
-  const expectedKeys = ["schema_version", "logical_task_name", "work_key_sha256", "attempt", "launch_record", "launch_record_sha256", "accepted_at"];
-  exactKeys(value, expectedKeys, relative);
-  if (value.schema_version !== 2 || value.work_key_sha256 !== workKey || value.logical_task_name !== launch.logical_task_name || value.attempt !== launch.attempt || value.launch_record !== launchRelative || value.launch_record_sha256 !== hashArtifact(run, launchRelative) || !nonemptyString(value.accepted_at) || !Number.isFinite(Date.parse(value.accepted_at)) || Date.parse(value.accepted_at) < Date.parse(launch.started_at)) fail(`Accepted-attempt record does not match ${launchRelative}`);
-  return relative;
-}
-
 function verifyRoleReceipt(run, relative) {
   const receipt = readJson(artifactPath(run, relative).target);
   const task = path.basename(relative, ".json");
@@ -754,32 +636,33 @@ function verifyRoleReceipt(run, relative) {
   const launchHash = hashArtifact(run, launchRelative);
   if (receipt.launch_record_sha256 !== launchHash) fail(`Launch-record hash mismatch at ${relative}#/launch_record_sha256; expected ${launchHash}, received ${JSON.stringify(receipt.launch_record_sha256)}`);
   if (launch.schema_version !== 1 || !nonemptyString(launch.task_id) || launch.role !== receipt.role || launch.fork_turns !== "none" || launch.model !== receipt.model || launch.reasoning_effort !== receipt.reasoning_effort || launch.started_at !== receipt.started_at) fail(`Role receipt ${relative} does not match supervisor launch record ${launchRelative}`);
-  const attemptRecord = verifyAttemptRecord(run, launchRelative, launch);
+  let expectedRuntime;
+  try {
+    expectedRuntime = expectedRoleRuntime(run, receipt.role, launch.model_routing_sha256);
+  } catch (error) {
+    fail(`Cannot verify the frozen model policy for ${relative}: ${error.message}`);
+  }
+  if (launch.model_tier !== expectedRuntime.tier || launch.model !== expectedRuntime.model || launch.reasoning_effort !== expectedRuntime.reasoning_effort || launch.model_routing_sha256 !== expectedRuntime.routing_sha256) fail(`Role launch ${launchRelative} does not match the frozen ScientistOne model policy`);
   if (!Array.isArray(launch.declared_inputs) || !Array.isArray(launch.allowed_external_sources) || !Array.isArray(launch.declared_outputs)) fail(`Malformed supervisor launch record: ${launchRelative}`);
-  const routing = routingForLaunch(run, launch.model_routing_sha256);
-  const setting = routing.policy?.roles?.[launch.role];
-  const tier = setting && routing.tiers?.[setting.tier];
-  if (!setting || !tier || launch.model_tier !== setting.tier || launch.model !== tier.model || launch.reasoning_effort !== setting.reasoning_effort) fail(`Launch ${launchRelative} does not match the frozen ScientistOne model policy`);
-  if (!launch.task_brief || !validSha256(launch.task_brief_sha256) || launch.task_brief_sha256 !== createHash("sha256").update(canonicalJson(launch.task_brief)).digest("hex") || !nonemptyString(launch.assignment) || !validSha256(launch.assignment_sha256) || launch.assignment_sha256 !== createHash("sha256").update(launch.assignment).digest("hex")) fail(`Launch record has an invalid canonical task brief or assignment: ${launchRelative}`);
   if (launch.allowed_external_sources.some((value) => !nonemptyString(value)) || new Set(launch.allowed_external_sources).size !== launch.allowed_external_sources.length) fail(`Supervisor launch record has invalid allowed_external_sources: ${launchRelative}`);
   const launchInputs = launch.declared_inputs.map((input) => roleRelative(run, input));
   const launchOutputs = launch.declared_outputs.map((output) => roleRelative(run, output));
   if (JSON.stringify(launchInputs) !== JSON.stringify(inputs) || JSON.stringify(launchOutputs) !== JSON.stringify(outputs)) fail(`Declared paths in ${relative} differ from supervisor launch record ${launchRelative}`);
   if (JSON.stringify(launch.allowed_external_sources) !== JSON.stringify(receipt.allowed_external_sources)) fail(`Allowed external sources in ${relative} differ from supervisor launch record ${launchRelative}`);
-  if (!Array.isArray(launch.input_artifacts)) fail(`ScientistOne 1.3 launch lacks exact input bindings at ${launchRelative}`);
-  const record = readJson(path.join(run, "run.json"));
-  const expectedLogicalTask = launch.logical_task_name;
-  const expectedAttempt = launch.attempt;
-  if (!nonemptyString(expectedLogicalTask) || !Number.isInteger(expectedAttempt) || expectedAttempt < 1 || launch.contract_revision !== record.contract_revision || launch.charter_revision !== record.charter_revision || launch.role_contract_sha256 !== fileSha256(ROLE_CONTRACT_FILE) || launch.gate_schema_version !== 1) fail(`Hash-bound launch metadata is invalid or uses a stale role contract at ${launchRelative}`);
-  if (receipt.launch_record !== launchRelative || receipt.logical_task_name !== expectedLogicalTask || receipt.attempt !== expectedAttempt || receipt.contract_revision !== launch.contract_revision || receipt.charter_revision !== launch.charter_revision || JSON.stringify(receipt.predecessor) !== JSON.stringify(launch.predecessor) || receipt.model_routing_sha256 !== launch.model_routing_sha256 || receipt.role_contract_sha256 !== launch.role_contract_sha256 || receipt.assignment_sha256 !== launch.assignment_sha256 || receipt.task_brief_sha256 !== launch.task_brief_sha256 || receipt.gate_schema_version !== launch.gate_schema_version) fail(`Hash-bound receipt metadata differs from ${launchRelative}`);
-  const handoff = receipt.handoff;
-  if (!handoff || !nonemptyString(handoff.summary) || !nonemptyString(handoff.recommended_next_action) || ["decisions", "evidence_ids", "conflicts", "unresolved"].some((field) => !Array.isArray(handoff[field]) || handoff[field].some((item) => !nonemptyString(item)))) fail(`Role receipt ${relative} lacks a compact saved handoff`);
-  verifyArtifactBindings(run, launch.input_artifacts, launchInputs, `${launchRelative}#/input_artifacts`);
-  const receiptInputs = verifyArtifactBindings(run, receipt.input_artifacts, inputs, `${relative}#/input_artifacts`);
-  if (JSON.stringify(receiptInputs) !== JSON.stringify(launch.input_artifacts)) fail(`Receipt input hashes differ from supervisor launch bindings at ${relative}`);
-  const boundOutputs = outputs.filter((output) => output !== relative);
-  verifyArtifactBindings(run, receipt.output_artifacts, boundOutputs, `${relative}#/output_artifacts`);
-  return { role: receipt.role, agent_task: receipt.agent_task, logical_task_name: launch.logical_task_name, attempt: launch.attempt, attempt_record: attemptRecord, hash_bound: true, inputs, outputs: outputs.filter((output) => !environmentArtifacts.has(output)) };
+  const hashBound = Array.isArray(launch.input_artifacts);
+  if (hashBound) {
+    const record = readJson(path.join(run, "run.json"));
+    const expectedLogicalTask = launch.logical_task_name ?? task;
+    const expectedAttempt = launch.attempt ?? 1;
+    if (!nonemptyString(expectedLogicalTask) || !Number.isInteger(expectedAttempt) || expectedAttempt < 1 || launch.contract_revision !== record.contract_revision || launch.charter_revision !== record.charter_revision || launch.role_contract_sha256 !== LEGACY_ROLE_CONTRACT_SHA256 || launch.gate_schema_version !== 1) fail(`Hash-bound launch metadata is invalid or uses a stale role contract at ${launchRelative}`);
+    if (receipt.launch_record !== launchRelative || receipt.logical_task_name !== expectedLogicalTask || receipt.attempt !== expectedAttempt || receipt.contract_revision !== launch.contract_revision || receipt.charter_revision !== launch.charter_revision || JSON.stringify(receipt.predecessor) !== JSON.stringify(launch.predecessor) || receipt.model_routing_sha256 !== launch.model_routing_sha256 || receipt.role_contract_sha256 !== launch.role_contract_sha256 || receipt.gate_schema_version !== launch.gate_schema_version) fail(`Hash-bound receipt metadata differs from ${launchRelative}`);
+    verifyArtifactBindings(run, launch.input_artifacts, launchInputs, `${launchRelative}#/input_artifacts`);
+    const receiptInputs = verifyArtifactBindings(run, receipt.input_artifacts, inputs, `${relative}#/input_artifacts`);
+    if (JSON.stringify(receiptInputs) !== JSON.stringify(launch.input_artifacts)) fail(`Receipt input hashes differ from supervisor launch bindings at ${relative}`);
+    const boundOutputs = outputs.filter((output) => output !== relative);
+    verifyArtifactBindings(run, receipt.output_artifacts, boundOutputs, `${relative}#/output_artifacts`);
+  }
+  return { role: receipt.role, agent_task: receipt.agent_task, logical_task_name: launch.logical_task_name ?? task, attempt: launch.attempt ?? 1, hash_bound: hashBound, inputs, outputs: outputs.filter((output) => !environmentArtifacts.has(output)) };
 }
 
 function outputOwned(record, expected) {
@@ -818,14 +701,32 @@ function requireEvaluatorRawOwnership(run, roleRecords, evaluationPath) {
 }
 
 function i1BuilderInputs(record) {
-  const inputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/run-config.json", "contract/input-manifest.json", I1_INTERPRETER_PATH];
+  const inputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "environment/model-routing.json", "contract/run-config.json", "contract/input-manifest.json"];
   if (record.mode === "external_audit") inputs.push("contract/source-bundle-manifest.json");
   else inputs.push("contract/evaluator-contract.md", "contract/evaluator-manifest.json");
   return inputs;
 }
 
+function expectedRoleRuntime(run, role, routingSha256 = null) {
+  const candidates = ["environment/model-routing.json"];
+  const history = path.join(run, "environment", "routing-history");
+  if (fs.existsSync(history)) for (const name of fs.readdirSync(history).sort()) if (name.endsWith(".json")) candidates.push(`environment/routing-history/${name}`);
+  for (const relative of candidates) {
+    try {
+      const record = validateRoutingRecord(readJson(artifactPath(run, relative).target));
+      if (routingSha256 !== null && record.routing_sha256 !== routingSha256) continue;
+      const setting = record.policy.roles[role];
+      if (!setting) fail(`Role ${role} is absent from ${relative}`);
+      return { tier: setting.tier, model: record.tiers[setting.tier].model, reasoning_effort: setting.reasoning_effort, routing_sha256: record.routing_sha256 };
+    } catch (error) {
+      fail(`Invalid frozen model-routing record at ${relative}: ${error.message}`);
+    }
+  }
+  fail(`No frozen model-routing record matches launch routing ${routingSha256}`);
+}
+
 function requiredContractInputs(run, record) {
-  return [...i1BuilderInputs(record), "contract/i1-verification-policy.json"];
+  return [...i1BuilderInputs(record), "contract/i1-verification-policy.json", "private/evaluator/i1-verifier"];
 }
 
 const DOWNSTREAM_INPUT_ROOTS = Object.freeze({
@@ -857,7 +758,7 @@ function verifyRoleCoverage(run, phase, roles) {
   if (phase === "contract") {
     const record = readJson(path.join(run, "run.json"));
     const [builder] = requireRole(roleRecords, "i1_verifier_builder", "contract/i1-verification-policy.json", i1BuilderInputs(record), true);
-    if (JSON.stringify([...builder.outputs].sort()) !== JSON.stringify(["contract/i1-verification-policy.json"])) fail(`${builder.agent_task} owns an invalid I1 policy-author output set`);
+    if (!outputOwned(builder, "private/evaluator/i1-verifier") || JSON.stringify([...builder.outputs].sort()) !== JSON.stringify(["contract/i1-verification-policy.json", "private/evaluator/i1-verifier"].sort())) fail(`${builder.agent_task} owns an invalid I1 verifier-builder output set`);
     requireRole(roleRecords, "contract_auditor", "contract/audit.md", requiredContractInputs(run, record), true);
   }
   if (phase === "investigation") {
@@ -932,8 +833,8 @@ function verifyRoleCoverage(run, phase, roles) {
     const bundle = record.mode === "external_audit" ? verifySourceBundleManifest(run) : null;
     const evaluatorInputs = record.mode === "research" ? ["contract/evaluator-contract.md", "contract/evaluator-manifest.json", ...verifyEvaluatorManifest(run).paths] : [];
     const i1Inputs = record.mode === "research"
-      ? ["study-plan.md", "environment/bootstrap.json", I1_INTERPRETER_PATH, "contract/i1-verification-policy.json", "paper/paper.tex", ...(pdfRequired(run, record) ? ["paper/paper.pdf"] : []), "selection/selected", "selection/canonical-evaluation.json", ...evaluatorInputs]
-      : ["study-plan.md", "environment/bootstrap.json", I1_INTERPRETER_PATH, "contract/i1-verification-policy.json", ...externalInputsFor(bundle, "I1")];
+      ? ["study-plan.md", "environment/bootstrap.json", "contract/i1-verification-policy.json", "private/evaluator/i1-verifier", "paper/paper.tex", ...(pdfRequired(run, record) ? ["paper/paper.pdf"] : []), "selection/selected", "selection/canonical-evaluation.json", ...evaluatorInputs]
+      : ["study-plan.md", "environment/bootstrap.json", "contract/i1-verification-policy.json", "private/evaluator/i1-verifier", ...externalInputsFor(bundle, "I1")];
     const [i1Owner] = requireRole(roleRecords, "i1_score_auditor", "audit/i1.json", i1Inputs, true);
     if (!outputOwned(i1Owner, "audit/i1")) fail(`${i1Owner.agent_task} does not own the required structured I1 audit directory`);
     const i1Execution = readJson(path.join(run, "audit", "i1", "execution-receipt.json"));
@@ -1033,7 +934,7 @@ function verifySelectionLineage(run) {
   const requiredStrings = ["source_node_id", "source_snapshot_path", "source_snapshot_sha256", "selected_snapshot_sha256", "legitimacy_verdict_path", "evaluation_path", "metric_name", "metric_direction"];
   for (const field of requiredStrings) if (!nonemptyString(lineage[field])) fail(`Selection lineage at ${lineageFile}#/${field} must be a non-empty string, received ${JSON.stringify(lineage[field])}`);
   if (lineage.rank !== 1 || !Array.isArray(lineage.tie_break_evidence)) fail(`Selection lineage at ${lineageFile} must have rank 1 and tie_break_evidence array`);
-  if (!["maximize", "minimize", "target", "signed"].includes(lineage.metric_direction)) fail(`Invalid metric_direction at ${lineageFile}; received ${JSON.stringify(lineage.metric_direction)}`);
+  if (!["maximize", "minimize"].includes(lineage.metric_direction)) fail(`Invalid metric_direction at ${lineageFile}; received ${JSON.stringify(lineage.metric_direction)}`);
   const nodes = Array.isArray(index.nodes) ? index.nodes : [];
   const node = nodes.find((item) => item.id === lineage.source_node_id);
   if (!node) fail(`Selection lineage source_node_id at ${lineageFile} does not resolve in discovery/index.json: ${lineage.source_node_id}`);
@@ -1047,8 +948,7 @@ function verifySelectionLineage(run) {
   if (!evaluationPath.startsWith(`${nodePath}/evaluations/`) || !evaluationPath.endsWith(".json")) fail(`Selection lineage evaluation must belong to ${nodePath}, received ${evaluationPath}`);
   verifyEvaluation(run, artifactPath(run, evaluationPath).target, `${nodePath}/snapshots`);
   const evaluation = readJson(artifactPath(run, evaluationPath).target);
-  const lineageMetric = evaluationMetrics(evaluation).find((metric) => metric.name === lineage.metric_name && metric.direction === lineage.metric_direction);
-  if (evaluation.status !== "valid" || evaluation.snapshot !== sourceSnapshot || !lineageMetric) fail(`Selection lineage at ${lineageFile} is not bound to an eligible evaluation`);
+  if (evaluation.status !== "valid" || evaluation.snapshot !== sourceSnapshot || evaluation.metric.name !== lineage.metric_name || evaluation.metric.direction !== lineage.metric_direction) fail(`Selection lineage at ${lineageFile} is not bound to an eligible evaluation`);
   const selectedFiles = verifySelectedManifest(run);
   const sourceFiles = filesWithin(artifactPath(run, sourceSnapshot).target);
   if (JSON.stringify(sourceFiles) !== JSON.stringify([...selectedFiles].sort())) fail(`Selected snapshot file list differs from lineage source ${sourceSnapshot}`);
@@ -1089,13 +989,8 @@ function exactKeys(value, allowed, location) {
 }
 
 function verifySanitizedEvaluation(run, value, file) {
-  exactKeys(value, ["schema_version", "snapshot", "snapshot_path", "snapshot_sha256", "metric", "metrics", "protocol", "procedure_id", "repetitions", "command_or_procedure", "environment", "raw_output_ref", "raw_output_sha256", "evaluated_at", "status", "failure_category", "candidate_visible_note"], file);
-  if (value.metric != null && value.metrics != null) fail(`Evaluation at ${file} cannot declare both metric and metrics`);
-  if (value.metric != null) exactKeys(value.metric, ["id", "name", "value", "unit", "direction", "estimand", "estimand_parameters", "repetitions"], `${file}#/metric`);
-  if (value.metrics != null) {
-    if (!Array.isArray(value.metrics) || !value.metrics.length) fail(`Evaluation metrics at ${file} must be a non-empty array`);
-    for (const [index, metric] of value.metrics.entries()) exactKeys(metric, ["id", "name", "value", "unit", "direction", "estimand", "estimand_parameters", "repetitions"], `${file}#/metrics/${index}`);
-  }
+  exactKeys(value, ["schema_version", "snapshot", "snapshot_path", "snapshot_sha256", "metric", "protocol", "procedure_id", "repetitions", "command_or_procedure", "environment", "raw_output_ref", "raw_output_sha256", "evaluated_at", "status", "failure_category", "candidate_visible_note"], file);
+  if (value.metric != null) exactKeys(value.metric, ["name", "value", "unit", "direction"], `${file}#/metric`);
   if (value.environment != null) exactKeys(value.environment, ["software", "hardware", "os"], `${file}#/environment`);
   if (Array.isArray(value.repetitions)) for (const [index, repetition] of value.repetitions.entries()) exactKeys(repetition, ["seed", "value", "id"], `${file}#/repetitions/${index}`);
   if (!nonemptyString(value.raw_output_ref) || !nonemptyString(value.raw_output_sha256)) fail(`Evaluation at ${file} must contain raw_output_ref and raw_output_sha256`);
@@ -1105,26 +1000,19 @@ function verifySanitizedEvaluation(run, value, file) {
   if (observed !== value.raw_output_sha256) fail(`Evaluation raw output hash mismatch at ${file}; expected ${value.raw_output_sha256}, received ${observed}`);
 }
 
-function evaluationMetrics(value) {
-  return Array.isArray(value.metrics) ? value.metrics : value.metric ? [value.metric] : [];
-}
-
 function verifyCanonicalEvaluation(run, file, record) {
   const value = readJson(file);
   verifySanitizedEvaluation(run, value, file);
   if (value.status !== "valid" || value.snapshot_path !== "selection/selected" || value.snapshot_sha256 !== hashArtifact(run, value.snapshot_path)) fail(`Canonical evaluation is not bound to the selected snapshot: ${file}`);
+  const metric = value.metric;
+  if (!metric || !nonemptyString(metric.name) || !Number.isFinite(metric.value) || !nonemptyString(metric.unit) || !["maximize", "minimize"].includes(metric.direction)) fail(`Invalid canonical metric at ${file}#/metric; expected finite value and name/unit/direction, received ${JSON.stringify(metric)}`);
   const policy = readJson(path.join(run, "contract", "i1-verification-policy.json"));
-  const metrics = evaluationMetrics(value);
-  const ids = metrics.map((metric) => metric.id).sort();
-  const expectedIds = policy.metrics.map((metric) => metric.id).sort();
-  if (JSON.stringify(ids) !== JSON.stringify(expectedIds)) fail(`Canonical metric inventory differs from the frozen I1 policy at ${file}`);
-  for (const metric of metrics) {
-    const frozen = policy.metrics.find((candidate) => candidate.id === metric.id);
-    if (!frozen || metric.name !== frozen.name || metric.unit !== frozen.unit || metric.direction !== frozen.direction || metric.estimand !== frozen.estimand.type || canonicalJson(metric.estimand_parameters ?? {}) !== canonicalJson(frozen.estimand.parameters ?? {}) || !Number.isFinite(metric.value) || !Array.isArray(metric.repetitions) || metric.repetitions.length !== frozen.repetitions.canonical || metric.repetitions.some((item) => !Number.isFinite(item.value))) fail(`Canonical metric does not match its frozen policy at ${file}#/metrics/${metric?.id}`);
-    let expected;
-    try { expected = summarize(metric.repetitions.map((item) => item.value), metric.estimand, frozen.estimand.parameters ?? {}); } catch (error) { fail(`Cannot compute frozen estimand for ${metric.id}: ${error.message}`); }
-    if (Math.abs(expected - metric.value) > Math.max(1e-12, Math.abs(expected) * 1e-9)) fail(`Canonical metric ${metric.id} does not equal its frozen ${metric.estimand} estimand`);
-  }
+  const primaryIds = new Set(policy.decision_rule.primary_metric_ids);
+  const matchedPrimaryMetrics = policy.metrics.filter((candidate) => primaryIds.has(candidate.id) && candidate.name === metric.name && candidate.unit === metric.unit && candidate.direction === metric.direction);
+  if (matchedPrimaryMetrics.length !== 1) fail(`Canonical metric does not match exactly one frozen primary I1 metric at ${file}#/metric`);
+  if (!Array.isArray(value.repetitions) || value.repetitions.length !== record.budgets.canonical_repetitions || value.repetitions.some((item) => !Number.isFinite(item.value))) fail(`Canonical evaluation has the wrong repetition evidence: ${file}`);
+  const mean = value.repetitions.reduce((sum, item) => sum + item.value, 0) / value.repetitions.length;
+  if (Math.abs(mean - metric.value) > Math.max(1e-12, Math.abs(mean) * 1e-9)) fail(`Canonical metric is not the repetition mean: ${file}`);
 }
 
 function verifyEvaluation(run, file, allowedSnapshotPrefix) {
@@ -1132,11 +1020,11 @@ function verifyEvaluation(run, file, allowedSnapshotPrefix) {
   verifySanitizedEvaluation(run, value, file);
   if (!value || typeof value.snapshot !== "string" || !(value.snapshot === allowedSnapshotPrefix || value.snapshot.startsWith(`${allowedSnapshotPrefix}/`)) || value.snapshot_sha256 !== hashArtifact(run, value.snapshot)) fail(`Evaluation is not bound to an allowed sealed snapshot: ${file}`);
   if (value.status === "failed") {
-    if (!nonemptyString(value.failure_category) || evaluationMetrics(value).length) fail(`Malformed failed evaluation at ${file}; expected failure_category and no metric`);
+    if (!nonemptyString(value.failure_category) || value.metric != null) fail(`Malformed failed evaluation at ${file}; expected failure_category and no metric`);
     return;
   }
-  const metrics = evaluationMetrics(value);
-  if (value.status !== "valid" || !metrics.length || metrics.some((metric) => typeof metric.name !== "string" || !Number.isFinite(metric.value) || typeof metric.unit !== "string" || !["maximize", "minimize", "target", "signed"].includes(metric.direction)) || typeof value.protocol !== "string" || typeof value.command_or_procedure !== "string") fail(`Malformed evaluation evidence: ${file}`);
+  const metric = value.metric;
+  if (value.status !== "valid" || !metric || typeof metric.name !== "string" || !Number.isFinite(metric.value) || typeof metric.unit !== "string" || !["maximize", "minimize"].includes(metric.direction) || !Array.isArray(value.repetitions) || !value.repetitions.length || value.repetitions.some((item) => !Number.isFinite(item.value)) || typeof value.protocol !== "string" || typeof value.command_or_procedure !== "string") fail(`Malformed evaluation evidence: ${file}`);
 }
 
 function verifyPdf(file) {
@@ -1315,7 +1203,7 @@ function verifyEvidencePathList(run, values, location) {
 }
 
 function i1Verdict(values) {
-  return aggregateVerdicts(values);
+  return values.includes("FAIL") ? "FAIL" : values.includes("NOT_ASSESSED") ? "NOT_ASSESSED" : values.includes("INCONCLUSIVE") ? "INCONCLUSIVE" : "PASS";
 }
 
 function verifyI1Manifest(run, relative, requiredPaths = []) {
@@ -1374,12 +1262,12 @@ function roundI1Value(value, presentation) {
 function verifyI1(run, report, assessable) {
   const file = "audit/i1.json";
   const record = readJson(path.join(run, "run.json"));
-  const { policy, interpreter, execution: executionPolicy } = verifyI1Contract(run, record);
+  const { policy, manifest } = verifyI1Contract(run, record);
   const policySha = hashArtifact(run, "contract/i1-verification-policy.json");
-  const interpreterSha = hashArtifact(run, I1_INTERPRETER_PATH);
+  const manifestSha = hashArtifact(run, "private/evaluator/i1-verifier/manifest.json");
   const plannedPdf = record.mode === "external_audit" || pdfRequired(run, record);
   const allowNotAssessed = record.mode === "external_audit" || !plannedPdf;
-  if (!report || report.schema_version !== 2 || !I1_VERDICTS.includes(report.verdict) || report.policy?.path !== "contract/i1-verification-policy.json" || report.policy?.sha256 !== policySha || report.policy?.profile !== policy.profile || report.interpreter?.path !== I1_INTERPRETER_PATH || report.interpreter?.sha256 !== interpreterSha || report.interpreter?.version !== interpreter.version || !Array.isArray(report.evidence_paths) || !Array.isArray(report.unavailable_items) || !Array.isArray(report.limitations)) fail(`Malformed task-adaptive I1 aggregate at ${file}`);
+  if (!report || report.schema_version !== 1 || !I1_VERDICTS.includes(report.verdict) || report.policy?.path !== "contract/i1-verification-policy.json" || report.policy?.sha256 !== policySha || report.policy?.profile !== policy.profile || report.verifier?.manifest_path !== "private/evaluator/i1-verifier/manifest.json" || report.verifier?.manifest_sha256 !== manifestSha || report.verifier?.source_tree_sha256 !== manifest.source_tree_sha256 || !Array.isArray(report.evidence_paths) || !Array.isArray(report.unavailable_items) || !Array.isArray(report.limitations)) fail(`Malformed task-adaptive I1 aggregate at ${file}`);
   if (report.verdict === "NOT_ASSESSED" && (!allowNotAssessed || !report.unavailable_items.length)) fail(`Invalid NOT_ASSESSED I1 aggregate at ${file}`);
   if (!assessable && report.verdict !== "NOT_ASSESSED") fail(`I1 reports ${report.verdict} even though required source-bundle inputs are unavailable`);
   verifyEvidencePathList(run, report.evidence_paths, `${file}#/evidence_paths`);
@@ -1387,45 +1275,25 @@ function verifyI1(run, report, assessable) {
   const tex = verifyI1Extraction(run, "audit/i1/tex-extraction.json", "tex", policy, allowNotAssessed);
   const pdf = verifyI1Extraction(run, "audit/i1/pdf-extraction.json", "pdf", policy, allowNotAssessed);
   const comparePdf = pdf.status === "ASSESSED";
-  const requiredExecutionInputs = ["contract/i1-verification-policy.json", I1_INTERPRETER_PATH];
-  if (record.mode === "research") requiredExecutionInputs.push("environment/bootstrap.json", "contract/evaluator-contract.md", "contract/evaluator-manifest.json", "selection/selected", "selection/canonical-evaluation.json");
-  const externalI1Items = record.mode === "external_audit" ? verifySourceBundleManifest(run).checkItems.get("I1") : [];
-  if (record.mode === "external_audit") requiredExecutionInputs.push("contract/source-bundle-manifest.json", ...externalI1Items.filter((item) => item.available).map((item) => item.frozen_path));
-  verifyI1Manifest(run, "audit/i1/input-manifest.json", requiredExecutionInputs);
+  verifyI1Manifest(run, "audit/i1/input-manifest.json", ["contract/i1-verification-policy.json", "private/evaluator/i1-verifier/manifest.json"]);
   const evidence = verifyI1Manifest(run, "audit/i1/evidence-manifest.json", ["audit/i1/tex-extraction.json", "audit/i1/pdf-extraction.json"]);
   const evidenceSha = hashArtifact(run, "audit/i1/evidence-manifest.json");
   const executionPath = "audit/i1/execution-receipt.json";
   const execution = readJson(path.join(run, executionPath));
-  if (execution.schema_version !== 2 || !validSha256(execution.execution_id) || !Number.isInteger(execution.attempt) || execution.attempt < 1 || typeof execution.executed !== "boolean" || JSON.stringify(execution.argv) !== JSON.stringify(executionPolicy.evaluator_argv) || execution.policy_sha256 !== policySha || execution.interpreter_sha256 !== interpreterSha || execution.input_manifest_sha256 !== hashArtifact(run, "audit/i1/input-manifest.json") || !validSha256(execution.environment_sha256) || (record.mode === "research" && execution.environment_sha256 !== hashArtifact(run, "environment/bootstrap.json")) || (execution.selected_snapshot_sha256 !== null && !validSha256(execution.selected_snapshot_sha256)) || !Array.isArray(execution.raw_artifacts) || !Array.isArray(execution.undeclared_inputs_accessed) || execution.undeclared_inputs_accessed.length || !Array.isArray(execution.network_accesses) || execution.network_accesses.length || !Array.isArray(execution.environment_changes) || execution.environment_changes.length || !Array.isArray(execution.limitations) || !Number.isInteger(execution.retry_count) || execution.retry_count < 0) fail(`Malformed I1 execution receipt at ${executionPath}`);
-  const expectedExecutionId = computeI1ExecutionId({ policy_sha256: policySha, interpreter_sha256: interpreterSha, input_manifest_sha256: execution.input_manifest_sha256, selected_snapshot_sha256: execution.selected_snapshot_sha256, attempt: execution.attempt });
-  if (execution.execution_id !== expectedExecutionId) fail(`I1 execution ID does not match its frozen inputs at ${executionPath}`);
-  if (record.mode === "research" && execution.selected_snapshot_sha256 !== hashArtifact(run, "selection/selected")) fail(`I1 execution is not bound to the exact selected snapshot at ${executionPath}`);
+  if (execution.schema_version !== 1 || !validSha256(execution.execution_id) || !Number.isInteger(execution.attempt) || execution.attempt < 1 || typeof execution.executed !== "boolean" || JSON.stringify(execution.argv) !== JSON.stringify(manifest.argv) || execution.policy_sha256 !== policySha || execution.verifier_manifest_sha256 !== manifestSha || execution.source_tree_sha256 !== manifest.source_tree_sha256 || execution.input_manifest_sha256 !== hashArtifact(run, "audit/i1/input-manifest.json") || !validSha256(execution.environment_sha256) || (record.mode === "research" && execution.environment_sha256 !== hashArtifact(run, "environment/bootstrap.json")) || !Array.isArray(execution.raw_artifacts) || !Array.isArray(execution.undeclared_inputs_accessed) || execution.undeclared_inputs_accessed.length || !Array.isArray(execution.network_accesses) || execution.network_accesses.length || !Array.isArray(execution.environment_changes) || execution.environment_changes.length || !Array.isArray(execution.limitations) || !Number.isInteger(execution.retry_count) || execution.retry_count < 0) fail(`Malformed I1 execution receipt at ${executionPath}`);
   const retryLimit = Math.max(...policy.metrics.map((metric) => metric.failure_policy.operational_retry_limit));
   if (execution.retry_count > retryLimit) fail(`I1 execution retry count exceeds the frozen policy at ${executionPath}`);
   if (execution.executed) {
-    if (!nonemptyString(execution.started_at) || !nonemptyString(execution.completed_at) || !Number.isFinite(Date.parse(execution.started_at)) || !Number.isFinite(Date.parse(execution.completed_at)) || Date.parse(execution.completed_at) < Date.parse(execution.started_at) || !Number.isInteger(execution.exit_status) || !nonemptyString(execution.private_execution_path) || relativePath(execution.private_execution_path) !== `private/evaluator/i1-runs/${execution.execution_id}` || !execution.raw_artifacts.length) fail(`Executed I1 receipt lacks execution evidence at ${executionPath}`);
-    if ((execution.exit_status === 0 && execution.failure_category !== null) || (execution.exit_status !== 0 && !nonemptyString(execution.failure_category))) fail(`I1 execution status and failure category disagree at ${executionPath}`);
+    if (!nonemptyString(execution.started_at) || !nonemptyString(execution.completed_at) || !Number.isFinite(Date.parse(execution.started_at)) || !Number.isFinite(Date.parse(execution.completed_at)) || Date.parse(execution.completed_at) < Date.parse(execution.started_at) || !Number.isInteger(execution.exit_status) || !nonemptyString(execution.private_execution_path) || !relativePath(execution.private_execution_path).startsWith(`private/evaluator/i1-runs/${execution.execution_id}`) || !execution.raw_artifacts.length) fail(`Executed I1 receipt lacks execution evidence at ${executionPath}`);
     for (const [index, item] of execution.raw_artifacts.entries()) {
       if (!item || !nonemptyString(item.path) || !validSha256(item.sha256) || !relativePath(item.path).startsWith(`${relativePath(execution.private_execution_path)}/`) || hashArtifact(run, item.path) !== item.sha256 || !evidence.paths.has(relativePath(item.path))) fail(`Invalid I1 raw artifact at ${executionPath}#/raw_artifacts/${index}`);
     }
-  } else if (!nonemptyString(execution.failure_category) || execution.private_execution_path !== null || execution.raw_artifacts.length || execution.exit_status !== null || execution.safe_output !== null) {
+  } else if (execution.private_execution_path !== null || execution.raw_artifacts.length || execution.exit_status !== null) {
     fail(`Non-executed I1 receipt contains raw execution evidence at ${executionPath}`);
   }
-  let safeOutput = null;
-  if (execution.executed) {
-    const expectedSafeOutput = `${relativePath(execution.private_execution_path)}/${executionPolicy.evaluator_output_name}`;
-    if (!execution.safe_output || relativePath(execution.safe_output.path) !== expectedSafeOutput || !validSha256(execution.safe_output.sha256) || hashArtifact(run, expectedSafeOutput) !== execution.safe_output.sha256 || !execution.raw_artifacts.some((item) => relativePath(item.path) === expectedSafeOutput) || !evidence.paths.has(expectedSafeOutput)) fail(`I1 execution receipt lacks the frozen private evaluator output at ${executionPath}`);
-    safeOutput = readJson(artifactPath(run, execution.safe_output.path).target);
-    if (safeOutput.schema_version !== 2 || safeOutput.selected_snapshot_sha256 !== execution.selected_snapshot_sha256 || safeOutput.multiplicity_method !== policy.decision_rule.multiplicity_method || !Array.isArray(safeOutput.metrics) || JSON.stringify(safeOutput.metrics.map((item) => item?.metric_id).sort()) !== JSON.stringify(policy.metrics.map((item) => item.id).sort())) fail(`Malformed frozen-evaluator output at ${execution.safe_output.path}`);
-  }
+  if (!execution.safe_output || !nonemptyString(execution.safe_output.path) || !validSha256(execution.safe_output.sha256) || hashArtifact(run, execution.safe_output.path) !== execution.safe_output.sha256) fail(`I1 execution receipt lacks a hash-bound safe output at ${executionPath}`);
 
   const components = Object.fromEntries(I1_COMPONENTS.map((name) => [name, verifyI1Component(run, name, policySha, evidenceSha, allowNotAssessed)]));
-  if (record.mode === "external_audit") {
-    const unavailable = new Set(externalI1Items.filter((item) => !item.available).map((item) => item.frozen_path));
-    const declared = [report, tex, pdf, ...Object.values(components)].flatMap((item) => item.unavailable_items ?? []);
-    if (declared.some((item) => !unavailable.has(item))) fail("I1 unavailable_items contains an item not frozen as unavailable for I1 in the source-bundle manifest");
-    if (!assessable && [...unavailable].some((item) => !declared.includes(item))) fail("I1 evidence omits a frozen unavailable source-bundle item");
-  }
   const policyMetricIds = policy.metrics.map((metric) => metric.id).sort();
   for (const [name, component] of Object.entries(components)) {
     const componentIds = component.metrics.map((metric) => metric?.metric_id).sort();
@@ -1435,26 +1303,24 @@ function verifyI1(run, report, assessable) {
     const frozen = policy.metrics.find((metric) => metric.id === item.metric_id);
     const texMetric = tex.metrics.find((metric) => metric.metric_id === item.metric_id);
     const pdfMetric = pdf.metrics.find((metric) => metric.metric_id === item.metric_id);
-    const observed = safeOutput?.metrics.find((metric) => metric.metric_id === item.metric_id);
-    if (!frozen || !observed || !Number.isFinite(observed.canonical_estimate) || item.canonical_value !== observed.canonical_estimate || !texMetric || (comparePdf && !pdfMetric) || !Number.isFinite(item.canonical_value) || item.tex_value !== texMetric.normalized_value || (comparePdf ? item.pdf_value !== pdfMetric.normalized_value : item.pdf_value !== null) || !I1_VERDICTS.includes(item.verdict)) fail(`Malformed I1 lineage metric: ${JSON.stringify(item?.metric_id)}`);
+    if (!frozen || !texMetric || (comparePdf && !pdfMetric) || !Number.isFinite(item.canonical_value) || item.tex_value !== texMetric.normalized_value || (comparePdf ? item.pdf_value !== pdfMetric.normalized_value : item.pdf_value !== null) || !I1_VERDICTS.includes(item.verdict)) fail(`Malformed I1 lineage metric: ${JSON.stringify(item?.metric_id)}`);
     const expectedDisplay = roundI1Value(item.canonical_value, frozen.presentation);
     const texMatches = Math.abs(item.tex_value - expectedDisplay) <= 1e-12;
     const pdfMatches = comparePdf ? Math.abs(item.pdf_value - expectedDisplay) <= 1e-12 : null;
     if (item.tex_matches !== texMatches || item.pdf_matches !== pdfMatches || item.verdict !== (texMatches && (pdfMatches ?? true) ? "PASS" : "FAIL")) fail(`I1 lineage decision contradicts the frozen presentation rule for ${item.metric_id}`);
   }
-  const lineageVerdicts = components.lineage.metrics.map((item) => item.verdict);
-  const expectedLineage = components.lineage.verdict === "NOT_ASSESSED" && !lineageVerdicts.length ? "NOT_ASSESSED" : components.lineage.mismatches.length ? "FAIL" : i1Verdict(lineageVerdicts);
+  const expectedLineage = components.lineage.mismatches.length ? "FAIL" : i1Verdict(components.lineage.metrics.map((item) => item.verdict));
   if (components.lineage.verdict !== expectedLineage) fail(`I1 lineage aggregate contradicts its metric decisions`);
 
   for (const item of components.reproducibility.metrics) {
     const frozen = policy.metrics.find((metric) => metric.id === item.metric_id);
-    const observed = safeOutput?.metrics.find((metric) => metric.metric_id === item.metric_id);
-    if (!frozen || !observed || observed.estimand !== frozen.estimand.type || canonicalJson(observed.estimand_parameters ?? {}) !== canonicalJson(frozen.estimand.parameters ?? {}) || observed.comparison_design !== frozen.comparison_design || observed.uncertainty_method !== frozen.uncertainty.method || !Array.isArray(item.canonical_runs) || !Array.isArray(item.audit_runs) || !Array.isArray(item.canonical_values) || !Array.isArray(item.audit_values) || (item.interval !== null && (!item.interval || !Number.isFinite(item.interval.lower) || !Number.isFinite(item.interval.upper))) || !item.equivalence_margin || item.equivalence_margin.lower !== frozen.equivalence_margin.lower || item.equivalence_margin.upper !== frozen.equivalence_margin.upper || !item.noise || typeof item.noise.within_ceiling !== "boolean" || typeof item.environment_passed !== "boolean" || typeof item.comparison_passed !== "boolean" || !I1_VERDICTS.includes(item.verdict)) fail(`Malformed I1 reproducibility metric: ${JSON.stringify(item?.metric_id)}`);
-    if (canonicalJson(item.canonical_runs) !== canonicalJson(observed.canonical_runs) || canonicalJson(item.audit_runs) !== canonicalJson(observed.audit_runs) || canonicalJson(item.interval) !== canonicalJson(observed.interval) || item.noise.value !== observed.noise_value || item.environment_passed !== observed.environment_passed || item.canonical_estimate !== observed.canonical_estimate || item.audit_estimate !== observed.audit_estimate) fail(`Public I1 reproducibility evidence differs from the frozen evaluator output for ${item.metric_id}`);
-    let evaluated;
-    try { evaluated = evaluateReproducibilityMetric(frozen, observed); } catch (error) { fail(`Cannot verify frozen reproducibility evidence for ${item.metric_id}: ${error.message}`); }
-    const comparisonPassed = evaluated.verdict === "PASS";
-    if (canonicalJson(item.canonical_values) !== canonicalJson(evaluated.canonicalValues) || canonicalJson(item.audit_values) !== canonicalJson(evaluated.auditValues) || item.missing_pairs !== evaluated.missingCount || item.invalid_runs !== evaluated.invalidCount || item.noise.ceiling !== frozen.uncertainty.noise_ceiling || item.noise.within_ceiling !== evaluated.noisePassed || item.comparison_passed !== comparisonPassed || item.verdict !== evaluated.verdict) fail(`I1 reproducibility decision contradicts the frozen interpreter for ${item.metric_id}`);
+    if (!frozen || !Array.isArray(item.canonical_values) || !Array.isArray(item.audit_values) || item.canonical_values.some((value) => !Number.isFinite(value)) || item.audit_values.some((value) => !Number.isFinite(value)) || !item.interval || !Number.isFinite(item.interval.lower) || !Number.isFinite(item.interval.upper) || !item.equivalence_margin || item.equivalence_margin.lower !== frozen.equivalence_margin.lower || item.equivalence_margin.upper !== frozen.equivalence_margin.upper || !item.noise || typeof item.noise.within_ceiling !== "boolean" || typeof item.environment_passed !== "boolean" || typeof item.comparison_passed !== "boolean" || !I1_VERDICTS.includes(item.verdict)) fail(`Malformed I1 reproducibility metric: ${JSON.stringify(item?.metric_id)}`);
+    const withinBounds = item.interval.lower >= frozen.equivalence_margin.lower && item.interval.upper <= frozen.equivalence_margin.upper;
+    if (item.comparison_passed !== (withinBounds && item.noise.within_ceiling && item.environment_passed)) fail(`I1 reproducibility boundary decision is inconsistent for ${item.metric_id}`);
+    const outsideBounds = item.interval.upper < frozen.equivalence_margin.lower || item.interval.lower > frozen.equivalence_margin.upper;
+    const expectedMetricVerdict = !item.noise.within_ceiling || !item.environment_passed ? "INCONCLUSIVE" : item.comparison_passed ? "PASS" : outsideBounds ? "FAIL" : "INCONCLUSIVE";
+    if (item.verdict !== expectedMetricVerdict) fail(`I1 reproducibility verdict contradicts its frozen bounds for ${item.metric_id}`);
+    if (frozen.determinism_class === "deterministic" && (item.canonical_values.length !== frozen.repetitions.canonical || item.audit_values.length !== frozen.repetitions.audit || item.audit_values.some((value) => !item.canonical_values.includes(value)))) fail(`Deterministic I1 values do not exactly reproduce for ${item.metric_id}`);
     if (policy.profile === "adrs_legacy_v1") {
       if (item.audit_values.length !== 5 || !Number.isFinite(item.reported_value) || !Number.isFinite(item.rerun_mean) || !Number.isFinite(item.sample_standard_deviation) || !Number.isFinite(item.adaptive_relative_tolerance) || !Number.isFinite(item.relative_deviation)) fail(`ADRS legacy I1 evidence is incomplete for ${item.metric_id}`);
       const mean = item.audit_values.reduce((sum, value) => sum + value, 0) / item.audit_values.length;
@@ -1464,9 +1330,7 @@ function verifyI1(run, report, assessable) {
       if (Math.abs(mean) === 0 || item.rerun_mean !== mean || item.sample_standard_deviation !== deviation || item.adaptive_relative_tolerance !== tolerance || item.relative_deviation !== relative || item.comparison_passed !== (relative <= tolerance && item.noise.within_ceiling && item.environment_passed)) fail(`ADRS legacy I1 arithmetic is inconsistent for ${item.metric_id}`);
     }
   }
-  const gatedIds = new Set(gatedMetricIds(policy));
-  const gatedReproVerdicts = components.reproducibility.metrics.filter((item) => gatedIds.has(item.metric_id)).map((item) => item.verdict);
-  const expectedRepro = components.reproducibility.verdict === "NOT_ASSESSED" && !gatedReproVerdicts.length ? "NOT_ASSESSED" : i1Verdict(gatedReproVerdicts);
+  const expectedRepro = i1Verdict(components.reproducibility.metrics.map((item) => item.verdict));
   if (components.reproducibility.verdict !== expectedRepro) fail(`I1 reproducibility aggregate contradicts its metric decisions`);
 
   for (const item of components["claim-semantics"].metrics) {
@@ -1475,14 +1339,13 @@ function verifyI1(run, report, assessable) {
     const matches = checks.every((field) => item[field]);
     if (item.verdict !== (matches ? "PASS" : "FAIL")) fail(`I1 claim-semantics decision contradicts its checks for ${item.metric_id}`);
   }
-  const semanticVerdicts = components["claim-semantics"].metrics.map((item) => item.verdict);
-  const expectedSemantics = components["claim-semantics"].verdict === "NOT_ASSESSED" && !semanticVerdicts.length ? "NOT_ASSESSED" : i1Verdict(semanticVerdicts);
+  const expectedSemantics = i1Verdict(components["claim-semantics"].metrics.map((item) => item.verdict));
   if (components["claim-semantics"].verdict !== expectedSemantics) fail(`I1 claim-semantics aggregate contradicts its metric decisions`);
 
   if (!report.components || I1_COMPONENTS.some((name) => report.components[name]?.path !== `audit/i1/${name}.json` || report.components[name]?.sha256 !== hashArtifact(run, `audit/i1/${name}.json`) || report.components[name]?.verdict !== components[name].verdict) || report.execution_receipt?.path !== executionPath || report.execution_receipt?.sha256 !== hashArtifact(run, executionPath)) fail(`I1 aggregate component or execution bindings are invalid at ${file}`);
   const expected = i1Verdict(I1_COMPONENTS.map((name) => components[name].verdict));
   if (report.verdict !== expected) fail(`I1 aggregate verdict at ${file}; expected ${expected}, received ${report.verdict}`);
-  if ((!execution.executed || execution.exit_status !== 0) && report.verdict === "PASS") fail(`The frozen evaluator did not complete successfully; the result remains unverified and cannot PASS`);
+  if (!execution.executed && report.verdict === "PASS") fail(`I1 verifier was not executed; the result remains unverified and cannot PASS`);
   if ((report.verdict === "FAIL" || report.verdict === "INCONCLUSIVE") ? !["contract", "investigation", "selection", "writing", "verification", "audit"].includes(report.rollback_phase) : report.rollback_phase !== null) fail(`I1 rollback_phase is inconsistent with verdict ${report.verdict}`);
   if (record.mode === "research") {
     const canonical = readJson(path.join(run, "selection", "canonical-evaluation.json"));
@@ -1594,8 +1457,8 @@ function verifyPhaseArtifacts(run, record, phase, live = false) {
     const critiqueIds = critiques.map((item) => item.idea_id).sort();
     if (new Set(critiqueIds).size !== critiqueIds.length || JSON.stringify(critiqueIds) !== JSON.stringify([...ideaIds].sort())) fail("Idea critique does not cover every frozen idea exactly once");
     const eligibleIdeas = critiques.filter((item) => item.status === "eligible").length;
-    const index = readJson(path.join(run, "discovery", "index.json"));
     if (eligibleIdeas < record.budgets.minimum_eligible_ideas) fail(`Discovery has too few eligible ideas; expected at least ${record.budgets.minimum_eligible_ideas}, received ${eligibleIdeas}`);
+    const index = readJson(path.join(run, "discovery", "index.json"));
     if (!Array.isArray(index.nodes) || !index.nodes.length || index.nodes.length > record.budgets.candidate_node_ceiling || !Array.isArray(index.retained) || !index.retained.length || new Set(index.retained).size !== index.retained.length) fail(`Discovery index violates candidate bounds; expected 1-${record.budgets.candidate_node_ceiling} nodes and unique retained candidates`);
     if (index.nodes.length < record.budgets.candidate_node_ceiling && !STOP_REASONS.has(index.stop_reason)) fail(`Discovery stopped below candidate_node_ceiling ${record.budgets.candidate_node_ceiling} without an approved stop_reason`);
     const nodePaths = new Set();
@@ -1720,7 +1583,7 @@ function verifyAuditPanels(run, record) {
   return results;
 }
 
-function verifyReceipt(run, record, phase, previousPhase, sequence, options = {}) {
+function verifyReceipt(run, record, phase, previousPhase, sequence) {
   const file = receiptFile(run, phase);
   const receipt = readJson(file);
   if (receipt.schema_version !== 1 || receipt.phase !== phase || receipt.sequence !== sequence || (receipt.contract_revision ?? 1) !== record.contract_revision || (receipt.charter_revision ?? 1) !== record.charter_revision) fail(`Invalid ${phase} receipt metadata, contract revision, or charter revision`);
@@ -1753,17 +1616,17 @@ function verifyReceipt(run, record, phase, previousPhase, sequence, options = {}
       if (!pathCovered(selectedPath, receipt.outputs.map((item) => item.path))) fail(`Selection receipt omits selected artifact: ${selectedPath}`);
     }
   }
-  if (!options.promotionValidated) verifyPhaseArtifacts(run, record, phase);
+  verifyPhaseArtifacts(run, record, phase);
   if (phase === "contract") {
     for (const required of requiredContractInputs(run, record)) {
       if (!receipt.inputs.some((item) => item.path === required)) fail(`Contract receipt must bind exact input: ${required}`);
     }
   }
-  if (phase !== "complete" && !options.promotionValidated) {
+  if (phase !== "complete") {
     const roles = receipt.outputs.map((item) => item.path).filter((item) => /^role-receipts\/[^/]+\.json$/.test(item));
     verifyRoleCoverage(run, phase, roles);
   }
-  if (phase === "audit" && !options.promotionValidated) verifyAuditPanels(run, record);
+  if (phase === "audit") verifyAuditPanels(run, record);
   return receipt;
 }
 
@@ -1846,10 +1709,7 @@ function configure(runArg, profile = "pilot", mode = "research", customProfilePa
   const budgets = profile === "custom"
     ? validateBudgets(readJson(artifactPath(run, customProfilePath || "contract/custom-profile.json").target))
     : PROFILE_BUDGETS[profile];
-  writeJson(path.join(run, "contract", "run-config.json"), { schema_version: 2, mode, search_profile: profile, budgets, orchestration: DEFAULT_ORCHESTRATION_LIMITS });
-  const interpreterTarget = path.join(run, I1_INTERPRETER_PATH);
-  fs.mkdirSync(path.dirname(interpreterTarget), { recursive: true });
-  fs.copyFileSync(BUNDLED_I1_INTERPRETER, interpreterTarget, fs.constants.COPYFILE_EXCL);
+  writeJson(path.join(run, "contract", "run-config.json"), { schema_version: 1, mode, search_profile: profile, budgets });
   process.stdout.write(`${path.join(run, "contract", "run-config.json")}\n`);
 }
 
@@ -1858,10 +1718,8 @@ function init(runArg) {
   if (!runArg || !fs.existsSync(run) || !fs.statSync(run).isDirectory()) fail("init requires an existing run directory");
   if (fs.existsSync(path.join(run, "run.json"))) fail("run.json already exists; refusing to reinitialize evidence");
   const config = readJson(path.join(run, "contract", "run-config.json"));
-  if (config.schema_version !== 2 || !PROFILES.has(config.search_profile) || !MODES.has(config.mode)) fail("Invalid frozen run configuration");
+  if (config.schema_version !== 1 || !PROFILES.has(config.search_profile) || !MODES.has(config.mode)) fail("Invalid frozen run configuration");
   validateBudgets(config.budgets);
-  validateOrchestrationLimits(config.orchestration);
-  hashArtifact(run, I1_INTERPRETER_PATH);
   if (config.search_profile !== "custom" && JSON.stringify(config.budgets) !== JSON.stringify(PROFILE_BUDGETS[config.search_profile])) fail(`${config.search_profile} budgets do not match the built-in profile`);
   for (const required of ["request.md", "study-plan.md"]) hashArtifact(run, required);
   fs.mkdirSync(path.join(run, "receipts", "superseded"), { recursive: true });
@@ -1874,7 +1732,6 @@ function init(runArg) {
     search_profile: config.search_profile,
     audit_panel_size: config.budgets.audit_panel_size,
     budgets: config.budgets,
-    orchestration: config.orchestration,
     created_at: now,
     updated_at: now,
     state: "running",
@@ -1885,13 +1742,9 @@ function init(runArg) {
     contract_parameters_sha256: hashArtifact(run, "contract/run-config.json"),
     contract_revision: 1,
     charter_revision: 1,
-    repair_waves: {},
     last_checkpoint: null,
     invalidation_roots: [],
     checkpoints: {},
-    pending_checkpoint: null,
-    pending_invalidation: null,
-    terminal_anchor: null,
     attention: null,
   });
   appendEvent(run, { event: "run_initialized", phase: "contract" });
@@ -1905,11 +1758,9 @@ function validatePhasePromotion(runArg, phase, args) {
   const index = phases.indexOf(phase);
   if (index < 0) fail(`Phase ${phase} is not valid for ${record.mode} mode`);
   if (!["running", "repairing"].includes(record.state)) fail(`Cannot checkpoint while run state is ${record.state}; expected running|repairing`);
-  if (record.pending_checkpoint) fail(`Recover the interrupted ${record.pending_checkpoint.phase} checkpoint before validating another promotion`);
   if (record.phase !== phase) fail(`Cannot checkpoint ${phase}; run.json#/phase is ${record.phase}`);
   const allowedOutcomes = record.mode === "external_audit" ? AUDIT_OUTCOMES : RESEARCH_OUTCOMES;
   if (phase === "complete" && !allowedOutcomes.has(record.outcome)) fail(`Set a valid ${record.mode} outcome before checkpointing complete; expected ${[...allowedOutcomes].join("|")}, received ${JSON.stringify(record.outcome)}`);
-  if (phase === "complete" && hasEvidenceLimitedStop(run, record) && record.outcome !== "completed_with_limitations") fail("A run that used an evidence-limited stop reason must finish as completed_with_limitations, never positive or scientific_null");
   if (phase === "complete" && record.mode === "external_audit") {
     const expectedOutcome = { PASS: "audit_passed", FAIL: "audit_failed", INCONCLUSIVE: "audit_incomplete", NOT_ASSESSED: "audit_incomplete" }[auditOverallVerdict(run)];
     if (record.outcome !== expectedOutcome) fail(`External audit outcome contradicts audit/report.md; expected ${expectedOutcome}, received ${record.outcome}`);
@@ -1950,32 +1801,8 @@ function preflight(runArg, phase, args) {
   process.stdout.write(`${JSON.stringify({ ok: true, run, phase, state: record.state, predecessor: expectedLast, input_count: inputs.length, output_count: outputs.length })}\n`);
 }
 
-function recoverPendingCheckpoint(runArg, phase) {
-  const run = path.resolve(runArg || "");
-  const file = path.join(run, "run.json");
-  if (!fs.existsSync(file)) return;
-  const record = readJson(file);
-  if (!record.pending_checkpoint) return;
-  if (!record.pending_checkpoint || !phasesFor(record).includes(record.pending_checkpoint.phase) || !Number.isFinite(Date.parse(record.pending_checkpoint.started_at)) || record.pending_checkpoint.phase !== record.phase || record.checkpoints?.[record.pending_checkpoint.phase]) fail("Run pending checkpoint journal is malformed");
-  if (record.pending_checkpoint.phase !== phase) fail(`Run has an interrupted ${record.pending_checkpoint.phase} checkpoint; retry that phase before ${phase}`);
-  const candidate = receiptFile(run, phase);
-  if (!record.checkpoints?.[phase] && fs.existsSync(candidate)) fs.unlinkSync(candidate);
-  record.pending_checkpoint = null;
-  record.updated_at = new Date().toISOString();
-  writeJson(file, record);
-  appendEvent(run, { event: "pending_checkpoint_recovered", phase });
-}
-
 function checkpoint(runArg, phase, args) {
-  recoverPendingCheckpoint(runArg, phase);
   const { run, record, phases, index, expectedLast, inputs, outputs } = validatePhasePromotion(runArg, phase, args);
-  clearHashMemo();
-  for (const roleReceipt of outputs.filter((item) => /^role-receipts\/[^/]+\.json$/.test(item))) {
-    const task = path.basename(roleReceipt, ".json");
-    const launchRelative = `role-launches/${task}.json`;
-    const attemptRecord = verifyAttemptRecord(run, launchRelative, readJson(artifactPath(run, launchRelative).target));
-    if (!inputs.includes(attemptRecord)) inputs.push(attemptRecord);
-  }
   const previousPath = expectedLast ? `receipts/${expectedLast}.json` : null;
   if (previousPath && !inputs.includes(previousPath)) inputs.push(previousPath);
   for (const invalidation of record.invalidation_roots) {
@@ -1994,32 +1821,10 @@ function checkpoint(runArg, phase, args) {
     outputs: outputs.sort().map((item) => entry(run, item)),
   };
   if (phase === "complete") receipt.outcome = record.outcome;
-  const canonicalReceipt = receiptFile(run, phase);
-  record.pending_checkpoint = { phase, started_at: new Date().toISOString() };
-  record.updated_at = new Date().toISOString();
-  writeJson(path.join(run, "run.json"), record);
-  if (process.env.SCIENTISTONE_TEST_INTERRUPT_CHECKPOINT === "after_journal") fail("Injected checkpoint interruption after journal");
-  writeJson(canonicalReceipt, receipt);
-  if (process.env.SCIENTISTONE_TEST_INTERRUPT_CHECKPOINT === "after_receipt") fail("Injected checkpoint interruption after receipt");
-  try {
-    clearHashMemo();
-    verifyReceipt(run, record, phase, expectedLast, index);
-    clearHashMemo();
-    const finalReceipt = readJson(canonicalReceipt);
-    for (const item of [...finalReceipt.inputs, ...finalReceipt.outputs]) {
-      if (hashArtifact(run, item.path) !== item.sha256) fail(`Evidence changed during ${phase} promotion: ${item.path}`);
-    }
-  } catch (error) {
-    try { fs.unlinkSync(canonicalReceipt); } catch {}
-    record.pending_checkpoint = null;
-    record.updated_at = new Date().toISOString();
-    writeJson(path.join(run, "run.json"), record);
-    throw error;
-  }
-  clearHashMemo();
+  writeJson(receiptFile(run, phase), receipt);
+  verifyReceipt(run, record, phase, expectedLast, index);
   record.checkpoints[phase] = { receipt_sha256: hashArtifact(run, `receipts/${phase}.json`), outputs: receipt.outputs };
   record.last_checkpoint = phase;
-  record.pending_checkpoint = null;
   record.updated_at = new Date().toISOString();
   if (phase === "complete") {
     record.state = "complete";
@@ -2095,7 +1900,7 @@ function contractSuccessorPaths(run) {
         if (stat.isDirectory()) pending.push(absolute);
         else if (stat.isFile()) {
           const relative = path.relative(run, absolute).replaceAll(path.sep, "/");
-          if ([...protectedInputs].some((input) => relative === input || relative.startsWith(`${input}/`))) continue;
+          if (relative.startsWith("private/evaluator/i1-verifier/") || [...protectedInputs].some((input) => relative === input || relative.startsWith(`${input}/`))) continue;
           paths.add(relative);
         } else fail(`Unsupported contract successor evidence: ${absolute}`);
       }
@@ -2124,13 +1929,13 @@ function resultAwareEvidenceExists(run, record, successorPaths) {
 function removeContractGeneratedPaths(run, paths) {
   const protectedInputs = new Set(verifyInputManifest(run).files.map((item) => relativePath(item.frozen_path)));
   for (const relative of [...new Set(paths)].sort((left, right) => right.split("/").length - left.split("/").length)) {
-    if (["role-launches", "role-attempts"].some((root) => relative === root || relative.startsWith(`${root}/`)) || [...protectedInputs].some((input) => relative === input || relative.startsWith(`${input}/`)) || !fs.existsSync(path.join(run, relative))) continue;
+    if ([...protectedInputs].some((input) => relative === input || relative.startsWith(`${input}/`)) || !fs.existsSync(path.join(run, relative))) continue;
     const target = artifactPath(run, relative).target;
     fs.rmSync(target, { recursive: true, force: false });
   }
 }
 
-function prepareInvalidation(run, record, phase, reason, options = {}) {
+function archiveInvalidation(run, record, phase, reason, options = {}) {
   const phases = phasesFor(record);
   const index = phases.indexOf(phase);
   const invalidatedPhases = phases.slice(index).filter((current) => record.checkpoints[current]);
@@ -2154,14 +1959,12 @@ function prepareInvalidation(run, record, phase, reason, options = {}) {
   const suffix = options.contractRevision ? `-r${record.contract_revision}` : "";
   let archive = path.join(run, "receipts", "superseded", `${stamp}-${phase}${suffix}`);
   for (let collision = 2; fs.existsSync(archive); collision += 1) archive = path.join(run, "receipts", "superseded", `${stamp}-${phase}${suffix}-${collision}`);
-  const transaction = path.join(run, ".transactions", `invalidation-${path.basename(archive)}`);
-  fs.mkdirSync(transaction, { recursive: true });
-  const archivedReason = path.join(transaction, "reason", path.basename(reason.path));
+  fs.mkdirSync(archive, { recursive: true });
+  const archivedReason = path.join(archive, "reason", path.basename(reason.path));
   fs.mkdirSync(path.dirname(archivedReason), { recursive: true });
   fs.copyFileSync(artifactPath(run, reason.path).target, archivedReason);
 
   const archivedArtifacts = [];
-  const cleanupPaths = [];
   for (const relative of minimalPaths([...expectedOutputs.keys()])) {
     const source = artifactPath(run, relative).target;
     const expectedSha256 = expectedOutputs.get(relative);
@@ -2170,102 +1973,32 @@ function prepareInvalidation(run, record, phase, reason, options = {}) {
       continue;
     }
     const observedSha256 = hashArtifact(run, relative);
-    const destination = path.join(transaction, "artifacts", relative);
+    const destination = path.join(archive, "artifacts", relative);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
-    const preserveWorkingCopy = relative === "contract" || relative.startsWith("role-launches/") || relative.startsWith("role-attempts/");
-    fs.cpSync(source, destination, { recursive: true, errorOnExist: true });
-    if (!preserveWorkingCopy) cleanupPaths.push(relative);
+    const preserveWorkingCopy = options.contractRevision && relative === "contract";
+    if (preserveWorkingCopy) fs.cpSync(source, destination, { recursive: true, errorOnExist: true });
+    else fs.renameSync(source, destination);
     const unchanged = observedSha256 === expectedSha256;
-    archivedArtifacts.push({ path: relative, archived_path: path.relative(run, path.join(archive, "artifacts", relative)).replaceAll(path.sep, "/"), status: preserveWorkingCopy ? unchanged ? "copied" : "copied_changed" : unchanged ? "moved" : "changed", expected_sha256: expectedSha256, observed_sha256: observedSha256 });
+    archivedArtifacts.push({ path: relative, archived_path: path.relative(run, destination).replaceAll(path.sep, "/"), status: preserveWorkingCopy ? unchanged ? "copied" : "copied_changed" : unchanged ? "moved" : "changed", expected_sha256: expectedSha256, observed_sha256: observedSha256 });
   }
+  if (options.contractRevision) removeContractGeneratedPaths(run, options.additionalPaths ?? []);
 
   const moved = [];
   for (const current of invalidatedPhases) {
     const file = receiptFile(run, current);
     if (!fs.existsSync(file)) continue;
-    fs.copyFileSync(file, path.join(transaction, `${current}.json`));
+    fs.renameSync(file, path.join(archive, `${current}.json`));
     moved.push(current);
-  }
-  if (options.amendedPlan) {
-    const successor = path.join(transaction, "successor", "study-plan.md");
-    fs.mkdirSync(path.dirname(successor), { recursive: true });
-    fs.copyFileSync(artifactPath(run, options.amendedPlan).target, successor);
   }
   const revisionBefore = record.contract_revision;
   const revisionAfter = options.contractRevision ? revisionBefore + 1 : revisionBefore;
-  const charterRevisionAfter = record.charter_revision + (options.contractRevision && options.amendedPlan ? 1 : 0);
-  writeJson(path.join(transaction, "invalidation.json"), { schema_version: 1, at: new Date().toISOString(), from_phase: phase, repair_wave_consumed: options.repairWaveConsumed === true, contract_revision_before: revisionBefore, contract_revision_after: revisionAfter, charter_revision_before: record.charter_revision, charter_revision_after: charterRevisionAfter, reason, archived_reason: path.relative(run, path.join(archive, "reason", path.basename(reason.path))).replaceAll(path.sep, "/"), moved_receipts: moved, receipt_hashes: receiptHashes, expected_outputs: [...expectedOutputs].map(([outputPath, sha256]) => ({ path: outputPath, sha256 })), archived_artifacts: archivedArtifacts });
-  return { transaction, archive, invalidatedPhases, index, revisionAfter, cleanupPaths, contractCleanupPaths: options.contractRevision ? [...new Set(options.additionalPaths ?? [])] : [], amendedPlan: options.amendedPlan ?? null };
-}
-
-function finishPendingInvalidation(run, record) {
-  const journal = record.pending_invalidation;
-  if (!journal || journal.schema_version !== 1 || !nonemptyString(journal.transaction_path) || !nonemptyString(journal.archive_path) || !Array.isArray(journal.invalidated_phases) || !Array.isArray(journal.cleanup_paths) || !Array.isArray(journal.contract_cleanup_paths) || !phasesFor(record).includes(journal.phase)) fail("Run invalidation journal is malformed");
-  const transaction = artifactPath(run, journal.transaction_path).target;
-  const archive = artifactPath(run, journal.archive_path).target;
-  if (!fs.existsSync(archive)) {
-    if (!fs.existsSync(transaction)) fail("Interrupted invalidation lost both its prepared archive and final archive");
-    fs.mkdirSync(path.dirname(archive), { recursive: true });
-    fs.renameSync(transaction, archive);
-  } else if (fs.existsSync(transaction)) {
-    fs.rmSync(transaction, { recursive: true, force: true });
-  }
-  for (const relative of journal.cleanup_paths) {
-    const target = artifactPath(run, relative).target;
-    if (fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true });
-  }
-  if (journal.contract_cleanup_paths.length) removeContractGeneratedPaths(run, journal.contract_cleanup_paths);
-  for (const current of journal.invalidated_phases) {
-    const file = receiptFile(run, current);
-    if (fs.existsSync(file)) fs.unlinkSync(file);
-    delete record.checkpoints[current];
-  }
-  if (journal.amended_plan_path) {
-    const source = artifactPath(run, journal.amended_plan_path).target;
-    if (!fs.existsSync(source)) fail("Interrupted contract amendment lost its archived successor plan");
-    fs.copyFileSync(source, path.join(run, "study-plan.md"));
-    record.charter_revision = journal.charter_revision_after;
-    record.study_plan_sha256 = hashArtifact(run, "study-plan.md");
-  }
-  const anchored = { path: journal.archive_path, sha256: hashArtifact(run, journal.archive_path) };
-  const existing = record.invalidation_roots.find((item) => item.path === anchored.path);
-  if (existing && existing.sha256 !== anchored.sha256) fail("Recovered invalidation archive differs from its existing anchor");
-  if (!existing) record.invalidation_roots.push(anchored);
-  record.contract_revision = journal.contract_revision_after;
-  record.phase = journal.phase;
-  record.last_checkpoint = journal.last_checkpoint;
-  record.outcome = null;
-  record.attention = null;
-  record.pending_invalidation = null;
-  record.updated_at = new Date().toISOString();
-  if (journal.terminal) markIncomplete(run, record, journal.terminal);
-  else {
-    record.state = "repairing";
-    writeJson(path.join(run, "run.json"), record);
-  }
-  const transactionRoot = path.join(run, ".transactions");
-  if (fs.existsSync(transactionRoot) && !fs.readdirSync(transactionRoot).length) fs.rmdirSync(transactionRoot);
-  appendEvent(run, { event: "receipt_chain_invalidated", phase: journal.phase, reason: journal.reason_path, archive: journal.archive_path, terminal: Boolean(journal.terminal), recovered: true });
-  return { archive, terminal: Boolean(journal.terminal), kind: journal.kind };
-}
-
-function recoverPendingInvalidation(run) {
-  const file = path.join(run, "run.json");
-  if (!fs.existsSync(file)) return null;
-  const record = readJson(file);
-  return record.pending_invalidation ? finishPendingInvalidation(run, record) : null;
+  writeJson(path.join(archive, "invalidation.json"), { schema_version: 1, at: new Date().toISOString(), from_phase: phase, contract_revision_before: revisionBefore, contract_revision_after: revisionAfter, reason, archived_reason: path.relative(run, archivedReason).replaceAll(path.sep, "/"), moved_receipts: moved, receipt_hashes: receiptHashes, expected_outputs: [...expectedOutputs].map(([outputPath, sha256]) => ({ path: outputPath, sha256 })), archived_artifacts: archivedArtifacts });
+  return { archive, invalidatedPhases, index, revisionAfter };
 }
 
 function invalidate(runArg, phase, reasonArg) {
   const run = path.resolve(runArg || "");
-  const recovered = recoverPendingInvalidation(run);
-  if (recovered) {
-    if (recovered.terminal) fail(`Recovered an exhausted ${recovered.kind}; the run is blocked_exhausted.`);
-    process.stdout.write(`${recovered.archive}\n`);
-    return;
-  }
   const record = verifyRunRecord(run, { allowReceiptDrift: true });
-  if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Cannot invalidate while run state is ${record.state} or a checkpoint is pending`);
   const phases = phasesFor(record);
   const index = phases.indexOf(phase);
   if (index < 0) fail(`Phase ${phase} is not valid for ${record.mode} mode`);
@@ -2274,41 +2007,26 @@ function invalidate(runArg, phase, reasonArg) {
   const reasonSource = artifactPath(run, reason.path).target;
   if (!fs.lstatSync(reasonSource).isFile()) fail("Invalidation reason must be a regular file");
   if (!record.checkpoints[phase]) fail(`No ${phase} checkpoint exists to invalidate`);
-  const repairAllowed = consumeRepairWave(run, record, phase, reason);
-  const prepared = prepareInvalidation(run, record, phase, reason, { repairWaveConsumed: repairAllowed });
-  const { archive, transaction, invalidatedPhases } = prepared;
+  const { archive, invalidatedPhases } = archiveInvalidation(run, record, phase, reason);
   const archivePath = path.relative(run, archive).replaceAll(path.sep, "/");
-  const terminal = repairAllowed ? null : {
-      failure_class: "repair_budget_exhausted",
-      repair_gate: phase,
-      exhausted_counter: record.repair_waves[phase] ?? 0,
-      exhausted_limit: record.orchestration.max_repair_waves_per_gate,
-      last_failure: `Repair budget exhausted for ${phase}: ${reason.path}`,
-      evidence_paths: [archivePath],
-      remaining_work: [`Resolve the blocking ${phase} gate without weakening its acceptance criteria.`],
-      resume_requirement: "Start a new run that references this INCOMPLETE record after correcting the blocking evidence or supplying genuinely required authority/input.",
-    };
-  record.pending_invalidation = { schema_version: 1, kind: "invalidate", transaction_path: path.relative(run, transaction).replaceAll(path.sep, "/"), archive_path: archivePath, reason_path: reason.path, phase, invalidated_phases: invalidatedPhases, cleanup_paths: prepared.cleanupPaths, contract_cleanup_paths: [], contract_revision_after: record.contract_revision, charter_revision_after: record.charter_revision, last_checkpoint: index ? phases[index - 1] : null, amended_plan_path: null, terminal };
+  record.invalidation_roots.push({ path: archivePath, sha256: hashArtifact(run, archivePath) });
+  for (const current of invalidatedPhases) delete record.checkpoints[current];
+  record.state = "repairing";
+  record.phase = phase;
+  record.last_checkpoint = index ? phases[index - 1] : null;
+  record.outcome = null;
   record.updated_at = new Date().toISOString();
+  record.attention = null;
   writeJson(path.join(run, "run.json"), record);
-  if (process.env.SCIENTISTONE_TEST_INTERRUPT_INVALIDATION === "after_journal") fail("Injected invalidation interruption after journal");
-  const finished = finishPendingInvalidation(run, record);
-  if (!repairAllowed) fail(`Repair budget exhausted for ${phase}; the affected chain was superseded and the run is blocked_exhausted.`);
-  process.stdout.write(`${finished.archive}\n`);
+  appendEvent(run, { event: "receipt_chain_invalidated", phase, reason: reason.path, archive: archivePath });
+  process.stdout.write(`${archive}\n`);
 }
 
 function reviseContract(runArg, reasonArg, amendedPlanArg) {
   const run = path.resolve(runArg || "");
-  const recovered = recoverPendingInvalidation(run);
-  if (recovered) {
-    if (recovered.terminal) fail(`Recovered an exhausted ${recovered.kind}; the run is blocked_exhausted.`);
-    process.stdout.write(`${recovered.archive}\n`);
-    return;
-  }
   const record = verifyRunRecord(run, { allowReceiptDrift: true });
-  if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Cannot revise a contract while run state is ${record.state} or a checkpoint is pending`);
+  if (!["running", "repairing", "paused", "failed"].includes(record.state)) fail(`Cannot revise a contract while run state is ${record.state}`);
   const { reason, value } = contractRepairReason(run, reasonArg);
-  const repairAllowed = consumeRepairWave(run, record, "contract", reason);
   const additionalPaths = contractGeneratedPaths(run);
   const successorPaths = contractSuccessorPaths(run);
   const detectedResultAwareness = resultAwareEvidenceExists(run, record, successorPaths);
@@ -2324,33 +2042,30 @@ function reviseContract(runArg, reasonArg, amendedPlanArg) {
   } else if (amendedPlanArg) {
     fail("Automatic contract repair cannot replace study-plan.md");
   }
-  const prepared = prepareInvalidation(run, record, "contract", reason, { repairWaveConsumed: repairAllowed, contractRevision: repairAllowed, additionalPaths, amendedPlan: repairAllowed ? amendedPlan : null });
-  const { archive, transaction, invalidatedPhases, revisionAfter } = prepared;
+  const { archive, invalidatedPhases, revisionAfter } = archiveInvalidation(run, record, "contract", reason, { contractRevision: true, additionalPaths });
+  if (amendedPlan) fs.copyFileSync(artifactPath(run, amendedPlan).target, path.join(run, "study-plan.md"));
   const archivePath = path.relative(run, archive).replaceAll(path.sep, "/");
-  const terminal = repairAllowed ? null : {
-      failure_class: "repair_budget_exhausted",
-      repair_gate: "contract",
-      exhausted_counter: record.repair_waves.contract ?? 0,
-      exhausted_limit: record.orchestration.max_repair_waves_per_gate,
-      last_failure: `Repair budget exhausted for contract: ${reason.path}`,
-      evidence_paths: [archivePath],
-      remaining_work: ["Resolve the blocking contract gate without weakening its acceptance criteria."],
-      resume_requirement: "Start a new run that references this INCOMPLETE record after correcting the blocking evidence or supplying genuinely required authority/input.",
-    };
-  record.pending_invalidation = { schema_version: 1, kind: "revise_contract", transaction_path: path.relative(run, transaction).replaceAll(path.sep, "/"), archive_path: archivePath, reason_path: reason.path, phase: "contract", invalidated_phases: invalidatedPhases, cleanup_paths: prepared.cleanupPaths, contract_cleanup_paths: prepared.contractCleanupPaths, contract_revision_after: repairAllowed ? revisionAfter : record.contract_revision, charter_revision_after: record.charter_revision + (repairAllowed && amendedPlan ? 1 : 0), last_checkpoint: null, amended_plan_path: repairAllowed && amendedPlan ? `${archivePath}/successor/study-plan.md` : null, terminal };
+  record.invalidation_roots.push({ path: archivePath, sha256: hashArtifact(run, archivePath) });
+  for (const current of invalidatedPhases) delete record.checkpoints[current];
+  record.contract_revision = revisionAfter;
+  if (amendedPlan) {
+    record.charter_revision += 1;
+    record.study_plan_sha256 = hashArtifact(run, "study-plan.md");
+  }
+  record.state = "repairing";
+  record.phase = "contract";
+  record.last_checkpoint = null;
+  record.outcome = null;
   record.updated_at = new Date().toISOString();
+  record.attention = null;
   writeJson(path.join(run, "run.json"), record);
-  if (process.env.SCIENTISTONE_TEST_INTERRUPT_INVALIDATION === "after_journal") fail("Injected invalidation interruption after journal");
-  const finished = finishPendingInvalidation(run, record);
-  if (!repairAllowed) fail("Repair budget exhausted for contract; the affected chain was superseded and the run is blocked_exhausted.");
   appendEvent(run, { event: "contract_revision_started", revision: revisionAfter, charter_revision: record.charter_revision, classification: value.classification, result_aware: value.result_aware, amended_plan: amendedPlan, reason: reason.path, archive: archivePath });
-  process.stdout.write(`${finished.archive}\n`);
+  process.stdout.write(`${archive}\n`);
 }
 
 function manifest(runArg) {
   const run = path.resolve(runArg || "");
   const record = verifyRunRecord(run);
-  if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Cannot rewrite delivery manifest while run state is ${record.state} or a checkpoint is pending`);
   const deliverables = path.join(run, "deliverables");
   if (!fs.existsSync(deliverables) || !fs.statSync(deliverables).isDirectory()) fail("manifest requires a deliverables directory");
   const requiredDeliverables = [...REQUIRED_DELIVERABLES[record.mode]];
@@ -2376,61 +2091,62 @@ function hash(runArg, relative) {
   process.stdout.write(`${hashArtifact(run, relative)}\n`);
 }
 
-function acceptedAttemptCount(run, logicalTaskName, record) {
-  const root = path.join(run, "role-attempts", logicalTaskName);
-  if (!fs.existsSync(root)) return 0;
-  const attempts = new Set();
-  const workKeys = new Set();
-  const files = [];
-  for (const name of fs.readdirSync(root).sort()) {
-    const candidate = path.join(root, name);
-    if (name.endsWith(".json") && fs.statSync(candidate).isFile()) files.push(candidate);
-    else if (fs.statSync(candidate).isDirectory()) for (const nested of fs.readdirSync(candidate).filter((item) => item.endsWith(".json")).sort()) files.push(path.join(candidate, nested));
-  }
-  for (const file of files) {
-    const name = path.basename(file);
-    const value = readJson(file);
-    if (!nonemptyString(value.launch_record)) fail(`Accepted-attempt record is malformed: ${path.relative(run, file).replaceAll(path.sep, "/")}`);
-    const launchRelative = relativePath(value.launch_record);
-    const launch = readJson(artifactPath(run, launchRelative).target);
-    if ((launch.contract_revision ?? 1) !== record.contract_revision || (launch.charter_revision ?? 1) !== record.charter_revision) continue;
-    const verified = verifyAttemptRecord(run, launchRelative, launch);
-    const observedRelative = path.relative(run, file).replaceAll(path.sep, "/");
-    if (verified !== observedRelative || attempts.has(launch.attempt)) fail(`Accepted attempts for ${logicalTaskName} are duplicated or misfiled`);
-    const workKey = createHash("sha256").update(canonicalJson({ contract_revision: launch.contract_revision ?? 1, charter_revision: launch.charter_revision ?? 1, role: launch.role, declared_outputs: [...launch.declared_outputs].sort() })).digest("hex");
-    workKeys.add(workKey);
-    attempts.add(launch.attempt);
-  }
-  if (workKeys.size > 1) fail(`Logical task ${logicalTaskName} is bound to multiple work identities in the same frozen revision`);
-  const ordered = [...attempts].sort((left, right) => left - right);
-  if (ordered.some((attempt, index) => attempt !== index + 1)) fail(`Accepted attempts for ${logicalTaskName} are not contiguous from attempt 1`);
-  return attempts.size;
+function setState(runArg, nextState) {
+  const run = path.resolve(runArg || "");
+  const record = verifyRunRecord(run);
+  const allowedTargets = new Set(["running", "repairing", "paused", "failed"]);
+  if (!allowedTargets.has(nextState)) fail(`set-state target must be running|repairing|paused|failed, received ${JSON.stringify(nextState)}`);
+  const transitions = {
+    running: new Set(["repairing", "paused", "failed"]),
+    repairing: new Set(["running", "paused", "failed"]),
+    paused: new Set(["running", "repairing", "failed"]),
+    failed: new Set(["running", "repairing"]),
+  };
+  if (!transitions[record.state]?.has(nextState)) fail(`Invalid state transition; expected one of ${[...(transitions[record.state] ?? [])].join("|") || "none"} from ${record.state}, received ${nextState}`);
+  if (nextState === "paused" && record.attention === null) fail("Cannot pause without validated attention.md; run set-attention first");
+  if (["running", "repairing"].includes(nextState) && record.attention !== null) fail(`Cannot enter ${nextState} while attention is set; run clear-attention first`);
+  const previous = record.state;
+  record.state = nextState;
+  record.updated_at = new Date().toISOString();
+  writeJson(path.join(run, "run.json"), record);
+  appendEvent(run, { event: "state_changed", from: previous, to: nextState });
+  process.stdout.write(`${nextState}\n`);
 }
 
-function exhaust(runArg, failureArg) {
+function setAttention(runArg, attentionArg) {
   const run = path.resolve(runArg || "");
-  const record = verifyRunRecord(run, { allowUnanchoredTerminal: true });
-  if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Run state ${record.state} or a pending checkpoint cannot be marked INCOMPLETE`);
-  const relative = relativePath(failureArg || "");
-  const value = readJson(artifactPath(run, relative).target);
-  exactKeys(value, ["schema_version", "failure_class", "logical_task_name", "last_failure", "exhausted_counter", "exhausted_limit", "evidence_paths", "remaining_work", "resume_requirement"], relative);
-  if (value.schema_version !== 1 || !["task_attempts_exhausted", ...PERMANENT_BLOCKER_CLASSES].includes(value.failure_class) || !nonemptyString(value.last_failure) || !Number.isInteger(value.exhausted_counter) || !Number.isInteger(value.exhausted_limit) || !Array.isArray(value.evidence_paths) || !value.evidence_paths.length || value.evidence_paths.some((item) => !nonemptyString(item)) || !Array.isArray(value.remaining_work) || !value.remaining_work.length || value.remaining_work.some((item) => !nonemptyString(item)) || !nonemptyString(value.resume_requirement)) fail(`Invalid terminal blocker record at ${relative}`);
-  if (value.failure_class === "task_attempts_exhausted") {
-    const limit = record.orchestration.max_task_attempts;
-    const accepted = acceptedAttemptCount(run, value.logical_task_name, record);
-    if (!nonemptyString(value.logical_task_name) || value.exhausted_limit !== limit || value.exhausted_counter !== limit || accepted !== limit) fail(`Task-attempt exhaustion at ${relative} must match exactly ${limit} immutable accepted attempts for ${value.logical_task_name}; found ${accepted}`);
-  } else if (value.logical_task_name !== null || value.exhausted_counter !== 0 || value.exhausted_limit !== 0) {
-    fail(`Permanent blocker at ${relative} must use logical_task_name null and zero counters`);
-  }
-  for (const evidence of value.evidence_paths) hashArtifact(run, evidence);
-  markIncomplete(run, record, value);
-  process.stdout.write(`${path.join(run, "terminal", "incomplete.json")}\n`);
+  const record = verifyRunRecord(run);
+  const clean = relativePath(attentionArg || "");
+  if (clean !== "attention.md") fail(`set-attention requires the run-root attention.md file, received ${clean}`);
+  const file = artifactPath(run, clean).target;
+  if (!fs.lstatSync(file).isFile()) fail(`Attention path must be a regular file: ${clean}`);
+  const text = fs.readFileSync(file, "utf8");
+  const actions = [...text.matchAll(/^Required action:\s*\S.+$/gmi)];
+  if (!text.trim() || actions.length !== 1) fail(`attention.md must contain exactly one non-empty Required action: line, received ${actions.length}`);
+  record.attention = { path: clean, sha256: hashArtifact(run, clean) };
+  record.updated_at = new Date().toISOString();
+  writeJson(path.join(run, "run.json"), record);
+  appendEvent(run, { event: "attention_set", path: clean, sha256: record.attention.sha256 });
+  process.stdout.write(`${file}\n`);
+}
+
+function clearAttention(runArg) {
+  const run = path.resolve(runArg || "");
+  const record = verifyRunRecord(run);
+  if (record.attention === null) fail("No attention item is set");
+  const previous = record.attention;
+  fs.unlinkSync(artifactPath(run, previous.path).target);
+  record.attention = null;
+  record.updated_at = new Date().toISOString();
+  writeJson(path.join(run, "run.json"), record);
+  appendEvent(run, { event: "attention_cleared", ...previous });
+  process.stdout.write(`${run}\n`);
 }
 
 function setOutcome(runArg, outcome) {
   const run = path.resolve(runArg || "");
   const record = verifyRunRecord(run);
-  if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Run state ${record.state} or a pending checkpoint has an immutable outcome`);
+  if (record.state === "complete") fail("A completed run outcome is immutable");
   const allowed = record.mode === "external_audit" ? AUDIT_OUTCOMES : RESEARCH_OUTCOMES;
   if (!allowed.has(outcome)) fail(`Invalid ${record.mode} outcome; expected ${[...allowed].join("|")}, received ${JSON.stringify(outcome)}`);
   record.outcome = outcome;
@@ -2442,8 +2158,7 @@ function setOutcome(runArg, outcome) {
 
 function sanitizeFeedback(runArg, sourceArg, destinationArg) {
   const run = path.resolve(runArg || "");
-  const record = verifyRunRecord(run);
-  if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Cannot sanitize feedback while run state is ${record.state} or a checkpoint is pending`);
+  verifyRunRecord(run);
   const source = relativePath(sourceArg || "");
   const destination = relativePath(destinationArg || "");
   if (!source.startsWith("private/evaluator/") || !/^discovery\/nodes\/[^/]+\/feedback\/[^/]+\.json$/.test(destination)) fail(`sanitize-feedback requires private/evaluator/<file>.json and discovery/nodes/<node>/feedback/<file>.json; received ${source} -> ${destination}`);
@@ -2478,7 +2193,6 @@ function verifySuperseded(run) {
       if (receiptHash.status === "missing" && receiptHash.observed_sha256 === null && !fs.existsSync(archivedReceipt)) continue;
       if (!["moved", "changed"].includes(receiptHash.status) || typeof receiptHash.expected_sha256 !== "string" || typeof receiptHash.observed_sha256 !== "string") fail(`Invalid superseded receipt status: ${name}/${receiptHash.phase}`);
       if (!fs.existsSync(archivedReceipt) || (receiptHash.status === "moved") !== (receiptHash.observed_sha256 === receiptHash.expected_sha256)) fail(`Superseded receipt metadata is inconsistent: ${name}/${receiptHash.phase}`);
-      if (hashAt(archivedReceipt, `receipts/${receiptHash.phase}.json`) !== receiptHash.observed_sha256) fail(`Superseded receipt bytes differ from their recorded hash: ${name}/${receiptHash.phase}`);
     }
     const expectedOutputs = new Map();
     for (const item of metadata.expected_outputs) {
@@ -2493,15 +2207,12 @@ function verifySuperseded(run) {
       if (!expected || item.expected_sha256 !== expected) fail(`Invalid superseded artifact expectation: ${name}/${item.path}`);
       if (item.status === "missing" && item.archived_path === null && item.observed_sha256 === null) continue;
       if (!["moved", "changed", "copied", "copied_changed"].includes(item.status) || typeof item.archived_path !== "string" || typeof item.observed_sha256 !== "string") fail(`Invalid superseded artifact status: ${name}/${item.path}`);
-      const archivedArtifact = artifactPath(run, item.archived_path).target;
-      if (!fs.existsSync(archivedArtifact)) fail(`Superseded artifact is missing: ${name}/${item.path}`);
-      if (hashAt(archivedArtifact, item.path) !== item.observed_sha256) fail(`Superseded artifact bytes differ from their recorded hash: ${name}/${item.path}`);
+      if (!fs.existsSync(artifactPath(run, item.archived_path).target)) fail(`Superseded artifact is missing: ${name}/${item.path}`);
       const unchangedStatus = item.status === "moved" || item.status === "copied";
       if (unchangedStatus !== (item.observed_sha256 === expected)) fail(`Superseded artifact metadata is inconsistent: ${name}/${item.path}`);
     }
     const archivedReason = artifactPath(run, metadata.archived_reason).target;
     if (!fs.existsSync(archivedReason) || !validSha256(metadata.reason?.sha256)) fail(`Superseded invalidation reason metadata is invalid: ${name}`);
-    if (hashAt(archivedReason, metadata.reason.path) !== metadata.reason.sha256) fail(`Superseded invalidation reason bytes differ from their recorded hash: ${name}`);
   }
 }
 
@@ -2514,12 +2225,12 @@ function verify(runArg) {
   const phases = phasesFor(record);
   const expectedPhase = last === "complete" ? "complete" : phases[(last === null ? -1 : phases.indexOf(last)) + 1];
   if (record.phase !== expectedPhase) fail(`run.json phase is ahead of or behind the verified receipt chain; expected ${expectedPhase}, received ${record.phase}`);
-  if ((record.state === "complete" && (record.phase !== "complete" || last !== "complete")) || (last === "complete" && record.state !== "complete")) fail("Complete run status is inconsistent with its evidence chain");
+  if ((record.state === "complete") !== (record.phase === "complete") || (last === "complete") !== (record.state === "complete")) fail("Complete run status is inconsistent with its evidence chain");
   if (last === "complete") {
     const allowed = record.mode === "external_audit" ? AUDIT_OUTCOMES : RESEARCH_OUTCOMES;
     if (!allowed.has(record.outcome)) fail(`Completed run has invalid outcome; expected ${[...allowed].join("|")}, received ${JSON.stringify(record.outcome)}`);
     if (record.mode === "external_audit") {
-      const expectedOutcome = { PASS: "audit_passed", FAIL: "audit_failed", INCONCLUSIVE: "audit_incomplete", NOT_ASSESSED: "audit_incomplete" }[auditOverallVerdict(run)];
+      const expectedOutcome = { PASS: "audit_passed", FAIL: "audit_failed", NOT_ASSESSED: "audit_incomplete" }[auditOverallVerdict(run)];
       if (record.outcome !== expectedOutcome) fail(`Completed external audit outcome mismatch; expected ${expectedOutcome}, received ${record.outcome}`);
     }
     verifyManifest(run, record);
@@ -2562,7 +2273,9 @@ function usage() {
   coe.mjs checkpoint <run> <phase> --input <path>... --output <path>...
   coe.mjs invalidate <run> <phase> <reason-file>
   coe.mjs revise-contract <run> <contract-revision-reason.json> [researcher-approved-amended-plan.md]
-  coe.mjs exhaust <run> <exhaustion.json>
+  coe.mjs set-state <run> <running|repairing|paused|failed>
+  coe.mjs set-attention <run> attention.md
+  coe.mjs clear-attention <run>
   coe.mjs set-outcome <run> <outcome>
   coe.mjs sanitize-feedback <run> <private-evaluation-json> <feedback-json>
   coe.mjs hash <run> <path>
@@ -2572,36 +2285,16 @@ function usage() {
 }
 
 const [command, ...args] = process.argv.slice(2);
-const legacyCommands = new Set(["init", "preflight", "checkpoint", "invalidate", "revise-contract", "hash", "set-state", "set-attention", "clear-attention", "set-outcome", "sanitize-feedback", "manifest", "verify-role", "verify"]);
-let delegatedLegacy = false;
-if ((legacyCommands.has(command) || command === "exhaust") && args[0]) {
-  const configPath = path.join(path.resolve(args[0]), "contract", "run-config.json");
-  if (fs.existsSync(configPath)) {
-    const config = readJson(configPath);
-    if (config.schema_version === 1 && config.orchestration === undefined) {
-      if (command === "exhaust") {
-        process.stderr.write("ScientistOne 1.2 runs retain their frozen state model and cannot be retrofitted with the 1.3 exhaustion ledger; use the 1.2 failed/attention state or start a linked 1.3 run.\n");
-        process.exitCode = 1;
-      } else {
-        const result = spawnSync(process.execPath, [LEGACY_COE_1_2, command, ...args], { stdio: "inherit" });
-        process.exitCode = result.status ?? 1;
-      }
-      delegatedLegacy = true;
-    }
-  }
-}
 try {
-  if (delegatedLegacy) {
-    // The frozen 1.2 control plane owns existing schema-1 runs; 1.3 never
-    // rewrites their scientific contract in place.
-  }
-  else if (command === "configure") configure(args[0], args[1], args[2], args[3]);
+  if (command === "configure") configure(args[0], args[1], args[2], args[3]);
   else if (command === "init") init(args[0]);
-  else if (command === "preflight") { memoizeHashes = true; preflight(args[0], args[1], args.slice(2)); }
-  else if (command === "checkpoint") { memoizeHashes = true; checkpoint(args[0], args[1], args.slice(2)); }
+  else if (command === "preflight") preflight(args[0], args[1], args.slice(2));
+  else if (command === "checkpoint") checkpoint(args[0], args[1], args.slice(2));
   else if (command === "invalidate") invalidate(args[0], args[1], args[2]);
   else if (command === "revise-contract") reviseContract(args[0], args[1], args[2]);
-  else if (command === "exhaust") exhaust(args[0], args[1]);
+  else if (command === "set-state") setState(args[0], args[1]);
+  else if (command === "set-attention") setAttention(args[0], args[1]);
+  else if (command === "clear-attention") clearAttention(args[0]);
   else if (command === "set-outcome") setOutcome(args[0], args[1]);
   else if (command === "sanitize-feedback") sanitizeFeedback(args[0], args[1], args[2]);
   else if (command === "hash") hash(args[0], args[1]);

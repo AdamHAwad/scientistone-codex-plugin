@@ -11,10 +11,20 @@ ScientistOne helps one researcher direct an AI research team through a computati
 
 Treat a bare mention of ScientistOne as a request to begin setup.
 
-Before starting or resuming the setup browser, call the bundled MCP's
-`check_parallel_capacity`. This is the only capacity-setup checkpoint and it
-must occur before study approval or run initialization. Follow its `action`
-exactly:
+Codex requires the researcher to review and trust a newly installed or changed
+plugin hook through `/hooks`; installation alone does not trust it. If Codex
+reports that the ScientistOne hook needs review, stop before creating a draft
+or run and tell the researcher to open `/hooks`, inspect the ScientistOne
+launch-authorization hook, and trust it. Continue on their next invocation.
+This hook is required to authorize each specialist launch and immutably consume
+its bounded attempt.
+
+Parallel-capacity setup is an optional execution optimization, never a gate on
+intake or scientific work. On the first invocation only, before creating a new intake
+draft or run, call the bundled MCP's `check_parallel_capacity` once and follow
+its `action` exactly. If a saved intake draft or run already exists, skip the
+capacity prompt and continue at the available host limit; never interrupt
+approved or running work for a restart:
 
 - `continue` or `continue_limited`: proceed silently. A declined, managed,
   read-only, or otherwise unsupported configuration never reduces the study's
@@ -24,7 +34,7 @@ exactly:
   parallel. This only changes Codex's parallel-agent limit and does not grant
   any additional access. It may use your Codex allowance faster while a study
   is running. May I update this setting? You'll need to restart Codex once.`
-  Do not start intake while waiting. If the researcher declines, run
+  Keep the saved intake available while waiting. If the researcher declines, run
   `decline_parallel_capacity` and continue setup with the available host
   capacity. If they affirm, call `approve_parallel_capacity` with the exact
   one-use `confirmation_token` returned by the check; never approve from
@@ -78,21 +88,60 @@ In Codex desktop, send the complete plain-language plan to `publish_study_review
 
 Only on a surface without the bundled browser MCP should you show the plan in chat and ask: `Is this the study you want me to run?`
 
-The researcher approves once. The `Approve and start study` action is both approval of the plan and durable authority to carry the study autonomously to its verified deliverables. Save the approved text as `request.md` and `study-plan.md`. Treat the approved question, named inputs, constraints, exclusions, data boundaries, and limits on interpretation as the researcher charter. Treat outcomes, evaluators, verifiers, paths, hashes, seeds, schemas, method details, and other generated operationalizations as the versioned execution contract. Agents may repair, replace, and re-audit that contract in the same run without a second approval, including a result-blind replacement evaluator or verifier needed to faithfully answer the approved question.
+The researcher approves once. The `Approve and start study` action authorizes
+safe, reversible, in-scope execution without repeated approval. Save the
+approved text as `request.md` and `study-plan.md`. Treat the approved question,
+named inputs, constraints, exclusions, data boundaries, and interpretation
+limits as the researcher charter. Treat metrics, evaluator interfaces, I1
+policy, paths, hashes, seeds, schemas, and methods as the versioned execution
+contract. Result-blind defects may be repaired and independently re-audited in
+the same run without another approval.
 
-After approval, never ask the researcher for approval, permission, authority, confirmation, a reply, a restart, or a resume message. Never present a proposed repair for acceptance and never end the turn because the contract, evaluator, verifier, environment, method, or run ledger needs repair. If a possible action would exceed the approved data, safety, legal, paid-service, publication, destructive-change, or project boundaries, do not request broader authority: choose a safe in-scope alternative and carry the limitation into the paper. Only an explicit researcher cancellation may terminate the run before verified delivery. A separate run is created only when the researcher explicitly asks for a different question or preserved fork; the lead never proposes one as a repair.
+Durable approval is not unlimited authority or an instruction to loop. Never
+weaken a gate, replace the approved scientific question, or disguise missing
+authority/input as a scientific null. Each executed specialist task has at
+most two attempts and each gate has at most one automatic repair wave. When a
+required path remains unavailable or those limits are exhausted, save
+`terminal/incomplete.json`, set `blocked_exhausted`, and report the run honestly
+as `INCOMPLETE` with the exact recovery condition. It is terminal for that run,
+is not a completed study, and cannot receive a scientific PASS. Corrected work
+starts as a new run that explicitly references the preserved incomplete record.
 
-Immediately after approval, use native goal tools when they are available. If there is no active goal, create one without a token budget whose objective is: `Complete the approved ScientistOne study through every required phase and deliver the final verified paper and evidence package; never stop or ask the researcher for further authority, and autonomously perform every safe in-scope repair.` If that ScientistOne goal already exists, preserve it. Do not pause or ask about goal state. Mark it complete only after the final verifier passes and delivery is ready.
+When native goal tools are available and their current policy authorizes one
+for this request, create one bounded goal for the initialized run: advance it
+until fresh verification proves completion or `blocked_exhausted` proves a
+terminal `INCOMPLETE`. The saved ledger remains authoritative, and the goal
+must never continue work after either terminal state.
+
+### Resume a genuine 1.2 run without migration
+
+If an existing run has `contract/run-config.json` schema 1 and no
+`orchestration` object, keep it on the isolated 1.2 compatibility path. Run
+`coe.mjs verify`, retain its saved states and receipts, and launch only missing
+work through `prepare_role_launch`; the MCP automatically uses the exact 1.2
+role contract and the run's frozen model policy. Do not add the 1.3 task ledger,
+attempt/exhaustion fields, common interpreter, or compact-handoff receipt fields
+to that run. Contract work must produce the saved generated I1 verifier, and
+audit work must execute that verifier rather than look for the 1.3 interpreter.
+Do not use `exhaust` on a 1.2 run. Avoid an open-ended repair loop: make the
+smallest evidence-preserving repair allowed by the frozen 1.2 contract, then
+record the exact blocker with its legacy attention/failed state if no valid path
+remains. New studies and linked restarts always use 1.3.
 
 ## Create the run
 
-Before writing run files, read `references/protocol.md`, `references/artifacts.md`, `references/roles.md`, and `references/i1-verification.md` completely.
+Load references by phase. Before writing run files, read the initialization and
+contract sections of `references/protocol.md` and `references/artifacts.md`, the
+Common Role Envelope plus the two contract role cards in `references/roles.md`,
+and `references/i1-verification.md`. Read later phase sections and role cards
+only when that phase becomes ready. Do not repeatedly reload unchanged
+references.
 
 1. Create `scientistone-runs/<UTC>-<slug>/` in the active project.
 2. Copy each approved input into the run once, or bind it by a stable project-relative path when copying would violate the plan. Compute SHA-256 and write `contract/input-manifest.json`. Put answer keys, held-out outcomes, private checks, and evaluator code under `private/`. Candidate roles must never read them.
 3. Prepare the smallest project-local environment needed by the approved study. Reuse compatible tools. Install from an official source only when needed. Record the exact path, version, source, and hash in `environment/bootstrap.json`. Do not install globally or ask the researcher to install a plugin prerequisite.
-4. Freeze the plan, run profile, evaluator contract, evaluator manifest, and task-specific I1 verifier. A fresh Contract Auditor must pass them before candidate work.
-5. Write `run.json`, events, role-launch records, and receipts as required by `artifacts.md`.
+4. Run `coe.mjs configure`, then `coe.mjs init`. This snapshots the release-tested I1 interpreter under `contract/control-plane/` and creates the contract-state ledger before any specialist launch.
+5. Freeze the plan, run profile, evaluator contract, evaluator manifest, and declarative task-specific I1 policy. A fresh Contract Auditor must pass the closed essential checklist before candidate work.
 6. Call `attach_run_monitor` with the project root, draft ID, and initialized run path. The open browser must switch into the original interactive study flowchart. If the tab cannot navigate automatically, open the returned `url` in Codex's built-in browser.
 
 ## Use native Codex agents
@@ -102,10 +151,10 @@ ScientistOne uses native Codex subagents. It does not start another agent framew
 Before each scientific, coding, writing, evaluation, or audit assignment:
 
 1. Choose exactly one role card from `references/roles.md`.
-2. Declare the absolute run path, input paths, allowed source classes, output paths, and acceptance gate.
-3. Write `role-launches/<task-name>.json` before launch. Use a stable `logical_task_name`, a unique task name for this attempt, a positive attempt number, and `fork_turns: "none"` so the specialist starts fresh. If launch authorization expires or is consumed before dispatch, request a new grant for the same logical task, increment the attempt, and launch again. Do not ask the researcher to restart Codex or copy runtime files.
-4. Launch the native subagent with the unchanged Common Role Envelope and one role card.
-5. Compare the returned task metadata and receipt with the launch record. Record any limit that Codex could not enforce. Never claim process isolation when only prompt and file rules exist.
+2. Call `prepare_role_launch` with the absolute run path, declared inputs and outputs, allowed sources, and a compact `task_brief`: objective, why the stage matters, constraints, acceptance gate, and upstream summaries tied to declared input paths.
+3. Use the returned task name, model, effort, `fork_turns: "none"`, and exact `assignment` byte-for-byte. The MCP saves and hashes the complete role card, input bindings, brief, and acceptance gate in the launch record.
+4. A missing, malformed, or expired grant rejected before launch authorization does not consume an attempt. Request a fresh grant with a new task name but the same logical task, exclusive output set, and attempt. Once the launch hook accepts a spawn, its immutable `role-attempts/` record consumes that attempt even if no usable receipt returns; the next launch for that logical task uses the next attempt. The runtime derives a stable work key from contract/charter revision, role, and sorted exclusive outputs and rejects logical-name aliases within that frozen revision.
+5. Require the receipt to bind the saved assignment/brief hashes and contain the compact handoff: decisions, evidence IDs, limitations/conflicts, unresolved issues, and recommended next action. Never pass chat history as authority.
 
 Run the study as a dependency-ready queue, not a serial checklist. Give every
 logical task immutable input hashes, one exclusive output set, a stable ID and
@@ -115,16 +164,18 @@ limits allow, with an absolute ScientistOne ceiling of 16 live specialists.
 Prepare each one-use launch grant only when a slot is ready,
 wait on the active set, and refill immediately when the first task finishes.
 Never let completion order change seeds, ranking, tie-breaking, or collation.
-Tasks that share an authoritative output, mutate the same environment, or use
-an evaluator resource not declared parallel-safe remain serial.
+Give every authoritative output tree one task owner for the full frozen run;
+express successive work as exclusive sibling outputs plus an explicit merge
+task. Tasks that mutate the same environment or use an evaluator resource not
+declared parallel-safe remain serial.
 
-Persist that queue as `environment/task-ledger.json` using the schema in
-`references/artifacts.md`. Before every launch wave and after the first task
-completion, run `<resolved-node-path> <scientistone-skill-root>/scripts/scheduler.mjs
-ready <run>/environment/task-ledger.json` and launch exactly its returned
-`ready_task_ids`. Mark a task `running` only after successful native dispatch
-and `complete` only after its receipt verifies. Never bypass the executable
-output-ownership, predecessor, capacity, or frozen-resource gates.
+For one ready task, launch it directly. When two or more independent tasks are
+ready, persist the queue as `environment/task-ledger.json` and use
+`scheduler.mjs ready` to fill available slots immediately with its bounded
+least-constraining scan; never perform exhaustive subset optimization. Mark a task running
+only after launch authorization and complete only after its receipt verifies. If the queue
+has no ready or running task, classify the dependency defect or close as
+`blocked_exhausted`; never leave a drained run silently `running`.
 
 The evaluator contract must say whether concurrent evaluation is valid and
 its maximum concurrency for each timing-, hardware-, license-, API-, or
@@ -162,7 +213,8 @@ Use the model and reasoning policy in `references/model-policy.json` when the cu
 
 - Build evidence when a claim is made. A later citation cannot fix a claim with no support.
 - Saved files, not chat or agent memory, carry authority between roles.
-- Freeze evaluation and the task-specific I1 verifier before candidate results.
+- Freeze evaluation and the task-specific I1 policy before candidate results; use the run-snapshotted common interpreter.
+- YAGNI may remove only work not required by the charter, frozen protocol, or CoE. Use the simplest complete solution, deterministic checks first, and stop at the acceptance gate. Do not invent frameworks, helpers, threat models, or extra test matrices for hypothetical future needs.
 - Keep candidate work away from evaluator-only files and held-out answers.
 - Preserve failed methods, null findings, contradictions, and audit failures.
 - Keep an operational failure separate from scientific null evidence.
@@ -171,30 +223,28 @@ Use the model and reasoning policy in `references/model-policy.json` when the cu
 
 ## Run and recovery
 
-Follow `references/protocol.md` in order. At each phase boundary, run the
-read-only `coe.mjs preflight` command with the intended checkpoint inputs and
-outputs before any downstream specialist launches. Create the receipt only
-after it passes, then run the verifier commands in `references/artifacts.md`.
-On resume, verify saved state and continue from the first invalid or incomplete
-phase.
+Follow `references/protocol.md` in order. `coe.mjs checkpoint` is the one
+authoritative, failure-atomic promotion gate. `coe.mjs preflight` is an
+optional read-only dry run for diagnosing a likely failure; it is never a
+required second validation. On resume, verify saved state and continue from
+the first invalid or incomplete phase.
 
-Retry the smallest failed work package and preserve every failed artifact. Use a fresh specialist when independence or scientific judgment was affected. An approved run stays `running` or `repairing` until verified completion or explicit researcher cancellation; do not set `attention`, `paused`, or `failed` as a way to end the task. Treat every generated-contract defect as autonomous repair work, not a researcher decision or terminal blocker:
+Retry only the smallest failed work package and preserve every failed artifact. Use a fresh specialist when independence or scientific judgment was affected. Classify failures before retrying: transient dispatch/transport, bounded validator repair, permanent missing requirement, or new authority/input required.
 
 - For a result-blind defect, revise the execution contract in the same run, record the structured reason, and send the revised contract to a fresh Contract Auditor.
-- For a result-aware defect, use `revise-contract` with `post_result_guard: "invalidate_and_rerun"`. The verifier archives the old contract and every successor, increments the contract revision, and returns the same run to contract review. Never tune a verifier to rescue an observed result.
+- For a result-aware defect in the scientific contract, use `revise-contract` with `post_result_guard: "invalidate_and_rerun"`. The CoE archives the old contract and its dependent successors, increments the contract revision, and returns the same run to contract review. Never tune a policy or evaluator to rescue an observed result.
 - If the most direct repair would exceed a fixed charter boundary, keep the question and boundary fixed, choose the strongest safe in-scope design or limited conclusion, record the deviation and its scientific consequence, and continue. Do not solicit a charter amendment. If the researcher independently supplies a change, record it as a researcher-initiated amendment in the same run.
-- Do not create `attention.md` after approval. Missing data, unavailable credentials, unavailable hardware, licenses, paid services, unsafe methods, exhausted compute, and repeated operational failure require an available-data, open-tool, simulated, design-only, lower-compute, or completed-with-limitations fallback. Preserve what failed and continue to the paper; do not ask the researcher to act.
+- A safe limited design is valid only when it still answers the frozen question and passes every applicable gate. Otherwise preserve the partial evidence and close `INCOMPLETE`; never manufacture a paper or scientific null from an operational blocker.
 
-Operational launch errors with codes such as `S1_LAUNCH_GRANT_NOT_FOUND`, `S1_LAUNCH_GRANT_EXPIRED`, or `S1_LAUNCH_GRANT_MISMATCH` are recoverable: prepare a new one-use grant, retain the logical task name, increment the attempt, and retry the same work package. Do not require a Codex restart, a global installation, or a manually copied runtime.
+Operational launch errors with codes such as `S1_LAUNCH_GRANT_NOT_FOUND`, `S1_LAUNCH_GRANT_EXPIRED`, or `S1_LAUNCH_GRANT_MISMATCH` are recoverable: prepare a new one-use grant, retain the logical task name and attempt, and redispatch. Do not require a Codex restart, global installation, or manually copied runtime.
 
-`S1_FROZEN_ROUTE_UNAVAILABLE` is a generated-contract defect. Write an
-`AUTOMATIC_REPAIR` reason, use `coe.mjs revise-contract` to archive the frozen
-routing record and every result-aware successor, and then prepare the role
-again so the MCP freezes a currently available semantic route. Never edit the
-routing record in place or silently downgrade a task.
+If a model route becomes unavailable, the MCP preserves the original route,
+saves a content-addressed compatible route, and activates it only for future launches. Existing receipts remain bound
+to their saved launches; route availability alone is not a scientific-contract
+revision and does not invalidate unrelated scientific evidence.
 
 ## Completion
 
-Do not report completion or end an approved run until every deliverable required by the plan exists and the final verifier passes. In research mode this normally includes the selected method or protocol, canonical evaluation, paper source, claim provenance, I1 to I4 audit, reproduction guide, visual check for rendered documents, and delivery manifest. A PDF is required only when the approved deliverables and available verified environment require one. Negative, null, design-only, or completed-with-limitations findings are valid papers; an operational obstacle is work to repair or a limitation to study, not a reason to stop before writing.
+Do not report completion until every deliverable required by the plan exists and the final verifier passes. In research mode this normally includes the selected method or protocol, canonical evaluation, paper source, claim provenance, I1 to I4 audit, reproduction guide, visual check only for required rendered documents, and delivery manifest. A PDF is required only when the approved deliverables and verified environment require one. Negative, null, and genuinely completed-with-limitations findings are valid papers. `blocked_exhausted`/`INCOMPLETE` is a truthful terminal execution result, not a completed study.
 
 Then route interpretation to `scientistone-results`. Before ending a turn, confirm the run path, phase, receipt, and next verified action. If native goal tools were used, mark the ScientistOne goal complete only now. Do not ask a post-approval question.

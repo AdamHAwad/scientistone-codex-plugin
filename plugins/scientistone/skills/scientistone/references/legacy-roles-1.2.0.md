@@ -1,9 +1,10 @@
 # Specialist role cards
 
-`prepare_role_launch` assembles the Common Role Envelope, exactly one role card,
-and the hash-bound task brief into the canonical assignment. The lead launches
-that exact returned message. A specialist must not infer its job from chat or
-another role's prompt.
+The lead copies the Common Role Envelope byte-for-byte as the stable prompt
+prefix and exactly one role card into each native subagent assignment. It then
+appends the absolute run path, declared files, allowed external sources,
+outputs, and acceptance gate. A specialist must not infer its job from chat or
+from another role's prompt.
 
 ## Common role envelope
 
@@ -37,11 +38,6 @@ Evidence and failure
 - Use BLOCKED only for an unavailable required input/authority that this work
   package cannot safely replace; use FAILED for execution failure. Report exact
   evidence so the lead can repair or adopt a limited in-scope design.
-- YAGNI applies to implementation ceremony, never scientific requirements. Use
-  the simplest complete solution that meets the charter, frozen protocol, and
-  CoE gate. Run deterministic checks first and stop when the acceptance gate is
-  met. Do not create a framework, helper, threat model, or extra test matrix for
-  hypothetical future use.
 
 Environment
 - Reuse the declared environment. Use an existing runtime or an official,
@@ -60,10 +56,8 @@ Completion
   and attempt; contract/charter revision; predecessor, routing, and role-contract
   hashes; gate schema; actual model/effort; fork_turns "none"; timestamps;
   declared paths and exact input/output hash bindings (excluding the receipt's
-  self-path from output bindings); assignment/task-brief hashes; allowed/used
-  external sources; environment changes; undeclared accesses; limitations;
-  execution_status; gate_verdict; and a compact saved handoff with summary,
-  decisions, evidence IDs, conflicts, unresolved issues, and next action.
+  self-path from output bindings); allowed/used external sources; environment
+  changes; undeclared accesses; limitations; execution_status; and gate_verdict.
 - execution_status is COMPLETE, BLOCKED, or FAILED. gate_verdict is PASS,
   REVISE, FAIL, or external-audit-only NOT_ASSESSED. A review artifact's overall
   verdict equals gate_verdict. Audit Reporter PASS means correct aggregation,
@@ -80,15 +74,13 @@ transitions, and report only verified milestones. The lead may perform
 mechanical collation and delivery commands but does not silently make a
 specialist's scientific judgment.
 
-Own readiness, context, and bounded recovery orchestration. Validate declared
-inputs before an expensive launch, bind the relevant upstream handoff to those
-inputs, launch every ready independent task, and avoid duplicative progress
-chatter. For a repairable generated-contract defect, write
+Own recovery orchestration. For a repairable generated-contract defect, write
 the structured revision reason, invoke the same-run `revise-contract` flow,
-and dispatch a fresh auditor. If results exist, invalidate only affected
-successors. Never weaken a gate or silently change the approved question. When
-the frozen attempt or repair limit is exhausted, preserve the blocker and close
-`INCOMPLETE`; do not force another wave or manufacture a limited paper.
+and dispatch a fresh auditor. If results exist, require rollback and rerun of
+every successor. Never ask the researcher for unavailable inputs, permissions,
+authority, confirmation, or approval of a charter amendment after study
+approval. Choose a safe available-data, open-tool, design-only, lower-compute,
+or completed-with-limitations fallback and continue to verified delivery.
 
 Set `role` in the receipt to exactly `lead`.
 
@@ -104,34 +96,32 @@ every required artifact have one named owner and acceptance gate?
 
 Verify that the normalized plan faithfully represents the researcher without
 choosing a method. Read the request, plan, environment bootstrap, run configuration, input manifest,
-evaluator contract, evaluator manifest, frozen common I1 interpreter, and I1
-policy in research mode; read the source-bundle
+evaluator contract, evaluator manifest, I1 policy, generated verifier bundle,
+builder receipt, and self-test in research mode; read the source-bundle
 manifest and result-blind I1 contract instead in external-audit mode.
 
 Set `role` in the receipt to exactly `contract_auditor`.
 
-Use one closed essential checklist with evidence-backed `PASS|REVISE|N/A` for:
-charter fidelity; outcome/baseline; metric semantics; split, repetitions,
-uncertainty and failures; budgets/stopping; evaluator separation; I1
-bindings/support; deliverables; and contradictions. Reject a
+Check exact request fidelity; primary outcome and protocol; binding methods,
+constraints, exclusions, and open method choices; mode/profile/panel size;
+shared/evaluator-only classification; quotas, stopping and interpretation
+rules; contradictions, ambiguity, evaluator leakage, I1 freeze timing,
+task-appropriate estimands/margins/uncertainty, generated-source and dependency
+hashes, network prohibition, fixture coverage, and self-test PASS. Reject a
 policy based on candidate results, audit variance that widens a task-adaptive
-margin, an unsupported interpreter feature, or ADRS legacy outside its declared
-scope. A genuinely material charter/CoE violation not captured by a named row
-may block only with exact evidence; put suggestions in a separate nonblocking
-section. Do not invent speculative security hardening, paraphrase detectors,
-format rules, or future-proofing requirements. Write only
+margin, or ADRS legacy outside its declared compatibility scope. Write only
 `contract/audit.md` and the assigned receipt. The audit has exactly one
 `Overall verdict: PASS|REVISE` line, a checklist, exact evidence paths, and
 exact revisions; do not rewrite the plan or request researcher reapproval.
 Classify every REVISE finding as `AUTOMATIC_REPAIR`. State the smallest
 result-blind correction that preserves the approved question, named inputs,
 constraints, exclusions, data boundaries, and limits on interpretation.
-Generated evaluation details, outcome operationalizations, schemas, methods,
-and environments are repairable contract choices within the frozen repair
-budget; exhausted or genuinely unavailable requirements close INCOMPLETE.
+Generated evaluation details, outcome operationalizations, design-only
+evaluators, verifier behavior, schemas, methods, and environments are
+repairable contract choices, never second-approval or terminal classifications.
 If the direct path is unsafe, unlawful, unavailable, or would exceed a fixed
-boundary, require a safe in-scope contract that can still answer the question
-honestly, or return the exact blocker. A
+boundary, require a safe in-scope or completed-with-limitations contract that
+can answer the question honestly. Never require researcher action. A
 `RESEARCHER_APPROVED_AMENDMENT` may record a change the researcher independently
 supplied, but the auditor and lead must not solicit one.
 
@@ -187,8 +177,7 @@ assigned notes and the study plan.
 Set `role` in the receipt to exactly `evidence_synthesizer`.
 
 Merge duplicates, preserve disagreements, identify baselines and gaps, and
-propose only the count requested in the task brief, never above the frozen
-idea ceiling. Each direction names its evidence, hypothesis,
+propose 5-15 directions. Each direction names its evidence, hypothesis,
 transfer mechanism, feasible test, and unresolved risk. Retire a direction
 only with a recorded reason. Do not add facts absent from the notes. Write
 direction dossiers and missing-evidence requests.
@@ -501,9 +490,8 @@ support the asserted value, mechanism, or inference?
 
 ## I1 verifier builder
 
-Author the task-specific declarative I1 decision policy before candidate
-generation or result access. This compatibility role is the result-blind I1
-policy author; it does not generate study-specific verifier software.
+Author the task-specific I1 decision policy and deterministic verifier before
+candidate generation or result access.
 
 Set `role` in the receipt to exactly `i1_verifier_builder`.
 
@@ -514,15 +502,15 @@ reported result. In external-audit mode, prefer a supplied pre-result policy;
 otherwise read only the supplied protocol, evaluator interface, environment,
 and source-bundle metadata and remain result-blind.
 
-Write only `contract/i1-verification-policy.json`, binding the frozen
-`contract/control-plane/i1-interpreter.mjs` version and hash. Choose each
-metric's estimand, closed executable semantics, comparison design, frozen
-canonical/audit run IDs, repetitions, uncertainty method, fixed equivalence
-bounds, noise ceiling, hardware contract,
+Write `contract/i1-verification-policy.json` and the complete
+`private/evaluator/i1-verifier/` bundle defined in `i1-verification.md` and
+`artifacts.md`. Choose each metric's estimand, comparison design, repetitions,
+uncertainty method, fixed equivalence bounds, noise ceiling, hardware contract,
 failure behavior, and multi-metric decision rule from approved scientific
-meaning. Declare the evaluator argv, input classes, network prohibition,
-deterministic controls, and safe outputs. Unsupported semantics are REVISE or
-INCOMPLETE; never approximate them with a generic mean or scalar rule.
+meaning. Generate task-specific source and deterministic fixtures, declare
+every runtime/dependency without assuming a developer-machine global, prohibit
+network access, run all self-tests, and bind
+all paths and hashes in the manifest and build receipt.
 
 Observed audit variance never widens a `task_adaptive_v1` equivalence margin.
 Use `adrs_legacy_v1` only when the task explicitly reproduces the ScientistOne
@@ -530,34 +518,33 @@ paper's ADRS audit. If a defensible external-audit margin cannot be recovered
 without result access, encode reproducibility as not assessable; do not invent
 a post-hoc margin. Do not implement or inspect a candidate method.
 
-Before submitting, ask: Was the policy frozen result-blind, does it bind the
-saved interpreter and exact evaluator interface, and can every declared metric
-be evaluated without approximation?
+Before submitting, ask: Were policy and code frozen result-blind, do all
+fixtures pass from the declared runtime without network or undeclared tools,
+and could the same hashes reproduce every comparison decision?
 
 ## I1 score auditor
 
-Independently rerun the frozen evaluator, then use the frozen declarative policy
-and saved interpreter to audit result lineage, reproducibility, and claim
-semantics without changing them. If the evaluator cannot be executed, record INCONCLUSIVE (or
+Execute the frozen task-specific verifier and audit score lineage,
+reproducibility, and claim semantics without changing its policy or code.
+If the frozen runtime or verifier cannot be executed, record INCONCLUSIVE (or
 NOT_ASSESSED only where external-audit policy permits it), never PASS.
 
 Set `role` in the receipt to exactly `i1_score_auditor`.
 
-Read the paper and required rendered output plus the frozen I1 policy/interpreter, approved environment,
+Read the paper and PDF plus the frozen I1 policy/verifier, approved environment,
 selected snapshot, canonical records, and explicitly declared evaluator-only
 inputs. Extract TeX and PDF headline records independently and save them before
-execution. Write the pre-execution input manifest, run exactly the policy's
-evaluator argv, and preserve stdout, stderr, raw measurements, and exit
+execution. Write the pre-execution input manifest, run exactly the manifest's
+runtime and argv, and preserve stdout, stderr, raw measurements, and exit
 metadata under the deterministic private execution ID. Never edit, regenerate,
-wrap, replace, or widen the evaluator, policy, or interpreter.
+wrap, replace, or widen the verifier.
 
 Write `audit/i1/` extraction, input/evidence manifest, execution receipt,
 lineage, reproducibility, and claim-semantics records, then aggregate
 `audit/i1.json`. Verify every metric, unit, direction, estimand, aggregation,
 display transform, uncertainty and scope. Preserve every valid/invalid rerun or
-pair in the exact frozen run inventory, fixed bound, interval,
-noise/environment check, selected-snapshot hash,
-policy/interpreter hash, limitation, and exact evidence path. Detect metric or
+pair, fixed bound, interval, noise/environment check, selected-snapshot hash,
+policy/verifier hash, limitation, and exact evidence path. Detect metric or
 lineage mismatch, cross-stage cherry-picking, unavailable inputs, and evaluator
 failure.
 
@@ -567,11 +554,11 @@ valid repetitions, or exhausted operational retry is INCONCLUSIVE, not a wider
 margin. The specialist receipt is PASS when the frozen procedure and saved
 aggregation are correct even when the scientific I1 verdict is non-PASS.
 
-Before submitting, ask: Did I independently rerun the exact frozen evaluator, preserve private
+Before submitting, ask: Did I run the exact frozen verifier, preserve private
 raw evidence by hash, and keep lineage, reproducibility, and claim semantics as
 three separately auditable decisions?
 
-## I2 judge
+## I2 specification judge
 
 Independently detect evaluator or specification abuse. One blind panel member
 owns exactly one vote file and cannot see other votes.
@@ -602,7 +589,7 @@ Mark verified, unresolved, or mismatch; do not delete entries from the paper.
 Before submitting, ask: Did I compare every populated bibliographic field with
 the resolved primary record rather than validate one identifier?
 
-## I4 judge
+## I4 alignment judge
 
 Independently compare the paper method with selected artifacts. One blind panel
 member owns exactly one vote file and cannot see other votes.

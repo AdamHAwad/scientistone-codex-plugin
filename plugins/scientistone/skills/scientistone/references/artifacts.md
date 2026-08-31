@@ -25,10 +25,13 @@ scientistone-runs/<UTC>-<slug>/
     evaluator-contract.md           candidate-visible frozen evaluation rules
     evaluator-manifest.json         hashes/access classes, no private contents
     i1-verification-policy.json      result-blind structured I1 decision policy
+    control-plane/
+      i1-interpreter.mjs             release-tested policy interpreter snapshot
     drafts/                         superseded contract drafts
     audit.md
   source-bundle/                   frozen external-audit supplied files
   role-launches/<agent-task>.json   supervisor-generated dispatch record
+  role-attempts/<logical-task>/<work-key>/ immutable accepted launch attempts
   inputs/shared/                    frozen candidate-visible inputs
   evidence/
     sources.jsonl                  one Source Record per scholarly/web source
@@ -43,12 +46,6 @@ scientistone-runs/<UTC>-<slug>/
     references.bib
     critic.md
   private/evaluator/               evaluator source, held-out data, raw outputs
-    i1-verifier/
-      source/                       generated task-specific verifier code
-      fixtures/                     positive/boundary/failure self-test cases
-      self-test.json                frozen fixture results
-      manifest.json                 policy/runtime/source/dependency binding
-      build-receipt.json            hash-bound builder evidence
     i1-runs/<execution-id>/         private I1 stdout/stderr/raw measurements
   discovery/
     ideas.jsonl
@@ -169,9 +166,9 @@ The lead writes `environment/bootstrap.json` before contract initialization:
 runtime architecture. Tool paths are absolute or run-relative. `source` is
 `existing`, `portable_official`, or `system_package_manager`. A portable tool
 records its official HTTPS source and executable SHA-256. Node and LaTeX are
-not plugin-install prerequisites. Record Node 20+ only when the bundled JS CoE
-reference implementation is used; a task-adaptive verifier may instead freeze
-any equivalent executable runtime already available to Codex. `paper_output`
+not plugin-install prerequisites. Record Node 20+ when the bundled CoE and
+common I1 interpreter use a Codex-provided Node runtime. The task-specific
+policy may point to a different already-available evaluator runtime. `paper_output`
 defaults to legacy `{ "pdf": "required" }`. Research may explicitly record
 `{ "pdf": "not_required", "reason": "...", "plan_reference":
 "study-plan.md" }`; in that case LaTeX, PDF, and visual inspection are omitted.
@@ -180,7 +177,7 @@ checkpointing requires declared executables to exist; later read-only
 verification does not require an absolute path from another machine to exist.
 A portable download is permitted only when the approved scientific method
 itself needs that tool and must record `"purpose": "scientific_method"`.
-Never download Node or another runtime solely to operate CoE or I1 verifier
+Never download Node or another runtime solely to operate CoE or I1 interpreter
 control code; use a runtime Codex already exposes or record the check as
 unverified/INCONCLUSIVE.
 
@@ -194,7 +191,6 @@ The ledger utility creates this record:
   "id": "20260817T153000Z-example-question",
   "mode": "research",
   "search_profile": "pilot",
-  "audit_judge_count": 3,
   "budgets": {
     "idea_ceiling": 4,
     "minimum_eligible_ideas": 2,
@@ -206,6 +202,8 @@ The ledger utility creates this record:
     "canonical_repetitions": 3,
     "audit_panel_size": 3
   },
+  "orchestration": {"max_task_attempts": 2, "max_repair_waves_per_gate": 1},
+  "repair_waves": {},
   "created_at": "2026-08-17T15:30:00.000Z",
   "updated_at": "2026-08-17T15:30:00.000Z",
   "state": "running",
@@ -219,41 +217,45 @@ The ledger utility creates this record:
   "last_checkpoint": null,
   "invalidation_roots": [],
   "checkpoints": {},
+  "pending_checkpoint": null,
+  "pending_invalidation": null,
+  "terminal_anchor": null,
   "attention": null
 }
 ```
 
-Allowed states: `running`, `repairing`, `paused`, `complete`, `cancelled`,
-`failed`. Research phases are `contract`, `investigation`, `discovery`,
+Allowed states for a 1.3 run are `running`, `repairing`, `complete`, and
+`blocked_exhausted`. Research phases are `contract`, `investigation`, `discovery`,
 `selection`, `ablation`, `writing`, `verification`, `audit`, `complete`.
 External-audit mode uses `contract`, `audit`, `complete`.
 
 Research outcomes are `positive`, `scientific_null`, and
 `completed_with_limitations`; external-audit outcomes are `audit_passed`,
 `audit_failed`, and `audit_incomplete`. After approval, operationally
-incomplete work remains `running` or `repairing` until verified delivery or
-explicit researcher cancellation.
+incomplete work remains `running` or `repairing` only while an accepted path
+remains inside the frozen limits. Exhaustion sets `blocked_exhausted`, outcome
+`incomplete`, and `terminal/incomplete.json`; this is terminal and is not a
+completed scientific result. Corrected work starts in a new run that explicitly
+references the preserved terminal diagnosis; the exhausted run never resets its
+attempt or repair counters.
 
-Use validated state commands to set `running`, `repairing`, `paused`, or
-`failed`, to set/clear attention, and to append an event. `paused`, `failed`,
-and `attention.md` remain schema-compatible for historical runs, but an
-approved 1.1.4+ run must not enter them merely because data, permission,
-authority, credentials, hardware, licensing, compute, or a generated-contract
-repair is unavailable. Keep it `running` or `repairing`, select a safe in-scope
-fallback, and carry the limitation into delivery. Only explicit researcher
-cancellation may end it early. Checkpoint is the
-only command that advances a verified phase or marks completion. Do not hand
-edit `run.json`. The utility never rewrites checkpoint anchors, ID, mode,
-profile, creation time, schema, request hash, or study-plan hash. Monitoring
-reads this file; receipt verification, not the status label, determines
-scientific validity.
+There is no post-approval pause/attention state in a 1.3 run. Select a safe
+in-scope fallback when one exists within the frozen limits; otherwise use the
+`exhaust` command and preserve the exact restart requirement. Checkpoint is the
+only command that advances a verified phase or marks completion. A temporary
+`pending_checkpoint` journal makes an interrupted promotion retryable; retry the
+same checkpoint command and the utility removes the unanchored candidate before
+validating again. Invalidation and contract revision first prepare a complete
+copy, then save `pending_invalidation` before changing live evidence; retry the
+same invalidation command to roll that prepared transaction forward exactly
+once. Do not hand edit `run.json`. The utility never rewrites
+checkpoint anchors, ID, mode, profile, creation time, schema, request hash, or
+study-plan hash. Monitoring reads this file; receipt verification, not the
+status label, determines scientific validity.
 
-The supported state operations are:
+The supported outcome and feedback operations are:
 
 ```sh
-<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs set-state <run> <running|repairing|paused|failed>
-<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs set-attention <run> attention.md
-<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs clear-attention <run>
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs set-outcome <run> <positive|scientific_null|completed_with_limitations|audit_passed|audit_failed|audit_incomplete>
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs sanitize-feedback <run> <private-evaluation-json> <feedback-json>
 ```
@@ -282,8 +284,8 @@ The reason object has exactly these fields:
   "charter_changed": false,
   "result_aware": true,
   "post_result_guard": "invalidate_and_rerun",
-  "finding": "The frozen verifier omitted a valid result shape.",
-  "repair": "Add result-blind shape handling and rerun the frozen self-test.",
+  "finding": "The frozen policy omitted a valid evaluator result shape.",
+  "repair": "Correct the result-blind policy declaration and rerun contract audit.",
   "researcher_approval": null
 }
 ```
@@ -301,13 +303,11 @@ returns the same run to contract review.
 The JS CoE reference implementation is bundled at
 `<scientistone-skill-root>/scripts/coe.mjs` and uses only the Node standard
 library; it performs no agent or scientific work and does not make Node a
-plugin-install prerequisite. A run may use an equivalent verifier implemented
-with a runtime already available to Codex, but it must preserve the same frozen
-schemas, hashes, role boundaries, verdict semantics, and deterministic
-receipts. From the monitor or results skills, resolve the main skill root;
-never assume a plugin-root sibling path.
+plugin-install prerequisite. It is the single authoritative chain verifier for
+this plugin release. From the monitor or results skills, resolve the main skill
+root; never invent or build a task-local replacement.
 
-Before the independent contract audit, create immutable structured mode/profile parameters:
+Before any contract specialist, create immutable structured mode/profile parameters:
 
 ```sh
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs configure <run> pilot research
@@ -318,8 +318,8 @@ disclosed. Standard is available only when the researcher explicitly approves
 its larger compute budgets. Both ceiling/minimum profiles are built in. For a custom profile,
 first write `contract/custom-profile.json` with every integer field shown in
 `run.json` and the scientific reason in `study-plan.md`, then pass that
-run-relative path as the final argument. The auditor reads the fully expanded
-`contract/run-config.json`. After its PASS, initialize:
+run-relative path as the final argument. Then initialize the ledger and common
+interpreter snapshot; the auditor reads the fully expanded run configuration:
 
 ```sh
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs init <absolute-run-directory>
@@ -352,14 +352,18 @@ positive `max_concurrency`; false always means a limit of one.
 }
 ```
 
-Valid statuses are `pending`, `running`, `complete`, `failed`, and `blocked`.
+Valid statuses are `pending`, `running`, `complete`, `failed`, `blocked`, and
+`exhausted`. Attempt accounting is deliberately absent: immutable
+`role-attempts/` records and the CoE run limits are the sole attempt authority.
+The ready result exposes `blocked_task_ids`, `exhausted_task_ids`, and `drained`
+so an empty ready set cannot masquerade as active progress.
 Before dispatch and after first completion, invoke:
 
 ```sh
 <resolved-node-path> <scientistone-skill-root>/scripts/scheduler.mjs ready <run>/environment/task-ledger.json
 ```
 
-Only returned IDs may launch. Update `running` after successful dispatch and
+Only returned IDs may launch. Update `running` after accepted launch authorization and
 `complete` only after the hash-bound role receipt passes. Completion order
 never changes IDs, seeds, rankings, or collation.
 
@@ -369,25 +373,22 @@ Hash each frozen input for `contract/input-manifest.json` with the same path-bou
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs hash <run> inputs/shared/observations.csv
 ```
 
-Preflight a finished phase before downstream work. It runs the same artifact,
-role-coverage, access, lineage, metric, and manifest gates without writing a
+For diagnosis only, preflight may inspect a finished phase without writing a
 receipt or advancing `run.json`:
 
 ```sh
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs preflight <run> contract \
   --input request.md --input study-plan.md --input environment/bootstrap.json \
-  --input environment/model-routing.json \
   --input contract/run-config.json --input contract/input-manifest.json \
   --output contract --output role-receipts/<contract-auditor-task>.json
 ```
 
-Checkpoint only after that command passes. Every path is run-relative and may
-name a file or directory:
+Checkpoint is the authoritative failure-atomic gate; preflight is not required.
+Every path is run-relative and may name a file or directory:
 
 ```sh
 <resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs checkpoint <run> contract \
   --input request.md --input study-plan.md --input environment/bootstrap.json \
-  --input environment/model-routing.json \
   --input contract/run-config.json --input contract/input-manifest.json \
   --output contract --output role-receipts/<contract-auditor-task>.json
 ```
@@ -443,16 +444,18 @@ receipt as its original sample; never count it as a new repetition or vote.
 
 The checkpoint command accepts domain-specific extra artifacts, but these minimum outputs must exist and be included; promoting only an ancestor does not excuse a missing descendant:
 
-The contract receipt must bind `environment/bootstrap.json` and the canonical
-`environment/model-routing.json` as exact inputs. The routing record contains
-the frozen policy, catalog, tiers, and their validated hashes; do not create a
-second routing schema under `contract/`.
+The contract receipt binds `environment/bootstrap.json`; execution routing is
+bound per specialist launch rather than treated as a scientific contract input.
+The original `environment/model-routing.json` remains immutable. A compatible
+future route is stored content-addressed under `environment/routing-history/`
+and selected by `environment/model-routing-active.json`; prior launch hashes
+continue to resolve to their original validated record.
 
 Each phase checkpoint must also include the individual `role-receipts/<agent-task>.json` files for every specialist whose work it promotes. Pass the individual files, not the whole growing `role-receipts/` directory.
 
 | Phase | Minimum promoted outputs |
 | --- | --- |
-| contract | `contract/run-config.json`, `contract/input-manifest.json`, `contract/evaluator-contract.md` and `contract/evaluator-manifest.json` (research mode), `contract/source-bundle-manifest.json` (external-audit mode), `contract/i1-verification-policy.json`, the complete `private/evaluator/i1-verifier/` bundle, its I1 Verifier Builder receipt, and `contract/audit.md` |
+| contract | `contract/run-config.json`, `contract/input-manifest.json`, `contract/evaluator-contract.md` and `contract/evaluator-manifest.json` (research mode), `contract/source-bundle-manifest.json` (external-audit mode), `contract/i1-verification-policy.json`, `contract/control-plane/i1-interpreter.mjs`, the I1 Policy Author receipt, and `contract/audit.md` |
 | investigation | `evidence/search-log.jsonl`, `evidence/sources.jsonl`, non-empty `investigation/notes` and `directions`, `investigation/protocol-audit.md`, `investigation/brief.md`, `investigation/references.bib`, `investigation/critic.md` |
 | discovery | `discovery/ideas.jsonl`, `discovery/idea-critique.jsonl`, `discovery/index.json`, all indexed node ideas, shared manifests, sealed snapshots, experimental logs, evaluation records, reports, and legitimacy audits |
 | selection | `selection/selection.md`, `selection/selection-audit.md`, `selection/lineage.json`, `selection/selected/manifest.json` plus every selected artifact, `selection/canonical-evaluation.json` |
@@ -471,7 +474,8 @@ specialist's scientific content.
 | Artifact | Owner | Reviewer/validator |
 | --- | --- | --- |
 | `environment/bootstrap.json`, `contract/run-config.json`, input manifest, evaluator contract/manifest, source-bundle manifest | Lead/configure command | Contract Auditor and CoE |
-| `contract/i1-verification-policy.json`, generated I1 source/fixtures/manifest/self-test/build receipt | I1 Verifier Builder | Contract Auditor and CoE |
+| `contract/i1-verification-policy.json` | I1 Policy Author (compatibility key `i1_verifier_builder`) | Contract Auditor and CoE |
+| `contract/control-plane/i1-interpreter.mjs` | CoE `configure` command from the release-tested bundle | Contract Auditor and CoE |
 | `contract/audit.md` | Contract Auditor | CoE receipt/checkpoint |
 | `role-launches/<agent-task>.json` | Lead from native task metadata | CoE receipt binding |
 | `evidence/search-log.jsonl`, sources, literature map | Literature Mapper | CoE schema and Brief Writer |
@@ -497,7 +501,7 @@ specialist's scientific content.
 | `paper/grounding-report.json`, critic | Paper Critic | CoE gate |
 | `paper/claims.jsonl`, verification | Claim Verifier | CoE resolver |
 | `paper/paper-verified-tagged.tex`, paper TeX, and any required PDF | Writer | Visual reviewer when applicable and CoE |
-| `audit/i1/`, its referenced private execution directory, and `audit/i1.json` | I1 Score Auditor | CoE schema and frozen verifier hashes |
+| `audit/i1/`, its referenced private execution directory, and `audit/i1.json` | I1 Score Auditor | CoE schema and frozen policy/interpreter hashes |
 | `audit/i3.json` | I3 Reference Auditor | CoE schema |
 | `audit/claim-provenance.json` | Claim-Provenance Auditor | CoE schema |
 | `audit/i2/judge-<n>.json`, `audit/i4/judge-<n>.json` | Independent panel judges | Audit Reporter and CoE |
@@ -524,7 +528,7 @@ Machine-readable gate minima:
 - `ablation/plan.json` and `results.json`: no more than the ablation ceiling and at least the minimum valid ablations when valid variants exist, with corresponding variants/evaluations or a recorded stop reason.
 - `paper/grounding-report.json`: `status: "PASS"` and `grounding_ratio >= 0.8`.
 - `paper/claims.jsonl` and `paper/provenance.jsonl`: unique, identical claim-id sets, all `SUPPORTED`, with one of the four claim types and source-identifying evidence. When the plan requires PDF, `paper.pdf` must have a PDF header, catalog/page tree, root, resolvable `startxref`, and EOF marker before visual inspection.
-- `audit/i1.json`: hash-binds the frozen policy, verifier, selected snapshot,
+- `audit/i1.json`: hash-binds the frozen policy, common interpreter, selected snapshot,
   execution receipt, and three component reports. Its verdict is
   `PASS|FAIL|INCONCLUSIVE|NOT_ASSESSED`; research requires PASS,
   `NOT_ASSESSED` is external-audit-only, and every other outcome blocks
@@ -549,6 +553,8 @@ Every specialist writes a unique `role-receipts/<agent-task>.json` named by the 
   "predecessor": { "path": "receipts/investigation.json", "sha256": "<hash>" },
   "model_routing_sha256": "<hash>",
   "role_contract_sha256": "<hash>",
+  "assignment_sha256": "<hash>",
+  "task_brief_sha256": "<hash>",
   "gate_schema_version": 1,
   "model": "<actual model id or declared-by-role>",
   "reasoning_effort": "<actual effort or declared-by-role>",
@@ -569,6 +575,14 @@ Every specialist writes a unique `role-receipts/<agent-task>.json` named by the 
   ],
   "undeclared_inputs_accessed": [],
   "limitations": [],
+  "handoff": {
+    "summary": "Canonical evaluation completed against the frozen snapshot.",
+    "decisions": ["Used the policy-declared evaluator command."],
+    "evidence_ids": ["selection/canonical-evaluation.json"],
+    "conflicts": [],
+    "unresolved": [],
+    "recommended_next_action": "Run selection checkpoint."
+  },
   "execution_status": "COMPLETE",
   "gate_verdict": "PASS"
 }
@@ -616,6 +630,7 @@ metadata:
   "task_id": "<native task id>",
   "task_name": "evaluator_i02_b03_v02_attempt_2",
   "logical_task_name": "evaluator_i02_b03_v02",
+  "work_key_sha256": "<hash of contract/charter revision, role, and sorted exclusive outputs>",
   "attempt": 2,
   "contract_revision": 1,
   "charter_revision": 1,
@@ -628,6 +643,16 @@ metadata:
   "model_routing_sha256": "<hash>",
   "role_contract_sha256": "<hash>",
   "gate_schema_version": 1,
+  "task_brief": {
+    "objective": "Evaluate the frozen selected snapshot.",
+    "context": "Selection requires one canonical result.",
+    "acceptance_gate": "A valid hash-bound evaluation record exists.",
+    "constraints": "Use only declared inputs and the frozen evaluator.",
+    "upstream_summary": [{"input_path": "selection/selected", "summary": "Frozen selected snapshot."}]
+  },
+  "task_brief_sha256": "<canonical task-brief hash>",
+  "assignment": "<exact assignment passed to the specialist>",
+  "assignment_sha256": "<assignment hash>",
   "declared_inputs": ["study-plan.md", "selection/selected"],
   "input_artifacts": [
     { "path": "study-plan.md", "sha256": "<hash>" },
@@ -639,9 +664,19 @@ metadata:
 }
 ```
 
-The receipt names this launch record and its SHA-256. Native metadata is the
-binding record when available; otherwise model and freshness are declared by
-the role and checked by the lead, not claimed as enforced.
+When the launch hook accepts that spawn, it atomically writes
+`role-attempts/<logical-task>/<work-key>/attempt-<n>.json` with schema version 2, binding
+the logical task, mechanically derived revision/role/output work key, attempt number,
+launch path, and launch hash. Changing the caller-selected logical name cannot
+reset the same role/output work. Rejected or expired grants write
+no record. The CoE requires the matching record before a role receipt can be
+promoted and automatically binds it into the phase receipt, so deleting a
+failed specialist receipt cannot reset the attempt budget.
+
+The receipt names this launch record and its SHA-256. The exact assignment is
+the common role envelope, one role card, and this task brief; the spawn message
+must match it byte for byte. Receipt validity is bound to that saved assignment,
+not to whichever plugin role text happens to be installed later.
 
 ## Input manifest
 
@@ -708,7 +743,7 @@ copy private contents. Sanitized feedback is a deterministic whitelist of
 execution status, public metric name/value/unit/direction, safe failure
 category, and candidate-visible note; unknown fields are rejected.
 
-## I1 policy and generated verifier bundle
+## I1 policy and common interpreter
 
 `contract/i1-verification-policy.json` validates against the bundled
 `i1-verification-policy.schema.json`. Its bindings use path-bound SHA-256s.
@@ -719,45 +754,35 @@ reconstructed policy uses `freeze_stage: "pre_i1_execution_external"`,
 `frozen_before_candidate_generation: false`, and
 `result_blind_authoring: true`.
 
-The generated `private/evaluator/i1-verifier/manifest.json` is:
+The policy uses schema version 2 and binds the release-tested interpreter copied
+by `coe.mjs configure`:
 
 ```json
 {
-  "schema_version": 1,
-  "policy_path": "contract/i1-verification-policy.json",
-  "policy_sha256": "<path-bound hash>",
-  "source_root": "private/evaluator/i1-verifier/source",
-  "source_tree_sha256": "<path-bound hash>",
-  "source_files": [{"path": "private/evaluator/i1-verifier/source/verify.mjs", "sha256": "<path-bound hash>"}],
-  "fixtures_root": "private/evaluator/i1-verifier/fixtures",
-  "fixtures_tree_sha256": "<path-bound hash>",
-  "fixture_files": [{"path": "private/evaluator/i1-verifier/fixtures/pass.json", "sha256": "<path-bound hash>"}],
-  "runtime_path": "<absolute or run-relative executable>",
-  "runtime_sha256": "<executable byte hash>",
-  "argv": ["<runtime>", "private/evaluator/i1-verifier/source/verify.mjs", "<input-manifest>", "<private-output>"] ,
-  "network": false,
-  "dependencies": [],
-  "allowed_input_classes": ["frozen_extraction", "canonical_evaluation", "selected_snapshot"],
-  "safe_output_paths": ["audit/i1/lineage.json", "audit/i1/reproducibility.json", "audit/i1/claim-semantics.json"]
+  "schema_version": 2,
+  "interpreter": {
+    "version": "1.1.0",
+    "path": "contract/control-plane/i1-interpreter.mjs",
+    "sha256": "<path-bound hash>"
+  },
+  "execution": {
+    "evaluator_argv": ["<runtime>", "private/evaluator/evaluate.mjs", "<selected-snapshot>", "<private-output>"],
+    "network": false,
+    "allowed_input_classes": ["frozen_extraction", "canonical_evaluation", "selected_snapshot"],
+    "private_execution_root": "private/evaluator/i1-runs",
+    "safe_output_paths": ["audit/i1/lineage.json", "audit/i1/reproducibility.json", "audit/i1/claim-semantics.json"],
+    "determinism": {"canonical_json": true, "fixed_locale": "C", "fixed_timezone": "UTC", "fixed_concurrency": 1, "stable_ordering": true, "same_input_same_payload": true}
+  }
 }
 ```
 
-Every source and fixture entry is unique, exhaustive for its root, regular,
-non-symlinked, and hash matching. Dependencies contain exact name, version,
-run-local lock/manifest path and hash; an empty array means standard-library
-only. Runtime and argv match the policy, network is false, and no argv element
-is an interpolated shell command.
-
-`self-test.json` has `schema_version: 1`, `verdict: "PASS"`, and exactly one or
-more cases for each `positive`, `boundary`, `mismatch`, `malformed_input`, and
-`missing_run` class. Each case has a unique ID, fixture path/hash, expected
-verdict, actual verdict, deterministic output hash, and `passed`; all must pass.
-
-`build-receipt.json` has `schema_version: 1`, the builder launch-record path and
-hash, policy path/hash, manifest path/hash, source and fixture tree hashes,
-self-test path/hash, `network_used: false`, empty undeclared-access and
-limitations arrays, and `verdict: "PASS"`. It is computation evidence inside
-the verifier bundle, distinct from the specialist's standard role receipt.
+The I1 Policy Author declares task-specific metrics, estimands, repetition
+counts, margins, uncertainty rules, hardware rules, and failure outcomes. It
+does not generate code, fixtures, manifests, or a second test framework. The
+Contract Auditor validates policy/interpreter compatibility before candidates;
+the I1 Score Auditor later runs the frozen evaluator and applies the same
+interpreter. Unsupported semantics fail closed as `INCOMPLETE` rather than
+triggering an open-ended software project.
 
 ## External source-bundle manifest
 
@@ -953,12 +978,12 @@ policy and evidence hashes, per-metric comparison records, evidence paths,
 mismatches or unavailable items, and limitations. Reproducibility records the
 declared estimator, every valid/invalid rerun or pair, interval, fixed
 equivalence bounds, noise/environment checks, and per-metric outcome. The
-verifier recomputes deterministic and ADRS legacy arithmetic; for other frozen
-methods it validates the saved generated-verifier payload and boundary decision
-without substituting a generic formula.
+common interpreter recomputes every supported estimand and boundary decision.
+Unsupported semantics fail closed during contract audit rather than creating
+study-specific verifier code.
 
 Aggregate `audit/i1.json` contains `schema_version`, policy path/hash/profile,
-verifier manifest/source hashes, selected-snapshot hash when applicable,
+interpreter version/path/hash, selected-snapshot hash when applicable,
 component path/hash/verdict bindings, execution-receipt path/hash, evidence
 paths, unavailable items, limitations, `rollback_phase`, and final verdict.
 Verdict precedence is FAIL, then external-only NOT_ASSESSED, then

@@ -18,12 +18,13 @@ applicable checks pass.
 ## Freeze before results
 
 In research mode, after the evaluator contract is complete and before candidate
-generation, a fresh I1 Verifier Builder receives only the approved plan,
+generation, a fresh result-blind I1 policy author (compatibility role key
+`i1_verifier_builder`) receives only the approved plan,
 environment bootstrap, input manifests, evaluator contract and manifest, and
 explicitly declared evaluator-only paths. It must not receive candidate
 artifacts, candidate evaluations, producer transcripts, or paper drafts.
 
-In external-audit mode, prefer a supplied policy and verifier proven to predate
+In external-audit mode, prefer a supplied policy proven to predate
 the supplied results. Otherwise the builder freezes a result-blind audit policy
 before I1 execution. It may read only the supplied protocol, evaluator
 interface, declared environment, and source-bundle metadata, not paper values,
@@ -32,54 +33,38 @@ equivalence margin. If the supplied design does not determine a defensible
 margin, reproducibility is `NOT_ASSESSED`; lineage and claim semantics may
 still be assessed.
 
-The builder writes:
+The author writes only `contract/i1-verification-policy.json`, valid against
+`i1-verification-policy.schema.json`. `coe.mjs configure` has already copied
+the release-tested generic interpreter to
+`contract/control-plane/i1-interpreter.mjs`; the policy binds its version and
+SHA-256. The policy also freezes evaluator argv, allowed input classes, network
+prohibition, safe outputs, and deterministic controls. It is a closed
+declarative contract, not a per-study software project.
 
-- `contract/i1-verification-policy.json`, valid against
-  `i1-verification-policy.schema.json`;
-- generated task-specific source under
-  `private/evaluator/i1-verifier/source/`;
-- deterministic positive, boundary, mismatch, malformed-input, and missing-run
-  fixtures under `private/evaluator/i1-verifier/fixtures/`;
-- `private/evaluator/i1-verifier/self-test.json` with every fixture result;
-- `private/evaluator/i1-verifier/manifest.json` with the policy hash, source and
-  fixture hashes, frozen runtime path and hash, argv entrypoint, network set to
-  false, allowed inputs, output schema, and dependency inventory;
-- `private/evaluator/i1-verifier/build-receipt.json` binding the builder launch
-  receipt, policy, manifest, source tree, fixtures, and PASS self-test.
-
-Generated verifier code is an evaluator-only frozen research artifact. It uses
-only the declared runtime and bundled or run-local hash-pinned dependencies. It
-must not download packages, call a service, use the network, discover a global
-tool, import from outside declared roots, or write outside its declared private
-execution directory. Pass arguments as an argv array; never interpolate paths
-or paper content into a shell command.
-
-The Contract Auditor recomputes every hash, runs the frozen self-test command,
-and checks that the policy answers all applicable scientific questions. Only a
-PASS contract may begin candidate work. Because policy and code are frozen
-before results, an unhandled later result type is not permission to improvise.
-Use a versioned same-run contract repair. If results already exist, archive the
-old contract and every successor, then rebuild and rerun them under a fresh
-audit. If the direct repair would exceed a fixed researcher-charter boundary,
-preserve the boundary and author the strongest safe in-scope verifier or
-limited design. Continue the same run without requesting another approval.
+The Contract Auditor recomputes policy/interpreter hashes and checks the closed
+essential checklist. Only a PASS contract may begin candidate work.
+Suggestions are nonblocking. Unsupported semantics must be revised before
+results or close INCOMPLETE after the repair budget; never approximate them
+with a mean, scalar, or favorable post-hoc rule. If results exist, invalidate
+and rerun only evidence that depends on the changed scientific contract.
 
 ## Required structured policy
 
-The policy uses `schema_version: 1` and profile `task_adaptive_v1` unless the
+The policy uses `schema_version: 2` and profile `task_adaptive_v1` unless the
 study explicitly reproduces the ADRS legacy audit. It declares its mode,
 freeze stage, result-blind authoring status, and:
 
 - source bindings and hashes for the approved plan, environment, evaluator
   contract, evaluator manifest, and input manifest;
 - one record per reported or gated metric: stable ID, role, name, unit,
-  direction, population, estimand, transformation, display rule, determinism
-  class, comparison design, repetitions, randomness, fixed equivalence bounds,
+  direction, population, estimand plus `scientistone_i1_v1` executable semantics,
+  transformation, display rule, determinism class, comparison design,
+  frozen canonical/audit run IDs, repetitions, randomness, fixed equivalence bounds,
   uncertainty method, noise ceiling, hardware conditions, and failure rule;
 - the multi-metric decision rule, including the primary metric and every
   constraint or multiplicity method;
-- verifier runtime, entrypoint, allowed input classes, output locations,
-  network prohibition, and deterministic-execution controls;
+- frozen interpreter version/path/hash plus evaluator argv, allowed input
+  classes, output locations, network prohibition, and deterministic controls;
 - the four aggregate outcomes and the rule that observed variance never widens
   a scientific equivalence margin.
 
@@ -130,10 +115,14 @@ separately from numerical equivalence.
 
 Declare exactly one of `all`, `primary_and_constraints`, or
 `multiplicity_controlled`. Each gated metric has its own estimand, unit,
-comparison, equivalence bounds, and uncertainty rule. A derived aggregate has
-frozen components, weights, missing-value handling, and formula; verify both
-the components and the aggregate. A passing secondary metric cannot hide a
-primary or constraint failure.
+comparison, equivalence bounds, and uncertainty rule. The common interpreter
+supports only its closed scalar estimands: single seed, arithmetic mean,
+linear-type-7 median/quantile, rate, and ratio. For a derived aggregate, the
+frozen evaluator must emit the component metrics and a separately identified
+derived scalar with its formula and missing-value rule in the evaluator
+contract; represent its audit estimand using the closed surface. Never treat
+weights over repetitions as metric aggregation. A passing secondary metric
+cannot hide a primary or constraint failure.
 
 ### Hardware-dependent
 
@@ -150,8 +139,8 @@ failed environmental check is `INCONCLUSIVE`.
 
 ## Audit execution and saved evidence
 
-The fresh I1 Score Auditor receives the frozen policy and verifier bundle, the
-paper TeX and PDF, selected snapshot and manifest, canonical evaluation,
+The fresh I1 Score Auditor receives the frozen policy and interpreter, the
+paper source and any required rendered output, selected snapshot and manifest, canonical evaluation,
 approved environment, and only the evaluator-only inputs declared for I1.
 
 The auditor first writes independent structured extractions at
@@ -159,13 +148,13 @@ The auditor first writes independent structured extractions at
 contains the literal displayed value, normalized numeric value, metric, unit,
 direction, estimand/aggregation language, uncertainty language, exact locator,
 and extraction limitations. Agent judgment is therefore explicit saved input;
-the verifier's calculations remain deterministic.
+the interpreter's calculations remain deterministic.
 
 Next write `audit/i1/input-manifest.json` with every pre-execution input path,
 access class, and path-bound SHA-256. Compute `execution_id` from the policy,
-verifier manifest, input-manifest, selected-snapshot hashes, and attempt number.
-Execute exactly the manifest's runtime and argv in the declared private
-directory. Do not modify or wrap the source. Freeze locale, timezone,
+interpreter, input-manifest, selected-snapshot hashes, and attempt number.
+Execute exactly the policy's evaluator argv in the declared private directory.
+Do not modify or wrap the evaluator. Freeze locale, timezone,
 concurrency, controllable seeds, and ordering as declared by the policy.
 
 Preserve raw stdout, stderr, evaluator output, and exit metadata under
@@ -175,8 +164,7 @@ private measurement and safe extraction record. Then write
 `audit/i1/execution-receipt.json` with:
 
 - execution ID and command argv;
-- policy, verifier manifest, source-tree, input-manifest, environment, and
-  selected-snapshot hashes;
+- policy, interpreter, input-manifest, environment, and selected-snapshot hashes;
 - start and completion times, exit status, retry count, and failure category;
 - raw private artifact paths and hashes;
 - safe structured output path and hash;
@@ -184,10 +172,28 @@ private measurement and safe extraction record. Then write
 
 The structured computational payload must be canonical UTF-8 JSON with stable
 ordering and no timestamps or host-dependent paths. Timestamps belong only in
-the execution receipt. Given the same evidence-manifest hashes, the verifier
+the execution receipt. Given the same evidence-manifest hashes, the interpreter
 must produce the same payload. New irreducibly stochastic measurements may
 differ and therefore create a different evidence manifest; that is evaluator
 variation, not permission for nondeterministic comparison logic.
+
+The frozen evaluator owns the policy's declared confidence, credible-interval,
+or resampling computation and writes that result to its bound `result.json`.
+The common interpreter does not implement a second statistics library. It
+verifies the private result hash and execution identity, recomputes the frozen
+estimands, exhaustive frozen run IDs/order, pairing/failure counts,
+deterministic equality, noise ceilings, and
+bound decision, and rejects any public value that differs from the private
+payload. This keeps the statistical method task-adaptive without generating a
+new verifier program for every study.
+
+`result.json` uses schema version 2. Every metric contains complete
+`canonical_runs` and `audit_runs` arrays in the policy's frozen order. Each run
+has its frozen ID, `valid|missing|invalid` status, value or null, and a reason
+for missing/invalid status; audit runs also carry the exact paired canonical ID
+or null for an independent design. The interpreter derives counts and valid
+values from this inventory. Summary counts supplied by a specialist can never
+hide a dropped run.
 
 Write the component records:
 
@@ -200,7 +206,7 @@ Write the component records:
 - `audit/i1/claim-semantics.json`: metric/unit/direction/population/estimand,
   aggregation, uncertainty, scope, exact paper locators, and supported or
   mismatched judgment;
-- aggregate `audit/i1.json`: component hashes and verdicts, policy and verifier
+- aggregate `audit/i1.json`: component hashes and verdicts, policy and interpreter
   hashes, selected-snapshot hash, evidence paths, unavailable items,
   limitations, rollback phase, and final verdict.
 
@@ -221,13 +227,13 @@ Apply this precedence without discretion:
 3. `INCONCLUSIVE` when no component has failed but reproducibility cannot be
    established because an interval crosses a bound, noise exceeds its ceiling,
    valid repetitions are insufficient, the environment check fails, or the
-   frozen verifier cannot complete after the allowed operational retry.
+   frozen evaluator cannot complete after the allowed operational retry.
 4. `PASS` only when lineage, reproducibility, and claim semantics all pass for
    every metric required by the multi-metric decision rule.
 
 `FAIL`, `INCONCLUSIVE`, and `NOT_ASSESSED` all block a research run.
 `NOT_ASSESSED` is never valid merely because a check is difficult or the
-verifier omitted support for an input already known at contract time.
+frozen policy omitted support for an input already known at contract time.
 
 ## ADRS legacy profile
 

@@ -6,15 +6,101 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { contractCheckpoint, contractCopy, contractJson, contractNewRun, contractPut, contractRead, contractRun, contractThrough, externalAudit, externalContract } from "./coe-contract.test.mjs";
 import { installTestRouting, seedI1Audit, seedI1Contract, testRuntime } from "./i1-contract-fixture.mjs";
+import { TEST_CATALOG } from "./model-routing-fixture.mjs";
+import { consumeLaunchToken, prepareRoleLaunch } from "../../plugins/scientistone/mcp/model-routing.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../plugins/scientistone");
 const COE = path.join(ROOT, "skills", "scientistone", "scripts", "coe.mjs");
+const LEGACY_COE = path.join(ROOT, "skills", "scientistone", "scripts", "legacy-coe-1.2.0.mjs");
+const ROLE_CONTRACT = path.join(ROOT, "skills", "scientistone", "references", "roles.md");
+function canonical(value) { if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`; return JSON.stringify(value); }
+function workKey(role, outputs, contractRevision, charterRevision) { return createHash("sha256").update(canonical({ contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...outputs].sort() })).digest("hex"); }
 
 function run(...args) {
   return spawnSync(process.execPath, [COE, ...args], { encoding: "utf8" });
 }
+
+test("1.3 continues a genuine 1.2 specialist under the frozen 1.2 contracts", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-legacy-"));
+  const stateHome = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-legacy-state-"));
+  t.after(() => { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(stateHome, { recursive: true, force: true }); });
+  put(root, "request.md", "Approved request.\n");
+  put(root, "study-plan.md", "Approved plan.\n");
+  assert.equal(spawnSync(process.execPath, [LEGACY_COE, "configure", root, "pilot", "research"], { encoding: "utf8" }).status, 0);
+  assert.equal(spawnSync(process.execPath, [LEGACY_COE, "init", root], { encoding: "utf8" }).status, 0);
+  const verified = run("verify", root);
+  assert.equal(verified.status, 0, verified.stderr);
+  assert.equal(JSON.parse(verified.stdout).phase, "contract");
+  put(root, "contract/input-manifest.json", '{"schema_version":1,"files":[]}\n');
+
+  const prepared = await prepareRoleLaunch({
+    run_path: root,
+    task_name: "legacy_contract_auditor",
+    logical_task_name: "legacy_contract_auditor",
+    attempt: 1,
+    role: "contract_auditor",
+    declared_inputs: ["study-plan.md"],
+    declared_outputs: ["contract/audit.md"],
+    allowed_external_sources: [],
+    task_brief: { objective: "Audit the frozen 1.2 contract", context: "Continue an in-progress 1.2 run", acceptance_gate: "Return the 1.2 PASS/FAIL audit", constraints: "Preserve the 1.2 receipt contract", upstream_summary: [] },
+  }, { catalog: TEST_CATALOG, stateHome });
+  const grant = consumeLaunchToken(prepared.task_name, { stateHome });
+  assert.equal(grant.task_name, "legacy_contract_auditor");
+  assert.equal(fs.existsSync(path.join(root, "role-attempts")), false, "1.2 continuation must not retrofit the 1.3 attempt ledger");
+  const launch = JSON.parse(fs.readFileSync(path.join(root, prepared.launch_record), "utf8"));
+  const legacyRoles = path.join(ROOT, "skills", "scientistone", "references", "legacy-roles-1.2.0.md");
+  assert.equal(fileHash(legacyRoles), "952424e8886f5641f0133ff74b8d07226484ba094205978bef934141ab91c973");
+  assert.equal(launch.role_contract_sha256, fileHash(legacyRoles));
+  assert.equal("work_key_sha256" in launch, false);
+  assert.equal("task_brief" in launch, false);
+  assert.match(launch.assignment, /contract_auditor/i);
+
+  put(root, "contract/audit.md", "Overall verdict: PASS\n");
+  const receiptPath = "role-receipts/legacy_contract_auditor.json";
+  put(root, receiptPath, `${JSON.stringify({
+    schema_version: 1,
+    role: launch.role,
+    agent_task: "legacy_contract_auditor",
+    logical_task_name: launch.logical_task_name,
+    attempt: launch.attempt,
+    contract_revision: launch.contract_revision,
+    charter_revision: launch.charter_revision,
+    predecessor: launch.predecessor,
+    model: launch.model,
+    reasoning_effort: launch.reasoning_effort,
+    model_routing_sha256: launch.model_routing_sha256,
+    role_contract_sha256: launch.role_contract_sha256,
+    gate_schema_version: launch.gate_schema_version,
+    fork_turns: "none",
+    started_at: launch.started_at,
+    completed_at: new Date(Date.parse(launch.started_at) + 1000).toISOString(),
+    execution_status: "COMPLETE",
+    gate_verdict: "PASS",
+    declared_inputs: launch.declared_inputs,
+    input_artifacts: launch.input_artifacts,
+    allowed_external_sources: [],
+    external_results_used: [],
+    environment_changes: [],
+    outputs: launch.declared_outputs,
+    output_artifacts: [{ path: "contract/audit.md", sha256: run("hash", root, "contract/audit.md").stdout.trim() }],
+    undeclared_inputs_accessed: [],
+    limitations: [],
+    launch_record: prepared.launch_record,
+    launch_record_sha256: run("hash", root, prepared.launch_record).stdout.trim(),
+  })}\n`);
+  const reusable = run("verify-role", root, receiptPath);
+  assert.equal(reusable.status, 0, reusable.stderr);
+  assert.equal(JSON.parse(reusable.stdout).reusable, true);
+
+  launch.role_contract_sha256 = "f".repeat(64);
+  put(root, prepared.launch_record, `${JSON.stringify(launch)}\n`);
+  const forgedReceipt = JSON.parse(fs.readFileSync(path.join(root, receiptPath), "utf8"));
+  forgedReceipt.role_contract_sha256 = launch.role_contract_sha256;
+  forgedReceipt.launch_record_sha256 = run("hash", root, prepared.launch_record).stdout.trim();
+  put(root, receiptPath, `${JSON.stringify(forgedReceipt)}\n`);
+  assert.match(run("verify-role", root, receiptPath).stderr, /stale role contract/i);
+});
 
 function put(root, relative, content = `${relative}\n`) {
   const file = path.join(root, relative);
@@ -84,7 +170,7 @@ test("runs retain the paper-compatible pilot profile by default", (t) => {
 
 function checkpoint(root, phase, outputs, roles) {
   if (phase !== "complete") {
-    const contractInputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "environment/model-routing.json", "contract/run-config.json", "contract/input-manifest.json"];
+    const contractInputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/run-config.json", "contract/input-manifest.json"];
     if (fs.existsSync(path.join(root, "contract", "source-bundle-manifest.json"))) contractInputs.push("contract/source-bundle-manifest.json");
     const mode = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8")).mode;
     if (mode === "research") {
@@ -96,7 +182,7 @@ function checkpoint(root, phase, outputs, roles) {
     let i1Contract;
     if (phase === "contract") {
       i1Contract = seedI1Contract({ root, mode, runtime: testRuntime(root, "i1_verifier_builder"), hash: (base, relative) => run("hash", base, relative).stdout.trim(), fileHash, json: (base, relative, value) => put(base, relative, `${JSON.stringify(value)}\n`), put, startedAt: "2026-08-17T00:00:00Z" });
-      outputs = [...outputs, "private/evaluator/i1-verifier"];
+      outputs = [...outputs];
     }
     roles ??= phase === "contract" ? [
       { role: "i1_verifier_builder", agentTask: "i1_verifier_builder", inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs },
@@ -123,19 +209,25 @@ function checkpoint(root, phase, outputs, roles) {
       }
       const launch = `role-launches/${role.agentTask}.json`;
       const runtime = testRuntime(root, role.role);
-      put(root, launch, `${JSON.stringify({ schema_version: 1, task_id: `native-${role.agentTask}`, role: role.role, fork_turns: "none", model_tier: runtime.tier, model: runtime.model, reasoning_effort: runtime.reasoning_effort, model_routing_sha256: runtime.routing_sha256, declared_inputs: role.inputs, allowed_external_sources: role.allowedExternalSources ?? [], declared_outputs: role.outputs, started_at: "2026-08-17T00:00:00Z" })}\n`);
+      const runRecord = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8"));
+      const taskBrief = { acceptance_gate: "Produce the declared outputs", constraints: "Use only declared inputs", context: "Synthetic regression fixture", objective: `Complete ${role.agentTask}`, upstream_summary: [] };
+      const assignment = `Synthetic canonical assignment for ${role.agentTask}`;
+      const key = workKey(role.role, role.outputs, runRecord.contract_revision, runRecord.charter_revision);
+      if (!fs.existsSync(path.join(root, launch))) put(root, launch, `${JSON.stringify({ schema_version: 1, task_id: `native-${role.agentTask}`, logical_task_name: role.agentTask, work_key_sha256: key, attempt: 1, contract_revision: runRecord.contract_revision, charter_revision: runRecord.charter_revision, predecessor: runRecord.last_checkpoint === null ? null : { path: `receipts/${runRecord.last_checkpoint}.json`, sha256: runRecord.checkpoints[runRecord.last_checkpoint].receipt_sha256 }, role: role.role, fork_turns: "none", model_tier: runtime.tier, model: runtime.model, reasoning_effort: runtime.reasoning_effort, model_routing_sha256: runtime.routing_sha256, role_contract_sha256: fileHash(ROLE_CONTRACT), gate_schema_version: 1, task_brief: taskBrief, task_brief_sha256: createHash("sha256").update(JSON.stringify(taskBrief)).digest("hex"), assignment, assignment_sha256: createHash("sha256").update(assignment).digest("hex"), declared_inputs: role.inputs, input_artifacts: role.inputs.map((path) => ({ path, sha256: run("hash", root, path).stdout.trim() })), allowed_external_sources: role.allowedExternalSources ?? [], declared_outputs: role.outputs, started_at: "2026-08-17T00:00:00Z" })}\n`);
+      const activeLaunch = JSON.parse(fs.readFileSync(path.join(root, launch), "utf8"));
+      put(root, `role-attempts/${activeLaunch.logical_task_name}/${activeLaunch.work_key_sha256}/attempt-${activeLaunch.attempt}.json`, `${JSON.stringify({ schema_version: 2, logical_task_name: activeLaunch.logical_task_name, work_key_sha256: activeLaunch.work_key_sha256, attempt: activeLaunch.attempt, launch_record: launch, launch_record_sha256: run("hash", root, launch).stdout.trim(), accepted_at: "2026-08-17T00:00:00.500Z" })}\n`);
       const receipt = `role-receipts/${role.agentTask}.json`;
-      put(root, receipt, `${JSON.stringify({ schema_version: 1, role: role.role, agent_task: role.agentTask, model: runtime.model, reasoning_effort: runtime.reasoning_effort, fork_turns: "none", started_at: "2026-08-17T00:00:00Z", completed_at: "2026-08-17T00:00:01Z", execution_status: "COMPLETE", gate_verdict: "PASS", declared_inputs: role.inputs, allowed_external_sources: role.allowedExternalSources ?? [], external_results_used: role.externalResultsUsed ?? [], environment_changes: [], outputs: role.outputs, undeclared_inputs_accessed: [], limitations: [], launch_record_sha256: run("hash", root, launch).stdout.trim() })}\n`);
+      put(root, receipt, `${JSON.stringify({ schema_version: 1, role: role.role, agent_task: role.agentTask, logical_task_name: activeLaunch.logical_task_name, attempt: activeLaunch.attempt, contract_revision: activeLaunch.contract_revision, charter_revision: activeLaunch.charter_revision, predecessor: activeLaunch.predecessor, model: runtime.model, reasoning_effort: runtime.reasoning_effort, model_routing_sha256: activeLaunch.model_routing_sha256, role_contract_sha256: activeLaunch.role_contract_sha256, assignment_sha256: activeLaunch.assignment_sha256, task_brief_sha256: activeLaunch.task_brief_sha256, gate_schema_version: activeLaunch.gate_schema_version, fork_turns: "none", started_at: "2026-08-17T00:00:00Z", completed_at: "2026-08-17T00:00:01Z", execution_status: "COMPLETE", gate_verdict: "PASS", declared_inputs: role.inputs, input_artifacts: role.inputs.map((path) => ({ path, sha256: run("hash", root, path).stdout.trim() })), allowed_external_sources: role.allowedExternalSources ?? [], external_results_used: role.externalResultsUsed ?? [], environment_changes: [], outputs: role.outputs, output_artifacts: role.outputs.map((path) => ({ path, sha256: run("hash", root, path).stdout.trim() })), undeclared_inputs_accessed: [], limitations: [], handoff: { summary: `Completed ${role.agentTask}`, decisions: [], evidence_ids: [], conflicts: [], unresolved: [], recommended_next_action: "Continue to the next verified gate" }, launch_record: launch, launch_record_sha256: run("hash", root, launch).stdout.trim() })}\n`);
       receipts.push(receipt);
     }
     outputs = [...outputs, ...receipts];
   }
   const flags = ["--input", "study-plan.md"];
   if (phase === "contract") {
-    flags.push("--input", "request.md", "--input", "environment/bootstrap.json", "--input", "environment/model-routing.json", "--input", "contract/run-config.json", "--input", "contract/input-manifest.json");
+    flags.push("--input", "request.md", "--input", "environment/bootstrap.json", "--input", "contract/run-config.json", "--input", "contract/input-manifest.json");
     if (fs.existsSync(path.join(root, "contract", "source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json");
     else flags.push("--input", "contract/evaluator-contract.md", "--input", "contract/evaluator-manifest.json");
-    flags.push("--input", "contract/i1-verification-policy.json", "--input", "private/evaluator/i1-verifier");
+    flags.push("--input", "contract/i1-verification-policy.json", "--input", "contract/control-plane/i1-interpreter.mjs");
   }
   for (const output of outputs) flags.push("--output", output);
   const preflight = run("preflight", root, phase, ...flags);
@@ -149,7 +241,7 @@ function auditRoles(i1Outputs) {
   const judgeInputs = ["study-plan.md", "audit/i1.json", "audit/i3.json", "audit/claim-provenance.json"];
   for (const panel of ["i2", "i4"]) for (let index = 1; index <= 5; index++) judgeInputs.push(`audit/${panel}/judge-${index}.json`);
   const roles = [
-    { role: "i1_score_auditor", agentTask: "i1_score_auditor", inputs: ["study-plan.md", "environment/bootstrap.json", "contract/i1-verification-policy.json", "private/evaluator/i1-verifier", "paper/paper.tex", "paper/paper.pdf", "selection/selected", "selection/canonical-evaluation.json"], outputs: i1Outputs },
+    { role: "i1_score_auditor", agentTask: "i1_score_auditor", inputs: ["study-plan.md", "environment/bootstrap.json", "contract/i1-verification-policy.json", "contract/control-plane/i1-interpreter.mjs", "paper/paper.tex", "paper/paper.pdf", "selection/selected", "selection/canonical-evaluation.json"], outputs: i1Outputs },
     { role: "i3_reference_auditor", agentTask: "i3_reference_auditor", inputs: ["study-plan.md", "paper/references.bib"], outputs: ["audit/i3.json"] },
     { role: "claim_provenance_auditor", agentTask: "claim_provenance_auditor", inputs: ["study-plan.md", "paper/claims.jsonl", "paper/provenance.jsonl", "selection/canonical-evaluation.json"], outputs: ["audit/claim-provenance.json"] },
     { role: "audit_reporter", agentTask: "audit_reporter", inputs: judgeInputs, outputs: ["audit/i2/aggregate.json", "audit/i4/aggregate.json", "audit/report.md"] },
@@ -234,17 +326,27 @@ test("the CoE ledger verifies a complete chain and catches evidence drift", (t) 
   put(root, "selection/selected/manifest.json", '{"files":["method.txt"]}\n');
   put(root, "selection/lineage.json", `${JSON.stringify({ source_node_id: "i1_b1", source_snapshot_path: "discovery/nodes/i01-b01/snapshots/v1", source_snapshot_sha256: selectedTreeHash(root, "discovery/nodes/i01-b01/snapshots/v1"), selected_snapshot_sha256: selectedTreeHash(root, "selection/selected"), legitimacy_verdict_path: "discovery/nodes/i01-b01/legitimacy-audit.md", evaluation_path: "discovery/nodes/i01-b01/evaluations/v1.json", metric_name: "score", metric_direction: "maximize", rank: 1, tie_break_evidence: [] })}\n`);
   const selectedHash = run("hash", root, "selection/selected").stdout.trim();
-  const canonical = { status: "valid", snapshot_path: "selection/selected", snapshot_sha256: selectedHash, repetitions: Array.from({ length: 5 }, (_, index) => ({ seed: index, value: 1 })), metric: { name: "score", value: 1, unit: "points", direction: "maximize" } };
+  const canonicalRepetitions = Array.from({ length: 5 }, (_, index) => ({ seed: index, value: 1 }));
+  const canonical = { status: "valid", snapshot_path: "selection/selected", snapshot_sha256: selectedHash, repetitions: canonicalRepetitions, metric: { id: "score", name: "score", value: 1, unit: "points", direction: "maximize", estimand: "mean", estimand_parameters: {}, repetitions: canonicalRepetitions } };
   put(root, "selection/canonical-evaluation.json", `${JSON.stringify({ ...canonical, snapshot_sha256: "0".repeat(64) })}\n`);
   const selectionRoles = [
     { role: "selection_analyst", agentTask: "selection_analyst", inputs: ["study-plan.md", "discovery/index.json"], outputs: ["selection/selection.md", "selection/lineage.json", "selection/selected"] },
     { role: "selection_auditor", agentTask: "selection_auditor", inputs: ["study-plan.md", "discovery/index.json", "selection/selection.md", "selection/lineage.json"], outputs: ["selection/selection-audit.md"] },
     { role: "evaluator", agentTask: "canonical_evaluator", inputs: ["study-plan.md", "selection/selected"], outputs: ["selection/canonical-evaluation.json"] },
   ];
+  const clearUnacceptedSelectionLaunches = () => {
+    for (const { agentTask } of selectionRoles) {
+      fs.rmSync(path.join(root, "role-launches", `${agentTask}.json`), { force: true });
+      fs.rmSync(path.join(root, "role-receipts", `${agentTask}.json`), { force: true });
+      fs.rmSync(path.join(root, "role-attempts", agentTask), { recursive: true, force: true });
+    }
+  };
   put(root, "selection/selected/unlisted.txt", "must be manifested\n");
   assert.throws(() => checkpoint(root, "selection", ["selection"], selectionRoles), /not exhaustive/);
+  clearUnacceptedSelectionLaunches();
   fs.unlinkSync(path.join(root, "selection", "selected", "unlisted.txt"));
   assert.throws(() => checkpoint(root, "selection", ["selection"], selectionRoles), /Canonical evaluation is not bound/);
+  clearUnacceptedSelectionLaunches();
   put(root, "selection/canonical-evaluation.json", `${JSON.stringify(canonical)}\n`);
   checkpoint(root, "selection", ["selection"], selectionRoles);
 
@@ -394,19 +496,6 @@ test("invalidation preserves receipts and resumes from the earliest affected pha
   assert.match(run("verify", root).stderr, /Invalid invalidation root|Superseded artifact changed/);
 });
 
-test("external audit mode skips research phases but keeps a verified audit chain", (t) => {
-  const root = externalContract(t);
-  const audited = externalAudit(root);
-  assert.equal(audited.status, 0, audited.stderr);
-  contractCopy(root, "contract/source-bundle-manifest.json", "deliverables/source-bundle-manifest.json");
-  contractCopy(root, "audit/report.md", "deliverables/audit-report.md");
-  contractCopy(root, "delivery/reproduction.md", "deliverables/reproduction.md");
-  assert.equal(contractRun("manifest", root).status, 0);
-  assert.equal(contractRun("set-outcome", root, "audit_passed").status, 0);
-  contractCheckpoint(root, "complete", ["deliverables"]);
-  assert.equal(contractRun("verify", root).status, 0);
-});
-
 test("required descendants and symlinked ancestors cannot be promoted", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-boundary-"));
   const linkedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-boundary-"));
@@ -441,6 +530,81 @@ test("built-in profile budgets cannot be relabelled", (t) => {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   put(root, "request.md");
   put(root, "study-plan.md");
-  put(root, "contract/run-config.json", `${JSON.stringify({ schema_version: 1, mode: "research", search_profile: "standard", budgets: { idea_ceiling: 4, minimum_eligible_ideas: 2, candidate_node_ceiling: 4, minimum_evaluated_candidates: 2, evaluation_ceiling_per_node: 2, ablation_ceiling: 2, minimum_valid_ablations: 1, canonical_repetitions: 3, audit_panel_size: 3 } })}\n`);
+  assert.equal(run("configure", root, "standard", "research").status, 0);
+  const config = JSON.parse(fs.readFileSync(path.join(root, "contract/run-config.json"), "utf8"));
+  config.budgets.candidate_node_ceiling = 99;
+  put(root, "contract/run-config.json", `${JSON.stringify(config)}\n`);
   assert.match(run("init", root).stderr, /budgets do not match the built-in profile/);
+});
+
+test("1.3 freezes the exact bounded attempt and repair limits", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-orchestration-limits-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  put(root, "request.md");
+  put(root, "study-plan.md");
+  assert.equal(run("configure", root, "pilot", "research").status, 0);
+  const config = JSON.parse(fs.readFileSync(path.join(root, "contract/run-config.json"), "utf8"));
+  config.orchestration = { max_task_attempts: 3, max_repair_waves_per_gate: 2 };
+  put(root, "contract/run-config.json", `${JSON.stringify(config)}\n`);
+  assert.match(run("init", root).stderr, /requires exactly 2/);
+});
+
+test("attempt exhaustion requires immutable accepted attempts and becomes a terminal INCOMPLETE state", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-exhausted-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  put(root, "request.md", "Approved request.\n");
+  put(root, "study-plan.md", "Approved plan.\n");
+  assert.equal(run("configure", root, "pilot", "research").status, 0);
+  assert.equal(run("init", root).status, 0);
+  const runRecord = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8"));
+  const key = workKey("candidate_developer", ["search/candidates/a/method"], runRecord.contract_revision, runRecord.charter_revision);
+  for (const attempt of [1, 2]) {
+    const launch = `role-launches/candidate_a${attempt}.json`;
+    put(root, launch, `${JSON.stringify({ schema_version: 1, task_id: `native-candidate_a${attempt}`, logical_task_name: "candidate_a", work_key_sha256: key, attempt, contract_revision: runRecord.contract_revision, charter_revision: runRecord.charter_revision, role: "candidate_developer", declared_outputs: ["search/candidates/a/method"], started_at: `2026-08-17T00:00:0${attempt}Z` })}\n`);
+    put(root, `role-attempts/candidate_a/${key}/attempt-${attempt}.json`, `${JSON.stringify({ schema_version: 2, logical_task_name: "candidate_a", work_key_sha256: key, attempt, launch_record: launch, launch_record_sha256: run("hash", root, launch).stdout.trim(), accepted_at: `2026-08-17T00:00:0${attempt}.500Z` })}\n`);
+  }
+  put(root, "failures/task-a2.txt", "Second accepted attempt failed deterministically.\n");
+  put(root, "failures/exhaustion.json", `${JSON.stringify({ schema_version: 1, failure_class: "task_attempts_exhausted", logical_task_name: "candidate_a", last_failure: "Second accepted attempt failed deterministically.", exhausted_counter: 2, exhausted_limit: 2, evidence_paths: ["failures/task-a2.txt"], remaining_work: ["Correct the candidate implementation without weakening the study contract."], resume_requirement: "Start a new linked run only after the demonstrated implementation defect is corrected." })}\n`);
+  put(root, "terminal/incomplete.json", `${JSON.stringify({ stale: true })}\n`);
+  const result = run("exhaust", root, "failures/exhaustion.json");
+  assert.equal(result.status, 0, result.stderr);
+  const record = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8"));
+  assert.equal(record.state, "blocked_exhausted");
+  assert.equal(record.outcome, "incomplete");
+  const terminal = JSON.parse(fs.readFileSync(path.join(root, "terminal/incomplete.json"), "utf8"));
+  assert.equal(terminal.disposition, "INCOMPLETE");
+  assert.equal(terminal.logical_task_name, "candidate_a");
+  assert.equal(terminal.repair_gate, null);
+  assert.equal(fs.readdirSync(path.join(root, "terminal/superseded")).length, 1, "a crash-left stale terminal record is preserved and replaced atomically");
+  assert.equal(run("verify", root).status, 0);
+  assert.notEqual(run("set-state", root, "running").status, 0);
+  assert.equal(fs.existsSync(path.join(root, "terminal/incomplete.json")), true);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8")).outcome, "incomplete");
+  assert.equal(run("verify", root).status, 0);
+  const originalTerminalBytes = fs.readFileSync(path.join(root, "terminal/incomplete.json"));
+  terminal.last_failure = "tampered narrative";
+  put(root, "terminal/incomplete.json", `${JSON.stringify(terminal)}\n`);
+  assert.match(run("verify", root).stderr, /terminal evidence differs/i);
+  fs.writeFileSync(path.join(root, "terminal/incomplete.json"), originalTerminalBytes);
+  assert.equal(run("verify", root).status, 0);
+  const reopened = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8"));
+  reopened.state = "running";
+  reopened.outcome = null;
+  reopened.terminal_anchor = null;
+  put(root, "run.json", `${JSON.stringify(reopened)}\n`);
+  assert.match(run("verify", root).stderr, /Terminal evidence and outcome incomplete are reserved for blocked_exhausted runs/i);
+  put(root, "run.json", `${JSON.stringify(record)}\n`);
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("claimed exhaustion without immutable accepted attempts is rejected", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-false-exhaustion-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  put(root, "request.md", "Approved request.\n");
+  put(root, "study-plan.md", "Approved plan.\n");
+  assert.equal(run("configure", root, "pilot", "research").status, 0);
+  assert.equal(run("init", root).status, 0);
+  put(root, "failures/task.txt", "Claimed failure.\n");
+  put(root, "failures/exhaustion.json", `${JSON.stringify({ schema_version: 1, failure_class: "task_attempts_exhausted", logical_task_name: "candidate_a", last_failure: "Claimed failure.", exhausted_counter: 2, exhausted_limit: 2, evidence_paths: ["failures/task.txt"], remaining_work: ["Do the task."], resume_requirement: "Start a new run after correcting the cause." })}\n`);
+  assert.match(run("exhaust", root, "failures/exhaustion.json").stderr, /must match exactly 2 immutable accepted attempts/);
 });

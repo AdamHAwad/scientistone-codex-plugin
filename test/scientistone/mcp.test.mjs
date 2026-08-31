@@ -166,6 +166,38 @@ test("monitor verification is single-flight and caches only a non-authoritative 
   assert.match(refreshed.integrity.message, /Final delivery and task stop always run a fresh verifier/);
 });
 
+test("monitor completes only the exact specialist receipt anchored by a verified checkpoint", async (t) => {
+  clearMonitorIntegrityCache();
+  t.after(() => clearMonitorIntegrityCache());
+  const run = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-monitor-identity-"));
+  t.after(() => fs.rmSync(run, { recursive: true, force: true }));
+  const record = { id: "monitor-identity", mode: "research", state: "running", outcome: null, phase: "discovery", updated_at: "2026-08-30T12:00:00Z", attention: null, last_checkpoint: "investigation", checkpoints: { investigation: { receipt_sha256: "a".repeat(64), outputs: [{ path: "role-receipts/candidate_a.json", sha256: "b".repeat(64) }] } } };
+  put(run, "run.json", `${JSON.stringify(record)}\n`);
+  for (const task of ["candidate_a", "candidate_b"]) put(run, `role-launches/${task}.json`, `${JSON.stringify({ task_id: `native-${task}`, role: "candidate_developer", declared_outputs: [`investigation/${task}`], started_at: "2026-08-30T12:00:00.000Z" })}\n`);
+  put(run, "role-receipts/candidate_a.json", `${JSON.stringify({ agent_task: "candidate_a", role: "candidate_developer", launch_record: "role-launches/candidate_a.json", execution_status: "COMPLETE", gate_verdict: "PASS" })}\n`);
+  const verified = await monitorSnapshot(run, { verifyRunner: async () => ({ ok: true, record }), now: 1_000 });
+  assert.deepEqual(verified.progress.find((item) => item.phase === "investigation").agents.map((agent) => [agent.task, agent.status]), [["native-candidate_a", "complete"], ["native-candidate_b", "working"]]);
+  assert.equal(verified.progress.find((item) => item.phase === "investigation").status, "complete");
+
+  clearMonitorIntegrityCache();
+  const newer = { ...record, phase: "investigation", last_checkpoint: null, checkpoints: {}, updated_at: "2026-08-30T12:00:01Z" };
+  let verificationCalls = 0;
+  const changedDuringVerification = await monitorSnapshot(run, { verifyRunner: async () => {
+    verificationCalls += 1;
+    if (verificationCalls === 1) put(run, "run.json", `${JSON.stringify(newer)}\n`);
+    return { ok: true, record: newer };
+  }, now: 2_000 });
+  assert.equal(verificationCalls, 2);
+  assert.equal(changedDuringVerification.current_phase, "investigation");
+  assert.ok(changedDuringVerification.progress.every((item) => item.status !== "complete"));
+  assert.ok(changedDuringVerification.progress.flatMap((item) => item.agents).every((agent) => agent.status === "working"));
+
+  clearMonitorIntegrityCache();
+  const unverified = await monitorSnapshot(run, { verifyRunner: async () => ({ ok: false, record: null }), now: 3_000 });
+  assert.ok(unverified.progress.every((item) => item.status !== "complete"));
+  assert.ok(unverified.progress.flatMap((item) => item.agents).every((agent) => agent.status === "working"));
+});
+
 test("the stdio server emits only newline-delimited JSON-RPC and exits with its client", async () => {
   const child = spawn(process.execPath, [MCP], { stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
@@ -394,6 +426,9 @@ test("intake files persist, approval attaches a verified run, and discard remove
 
   const attached = await callTool("attach_run_monitor", { project_root: project, draft_id: context.draft, run_path: run });
   assert.equal(attached.status, "started");
+  const openedMonitor = await callTool("open_run_monitor", { run_path: run });
+  assert.equal(openedMonitor.verified_status.integrity.ok, true);
+  assert.equal(openedMonitor.verified_status.current_phase, "contract");
   const monitor = await monitorSnapshot(run);
   assert.equal(monitor.integrity.ok, true);
   assert.equal(monitor.current_phase, "contract");

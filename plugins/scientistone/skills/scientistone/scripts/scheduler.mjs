@@ -6,7 +6,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 const MAX_CAPACITY = 16;
-const STATUSES = new Set(["pending", "running", "complete", "failed", "blocked"]);
+const STATUSES = new Set(["pending", "running", "complete", "failed", "blocked", "exhausted"]);
 const STABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 function stableCompare(left, right) {
@@ -51,11 +51,18 @@ function validateLedger(input) {
     if (!Array.isArray(predecessors) || new Set(predecessors).size !== predecessors.length || predecessors.some((id) => typeof id !== "string")) fail(`Task ${raw.id} has invalid predecessors`);
     if (!Array.isArray(outputs) || outputs.length === 0 || new Set(outputs).size !== outputs.length) fail(`Task ${raw.id} must declare unique exclusive outputs`);
     if (!Array.isArray(resourceIds) || new Set(resourceIds).size !== resourceIds.length || resourceIds.some((id) => typeof id !== "string")) fail(`Task ${raw.id} has invalid resource ids`);
+    if (raw.attempt !== undefined || raw.max_attempts !== undefined) fail(`Task ${raw.id} duplicates attempt accounting owned by role-attempts and CoE`);
     tasks.set(raw.id, { ...raw, predecessors, outputs: outputs.map((output) => relativeOutput(output, raw.id)), resource_ids: resourceIds });
   }
   for (const task of tasks.values()) {
     for (const predecessor of task.predecessors) if (!tasks.has(predecessor) || predecessor === task.id) fail(`Task ${task.id} has an invalid predecessor ${predecessor}`);
     for (const resourceId of task.resource_ids) if (!resources.has(resourceId)) fail(`Task ${task.id} references unknown resource ${resourceId}`);
+  }
+  const ownedOutputs = [];
+  for (const task of tasks.values()) for (const output of task.outputs) {
+    const conflict = ownedOutputs.find((item) => overlaps(item.output, output));
+    if (conflict) fail(`Tasks ${conflict.task} and ${task.id} declare overlapping lifetime outputs at ${conflict.output} and ${output}`);
+    ownedOutputs.push({ task: task.id, output });
   }
   const visiting = new Set();
   const visited = new Set();
@@ -73,6 +80,11 @@ function validateLedger(input) {
 
 function selectReadyTasks(input) {
   const ledger = validateLedger(input);
+  for (const task of ledger.tasks.values()) {
+    if (["running", "complete"].includes(task.status) && task.predecessors.some((id) => ledger.tasks.get(id).status !== "complete")) {
+      fail(`Task ${task.id} cannot be ${task.status} before every predecessor is complete`);
+    }
+  }
   const active = [...ledger.tasks.values()].filter((task) => task.status === "running").sort((a, b) => stableCompare(a.id, b.id));
   if (active.length > ledger.capacity) fail("Running tasks exceed the frozen scheduler capacity");
   const occupiedOutputs = [];
@@ -87,22 +99,56 @@ function selectReadyTasks(input) {
   for (const [id, used] of resourceUse) if (used > ledger.resources.get(id).limit) fail(`Running tasks exceed resource ${id}`);
 
   const complete = new Set([...ledger.tasks.values()].filter((task) => task.status === "complete").map((task) => task.id));
-  const ready = [];
+  const terminalBlockers = new Set([...ledger.tasks.values()].filter((task) => ["failed", "blocked", "exhausted"].includes(task.status)).map((task) => task.id));
   const availableSlots = ledger.capacity - active.length;
   const pending = [...ledger.tasks.values()].filter((task) => task.status === "pending").sort((a, b) => stableCompare(a.id, b.id));
-  for (const task of pending) {
-    if (ready.length >= availableSlots || task.predecessors.some((id) => !complete.has(id))) continue;
-    if (task.outputs.some((output) => occupiedOutputs.some((item) => overlaps(item.output, output)))) continue;
-    if (task.resource_ids.some((id) => resourceUse.get(id) >= ledger.resources.get(id).limit)) continue;
-    ready.push(task.id);
-    for (const output of task.outputs) occupiedOutputs.push({ task: task.id, output });
-    for (const resourceId of task.resource_ids) resourceUse.set(resourceId, resourceUse.get(resourceId) + 1);
+  const candidates = pending.filter((task) => task.predecessors.every((id) => complete.has(id)) && task.resource_ids.every((resourceId) => resourceUse.get(resourceId) < ledger.resources.get(resourceId).limit));
+  const resourceDemand = new Map([...ledger.resources.keys()].map((id) => [id, 0]));
+  for (const task of candidates) for (const id of task.resource_ids) resourceDemand.set(id, resourceDemand.get(id) + 1);
+  const constraint = (task) => task.resource_ids.reduce((score, id) => {
+    const remaining = ledger.resources.get(id).limit - resourceUse.get(id);
+    if (remaining <= 0) score.blocked += 1;
+    else score.contention += Math.max(0, resourceDemand.get(id) - remaining) / remaining;
+    return score;
+  }, { blocked: 0, contention: 0 });
+  candidates.sort((left, right) => {
+    const leftScore = constraint(left);
+    const rightScore = constraint(right);
+    return leftScore.blocked - rightScore.blocked || leftScore.contention - rightScore.contention || left.resource_ids.length - right.resource_ids.length || stableCompare(left.id, right.id);
+  });
+  const ready = [];
+  for (const task of candidates) {
+    if (ready.length === availableSlots) break;
+    const outputConflict = task.outputs.some((output) => occupiedOutputs.some((item) => overlaps(item.output, output)));
+    const resourceConflict = task.resource_ids.some((id) => resourceUse.get(id) >= ledger.resources.get(id).limit);
+    if (!outputConflict && !resourceConflict) {
+      ready.push(task.id);
+      for (const output of task.outputs) occupiedOutputs.push({ task: task.id, output });
+      for (const resourceId of task.resource_ids) resourceUse.set(resourceId, resourceUse.get(resourceId) + 1);
+    }
   }
+  ready.sort(stableCompare);
+  const dependencyBlocked = new Set();
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const task of ledger.tasks.values()) {
+      if (task.status !== "pending" || dependencyBlocked.has(task.id)) continue;
+      if (task.predecessors.some((id) => terminalBlockers.has(id) || dependencyBlocked.has(id))) {
+        dependencyBlocked.add(task.id);
+        changed = true;
+      }
+    }
+  }
+  const blocked = [...dependencyBlocked].sort(stableCompare);
+  const exhausted = [...ledger.tasks.values()].filter((task) => task.status === "exhausted").map((task) => task.id).sort(stableCompare);
   return {
     schema_version: 1,
     capacity: ledger.capacity,
     active_task_ids: active.map((task) => task.id),
     ready_task_ids: ready,
+    blocked_task_ids: blocked,
+    exhausted_task_ids: exhausted,
+    drained: active.length === 0 && ready.length === 0 && [...ledger.tasks.values()].some((task) => task.status !== "complete"),
     remaining_slots: availableSlots - ready.length,
   };
 }

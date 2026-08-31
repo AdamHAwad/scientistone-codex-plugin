@@ -7,12 +7,9 @@ description: Read the status and integrity of an existing ScientistOne run witho
 
 A ScientistOne status comes from its saved run record and verified checkpoints, not an agent's claim that work is done. This skill is read-only. Read the local run files directly, and use the bundled local MCP to present them in the original interactive browser monitor.
 
-Before acting, read completely:
-
-- `../scientistone/references/doctrine.md`
-- `../scientistone/references/artifacts.md`
-- the phase sections of `../scientistone/references/protocol.md`
-- `Recovery and pause rules` in `../scientistone/SKILL.md`
+This file contains the complete status algorithm. Do not preload the full
+doctrine, artifact catalog, protocol, or execution skill for a read-only check.
+The CoE verifier below is the integrity authority.
 
 ## Find the run
 
@@ -23,18 +20,20 @@ If the researcher provides a run path, use it. Otherwise search the current proj
 
 If no matching run exists, state that no ScientistOne run was found. Ask for an absolute run path or offer to begin planning a new study. If several active runs are equally plausible, ask which one. Do not inspect a legacy `runs/` directory as a native ScientistOne run.
 
-In Codex desktop, call `open_run_monitor` with the resolved run path and open the returned `url` in the built-in browser. Keep the text response compact; the browser flowchart is the primary progress display. If the bundled tool is unavailable, continue with the text display below.
+In Codex desktop, call `open_run_monitor` with the resolved run path and open the returned `url` in the built-in browser. Its returned `verified_status` is the verified snapshot for this check, and the browser reuses that verification. Do not run a second CLI verification. Keep the text response compact; the browser flowchart is the primary progress display. If the bundled tool is unavailable, continue with the fallback below.
 
 ## Read current status
 
-1. Read `run.json`, `environment/bootstrap.json`, and the run's frozen verification record. Resolve only paths recorded by that run.
-2. Run the exact frozen verifier without writing files. Use the command and runtime recorded in the run. For a run that chose the bundled JavaScript reference implementation, the command is:
+1. Read `run.json` and `environment/bootstrap.json`. Resolve only paths recorded by that run.
+2. When `open_run_monitor` did not return `verified_status`, run the bundled read-only CoE chain verifier once with the recorded Node runtime:
 
 ```sh
 <recorded-node-path> <scientistone-skill-root>/scripts/coe.mjs verify <absolute-run-path>
 ```
 
-The JavaScript verifier is one supported implementation, not a plugin-install prerequisite. A study may freeze an equivalent task-local verifier in another runtime already available to Codex. Do not install a runtime during a status check. If the recorded verifier cannot execute on this machine, report its integrity as unverified and route any portability repair through `scientistone`; do not claim that the run is complete.
+Do not install a runtime during a status check. The run's task-specific I1 policy
+and common interpreter are evidence inside this chain; there is no task-local
+replacement verifier to discover or rebuild.
 
 3. Read the last 20 lines of `events.jsonl`, the current phase receipt if present, and `attention.md` only when referenced by `run.json`.
 4. If this is the same Codex task that owns active specialists, use native task-status tools for a compact snapshot. Inspect a specialist transcript or workspace only when the ledger shows a missing output, long silence, repeated failure, or an independence concern.
@@ -84,6 +83,7 @@ Example:
 - `repairing`: report the exact phase and preserved failure; no researcher action unless `attention` is set.
 - `paused`: treat this as legacy or stale state after approval; report the recorded item, explain that execution should resume autonomously under the current policy, and do not request a second approval.
 - `failed`: distinguish operational failure from completed null evidence. Explain that the execution task should resume with a safe in-scope fallback; do not ask for repair authority.
+- `blocked_exhausted`: report `INCOMPLETE`, the exhausted task or gate, saved evidence, remaining work, and exact restart requirement from `terminal/incomplete.json`. This run is terminal. Corrected work requires a new run that explicitly references the preserved incomplete record.
 - `complete`: require `verify` to pass; state, phase, receipts, required outputs, visual inspection, and manifest verification must agree. Otherwise report "delivery verification is incomplete," not complete.
 - Hash mismatch: identify the first invalid receipt; downstream outputs are stale until rebuilt.
 
@@ -95,11 +95,11 @@ Create an automation only when the researcher explicitly asks to keep monitoring
 
 > Use the scientistone-monitor skill on `<absolute run path>`. Report only a changed verified phase, a new attention item, an invalid evidence receipt, or terminal completion. On terminal completion or cancellation, stop this automation.
 
-Do not create a second monitor when the main long-running task is already reporting and the researcher did not ask for one. Stop recurring monitoring only when the run becomes complete or cancelled. Treat `failed` or `paused` as a nonterminal legacy state: report the change and keep monitoring while the owning execution task repairs and resumes it autonomously.
+Do not create a second monitor when the main long-running task is already reporting and the researcher did not ask for one. Stop recurring monitoring when the run becomes complete, cancelled, or `blocked_exhausted`. Treat `failed` or `paused` as a nonterminal legacy state only while an accepted bounded recovery path remains.
 
 ## Resume handoff
 
-When the researcher asks to resume, hand off to `scientistone` with the same absolute run path. Verify the receipt chain first, preserve failed or partial artifacts, clear stale attention, and continue from the first invalid or incomplete phase. Generated evaluator, verifier, schema, path, hash, seed, outcome-operationalization, environment, or method-detail repairs stay in the same versioned run without another approval. Preserve fixed charter boundaries through a safe limited design when necessary. Create a separate run only when the researcher explicitly requests a different research question or intentional fork.
+When the researcher asks to resume an interrupted nonterminal run, hand off to `scientistone` with the same absolute run path. Verify the receipt chain first, preserve failed or partial artifacts, clear stale attention, and continue from the first invalid or incomplete phase only when the saved condition is met. Evaluator, policy, schema, path, hash, seed, outcome-operationalization, environment, or method-detail repairs stay in the same versioned run while frozen attempt/repair budgets remain. A `blocked_exhausted` run never resumes; corrected work requires a new explicitly linked run.
 
 ## Before ending a turn
 

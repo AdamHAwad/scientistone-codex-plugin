@@ -13,14 +13,12 @@ used for release verification; users install from the repository marketplace.
 .codex-plugin/plugin.json
 .mcp.json
 ATTRIBUTIONS.md
-DESIGN.md
 LICENSE
 NOTICE
 THIRD_PARTY_NOTICES.md
 assets/logo.svg
 assets/logo.png
 hooks/enforce-role-launch.mjs
-hooks/enforce-study-autonomy.mjs
 hooks/hooks.json
 licenses/NEWSREADER-LICENSE
 licenses/PHOSPHOR-LICENSE
@@ -40,11 +38,15 @@ skills/scientistone/references/doctrine.md
 skills/scientistone/references/i1-verification-policy.schema.json
 skills/scientistone/references/i1-verification.md
 skills/scientistone/references/intake.md
+skills/scientistone/references/legacy-model-policy-1.2.0.json
+skills/scientistone/references/legacy-roles-1.2.0.md
 skills/scientistone/references/model-policy.json
 skills/scientistone/references/protocol.md
 skills/scientistone/references/roles.md
 skills/scientistone/scripts/capacity-preflight.mjs
 skills/scientistone/scripts/coe.mjs
+skills/scientistone/scripts/i1-interpreter.mjs
+skills/scientistone/scripts/legacy-coe-1.2.0.mjs
 skills/scientistone/scripts/scheduler.mjs
 skills/scientistone-monitor/SKILL.md
 skills/scientistone-monitor/agents/openai.yaml
@@ -54,8 +56,9 @@ skills/scientistone-results/agents/openai.yaml
 skills/scientistone-results/assets/logo.svg
 ```
 
-The manifest points to three packaged skills, the bundled local MCP, and the
-lifecycle hook. It contains no registered app mapping. The root PNG is the
+The manifest points to three packaged skills and the bundled local MCP. Codex
+discovers the launch-authorization hook from the default `hooks/hooks.json`
+path; the manifest does not override it. It contains no registered app mapping. The root PNG is the
 marketplace icon. Each skill carries the centered blue-and-green S1 SVG named
 by its metadata.
 
@@ -70,4 +73,9 @@ Repository-only tests live under `test/scientistone/`, outside the marketplace
 source. The packaging script compares every source file to the exact allowlist
 before copying, so an ignored or newly added file cannot enter an install by
 accident. It excludes tests, caches, secrets, local run output, development
-tools, `.DS_Store`, and retired compatibility code.
+tools, and `.DS_Store`. A narrow compatibility controller derived from the
+released 1.2 verifier is bundled only so in-progress 1.2 runs remain verifiable
+without rewriting their frozen scientific contract. The exact released role
+contract and model policy are also bundled so genuine in-progress 1.2 runs can
+launch remaining specialists without being reinterpreted by 1.3; every new run
+uses the 1.3 control plane.

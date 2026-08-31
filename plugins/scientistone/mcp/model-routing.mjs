@@ -11,12 +11,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, "..");
 const POLICY_FILE = path.join(PLUGIN_ROOT, "skills", "scientistone", "references", "model-policy.json");
 const ROLE_CONTRACT_FILE = path.join(PLUGIN_ROOT, "skills", "scientistone", "references", "roles.md");
+const LEGACY_POLICY_FILE = path.join(PLUGIN_ROOT, "skills", "scientistone", "references", "legacy-model-policy-1.2.0.json");
+const LEGACY_ROLE_CONTRACT_FILE = path.join(PLUGIN_ROOT, "skills", "scientistone", "references", "legacy-roles-1.2.0.md");
 const ROUTING_FILE = path.join("environment", "model-routing.json");
+const ACTIVE_ROUTING_FILE = path.join("environment", "model-routing-active.json");
 const TOKEN_PATTERN = /^s1_([a-z0-9_]+)__([0-9a-f]{32})$/;
 const LAUNCH_GRANT_TTL_MS = 10 * 60 * 1000;
 const LIVE_CATALOG_TTL_MS = 15 * 60 * 1000;
 const TIERS = new Set(["strong", "efficient"]);
-const CURRENT_EFFICIENT_REASONING_EFFORT = "xhigh";
 const STRUCTURED_TIER_FIELDS = ["tier", "model_tier", "semantic_tier", "performance_tier", "capability_tier"];
 const TIER_WORDS = {
   strong: ["strong", "frontier", "flagship", "most capable", "most advanced", "state of the art", "state-of-the-art"],
@@ -148,13 +150,7 @@ function validatePolicy(policy) {
 }
 
 function validateCurrentPolicy(policy) {
-  validatePolicy(policy);
-  for (const [role, setting] of Object.entries(policy.roles)) {
-    if (setting.tier === "efficient" && setting.reasoning_effort !== CURRENT_EFFICIENT_REASONING_EFFORT) {
-      throw new Error(`Current ScientistOne model policy requires reasoning effort ${CURRENT_EFFICIENT_REASONING_EFFORT} for efficient role ${role}.`);
-    }
-  }
-  return policy;
+  return validatePolicy(policy);
 }
 
 function loadModelPolicy(file = POLICY_FILE) {
@@ -244,6 +240,8 @@ function createRoutingRecord(catalog, policy = loadModelPolicy(), resolvedAt = n
 
 function validateRoutingRecord(record) {
   assertObject(record, "model routing record");
+  const expectedKeys = ["catalog", "catalog_sha256", "policy", "policy_sha256", "resolved_at", "routing_sha256", "schema_version", "tiers"];
+  if (Object.keys(record).sort().join() !== expectedKeys.sort().join()) throw new Error("ScientistOne model-routing record has unknown or missing fields.");
   if (record.schema_version !== 1 || typeof record.resolved_at !== "string" || !Number.isFinite(Date.parse(record.resolved_at))) throw new Error("Invalid ScientistOne model-routing record.");
   validatePolicy(record.policy);
   if (record.policy_sha256 !== sha256(record.policy) || record.catalog_sha256 !== sha256(record.catalog)) throw new Error("ScientistOne model-routing policy or catalog hash mismatch.");
@@ -299,14 +297,34 @@ function validateRunPath(runPath) {
   return run;
 }
 
+function legacyRun(run) {
+  const config = readJson(path.join(run, "contract", "run-config.json"));
+  return config.schema_version === 1 && config.orchestration === undefined;
+}
+
 function validateCurrentAvailability(record, catalog) {
   const current = normalizeCatalog(catalog);
   for (const [tier, selected] of Object.entries(record.tiers)) {
     const model = current.find((candidate) => candidate.slug === selected.model);
-    if (!model) throw Object.assign(new Error(`The ${tier} model frozen for this run is no longer available. Record an AUTOMATIC_REPAIR contract revision, archive the frozen routing record with coe.mjs revise-contract, then prepare the role again so ScientistOne freezes a currently available route. Do not silently downgrade or ask the researcher.`), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
+    if (!model) throw Object.assign(new Error(`The ${tier} model selected for future launches is no longer available. Activate a currently supported semantic route for future specialists while preserving every prior launch binding. Do not silently downgrade or ask the researcher.`), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
     const required = [...new Set(Object.values(record.policy.roles).filter((setting) => setting.tier === tier).map((setting) => setting.reasoning_effort))];
-    if (required.some((effort) => !model.supported_reasoning_levels.includes(effort))) throw Object.assign(new Error(`The ${tier} model frozen for this run no longer supports every required reasoning effort. Record an AUTOMATIC_REPAIR contract revision, archive the frozen routing record with coe.mjs revise-contract, then prepare the role again so ScientistOne freezes a currently compatible route. Do not silently downgrade or ask the researcher.`), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
+    if (required.some((effort) => !model.supported_reasoning_levels.includes(effort))) throw Object.assign(new Error(`The ${tier} model selected for future launches no longer supports every required reasoning effort. Activate a currently compatible semantic route for future specialists while preserving every prior launch binding. Do not silently downgrade or ask the researcher.`), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
   }
+}
+
+function activeRoutingPath(run) {
+  const pointerFile = path.join(run, ACTIVE_ROUTING_FILE);
+  if (!fs.existsSync(pointerFile)) return path.join(run, ROUTING_FILE);
+  const pointer = readJson(pointerFile);
+  const expectedKeys = ["path", "routing_sha256", "schema_version"];
+  if (!pointer || Object.keys(pointer).sort().join() !== expectedKeys.sort().join() || pointer.schema_version !== 1 || typeof pointer.routing_sha256 !== "string") throw new Error("ScientistOne active model-routing pointer is malformed.");
+  const expectedPath = path.join("environment", "routing-history", `${pointer.routing_sha256}.json`).split(path.sep).join("/");
+  if (pointer.path !== expectedPath) throw new Error("ScientistOne active model-routing pointer does not use its content-addressed history path.");
+  const target = path.resolve(run, pointer.path);
+  if (path.relative(run, target).startsWith("..") || !fs.existsSync(target)) throw new Error("ScientistOne active model-routing pointer target is missing or outside the run.");
+  const record = validateRoutingRecord(readJson(target));
+  if (record.routing_sha256 !== pointer.routing_sha256) throw new Error("ScientistOne active model-routing pointer hash does not match its target.");
+  return target;
 }
 
 async function ensureRunRouting(runPath, options = {}) {
@@ -314,11 +332,22 @@ async function ensureRunRouting(runPath, options = {}) {
   const file = path.join(run, ROUTING_FILE);
   const liveCatalog = await cachedLiveCatalog(options);
   if (fs.existsSync(file)) {
-    const record = validateRoutingRecord(readJson(file));
-    validateCurrentAvailability(record, liveCatalog);
-    return record;
+    const record = validateRoutingRecord(readJson(activeRoutingPath(run)));
+    try {
+      validateCurrentAvailability(record, liveCatalog);
+      return record;
+    } catch (error) {
+      if (error.code !== "S1_FROZEN_ROUTE_UNAVAILABLE") throw error;
+      const replacement = createRoutingRecord(liveCatalog, validatePolicy(record.policy));
+      const relative = path.join("environment", "routing-history", `${replacement.routing_sha256}.json`).split(path.sep).join("/");
+      const history = path.join(run, relative);
+      if (!fs.existsSync(history)) atomicJson(history, replacement, true);
+      atomicJson(path.join(run, ACTIVE_ROUTING_FILE), { schema_version: 1, routing_sha256: replacement.routing_sha256, path: relative });
+      return validateRoutingRecord(readJson(activeRoutingPath(run)));
+    }
   }
-  const record = createRoutingRecord(liveCatalog, loadModelPolicy(options.policyFile));
+  const policyFile = options.policyFile ?? (legacyRun(run) ? LEGACY_POLICY_FILE : POLICY_FILE);
+  const record = createRoutingRecord(liveCatalog, loadModelPolicy(policyFile));
   try {
     atomicJson(file, record, true);
     return record;
@@ -334,7 +363,7 @@ function readRunRouting(runPath) {
   const run = validateRunPath(runPath);
   const file = path.join(run, ROUTING_FILE);
   if (!fs.existsSync(file)) throw new Error("ScientistOne model routing has not been frozen for this run.");
-  return validateRoutingRecord(readJson(file));
+  return validateRoutingRecord(readJson(activeRoutingPath(run)));
 }
 
 function expectedRoleRuntime(runPath, role) {
@@ -367,6 +396,17 @@ function bindArtifact(run, relative) {
 function currentRunBinding(run) {
   const record = readJson(path.join(run, "run.json"));
   if (!Number.isInteger(record.contract_revision) || !Number.isInteger(record.charter_revision) || !record.checkpoints || typeof record.checkpoints !== "object") throw new Error("ScientistOne run revisions or checkpoint anchors are malformed.");
+  if (!legacyRun(run)) {
+    let contractRevision = 1;
+    let charterRevision = 1;
+    for (const root of record.invalidation_roots ?? []) {
+      const metadata = readJson(path.join(run, root.path, "invalidation.json"));
+      if (metadata.contract_revision_before !== contractRevision || metadata.charter_revision_before !== charterRevision) throw new Error("ScientistOne invalidation revision history is noncontiguous.");
+      contractRevision = metadata.contract_revision_after;
+      charterRevision = metadata.charter_revision_after;
+    }
+    if (record.contract_revision !== contractRevision || record.charter_revision !== charterRevision) throw new Error("ScientistOne run revisions are not backed by immutable invalidation history.");
+  }
   const last = record.last_checkpoint;
   const predecessor = last === null
     ? null
@@ -381,9 +421,224 @@ function stringArray(value, label) {
   return value;
 }
 
+function taskBrief(value, declaredInputs) {
+  assertObject(value, "task_brief");
+  const expected = ["objective", "context", "acceptance_gate", "constraints", "upstream_summary"];
+  const unknown = Object.keys(value).filter((key) => !expected.includes(key));
+  if (unknown.length) throw new Error(`task_brief has unknown fields: ${unknown.join(", ")}.`);
+  for (const field of ["objective", "context", "acceptance_gate", "constraints"]) if (typeof value[field] !== "string" || !value[field].trim()) throw new Error(`task_brief.${field} is required.`);
+  if (!Array.isArray(value.upstream_summary)) throw new Error("task_brief.upstream_summary must be an array.");
+  const upstream = value.upstream_summary.map((item, index) => {
+    assertObject(item, `task_brief.upstream_summary[${index}]`);
+    if (Object.keys(item).sort().join() !== "input_path,summary" || typeof item.input_path !== "string" || typeof item.summary !== "string" || !item.summary.trim()) throw new Error(`task_brief.upstream_summary[${index}] must contain input_path and summary.`);
+    if (!declaredInputs.includes(item.input_path)) throw new Error(`task_brief upstream summary references undeclared input: ${item.input_path}.`);
+    return { input_path: item.input_path, summary: item.summary.trim() };
+  });
+  return { objective: value.objective.trim(), context: value.context.trim(), acceptance_gate: value.acceptance_gate.trim(), constraints: value.constraints.trim(), upstream_summary: upstream };
+}
+
+function taskWorkKey(role, declaredOutputs, contractRevision, charterRevision) {
+  return createHash("sha256").update(canonical({ contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...declaredOutputs].sort() })).digest("hex");
+}
+
+function launchWorkKey(launch) {
+  if (!launch || typeof launch.role !== "string" || !Array.isArray(launch.declared_outputs)) throw new Error("ScientistOne launch lacks a stable role/output work identity.");
+  const observed = taskWorkKey(launch.role, launch.declared_outputs, launch.contract_revision ?? 1, launch.charter_revision ?? 1);
+  if (launch.work_key_sha256 !== undefined && launch.work_key_sha256 !== observed) throw new Error("ScientistOne launch work identity does not match its role and exclusive outputs.");
+  return observed;
+}
+
+function bindIdentity(file, value, code, message) {
+  try {
+    atomicJson(file, value, true);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+    const existing = readJson(file);
+    if (canonical(existing) !== canonical(value)) throw Object.assign(new Error(message), { code });
+  }
+}
+
+function acquireIdentityLock(file) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      fs.writeFileSync(file, `${process.pid}\n`, { flag: "wx", mode: 0o600 });
+      return;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const owner = Number.parseInt(fs.readFileSync(file, "utf8").trim(), 10);
+      if (!Number.isInteger(owner) || owner < 1) break;
+      try {
+        process.kill(owner, 0);
+        break;
+      } catch (probeError) {
+        if (probeError.code !== "ESRCH") break;
+        try { fs.unlinkSync(file); } catch (unlinkError) { if (unlinkError.code !== "ENOENT") throw unlinkError; }
+      }
+    }
+  }
+  throw Object.assign(new Error("ScientistOne work identity is being bound by another live launch; retry this grant preparation."), { code: "S1_IDENTITY_BIND_BUSY" });
+}
+
+function bindWorkIdentity(run, logicalTaskName, workKey, role, declaredOutputs, contractRevision, charterRevision) {
+  const base = path.join(run, "role-attempts", `_revision-${contractRevision}-${charterRevision}`);
+  const common = { schema_version: 1, contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...declaredOutputs].sort(), work_key_sha256: workKey };
+  const outputs = [...declaredOutputs].sort();
+  const overlaps = (left, right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+  if (outputs.some((output, index) => outputs.slice(index + 1).some((other) => overlaps(output, other)))) throw Object.assign(new Error("One work package cannot declare ancestor/descendant output paths."), { code: "S1_OUTPUT_WORK_REBOUND" });
+  fs.mkdirSync(base, { recursive: true, mode: 0o700 });
+  const lock = path.join(base, ".identity.lock");
+  acquireIdentityLock(lock);
+  try {
+    const outputDirectory = path.join(base, "_outputs");
+    if (fs.existsSync(outputDirectory)) for (const name of fs.readdirSync(outputDirectory).filter((item) => item.endsWith(".json"))) {
+      const existing = readJson(path.join(outputDirectory, name));
+      if (typeof existing.output !== "string" || typeof existing.work_key_sha256 !== "string") throw new Error("ScientistOne output work identity is malformed.");
+      if (outputs.some((output) => overlaps(output, existing.output)) && existing.work_key_sha256 !== workKey) throw Object.assign(new Error(`Exclusive output overlaps existing work at ${existing.output}.`), { code: "S1_OUTPUT_WORK_REBOUND" });
+    }
+    bindIdentity(
+      path.join(base, "_logical", `${logicalTaskName}.json`),
+      { ...common, logical_task_name: logicalTaskName },
+      "S1_LOGICAL_TASK_REBOUND",
+      `Logical task ${logicalTaskName} is already bound to different role/output work in this frozen revision.`,
+    );
+    bindIdentity(
+      path.join(base, "_work", `${workKey}.json`),
+      { ...common, logical_task_name: logicalTaskName },
+      "S1_LOGICAL_TASK_ALIAS",
+      `Role/output work ${workKey} is already bound to a different logical task name.`,
+    );
+    for (const output of outputs) {
+      const outputKey = createHash("sha256").update(output).digest("hex");
+      bindIdentity(
+        path.join(base, "_outputs", `${outputKey}.json`),
+        { ...common, logical_task_name: logicalTaskName, output },
+        "S1_OUTPUT_WORK_REBOUND",
+        `Exclusive output ${output} is already bound to different work in this frozen revision.`,
+      );
+    }
+  } finally {
+    try { fs.unlinkSync(lock); } catch {}
+  }
+}
+
+function executedLogicalTaskState(run, workKey, requestedLogicalTaskName) {
+  const current = readJson(path.join(run, "run.json"));
+  const attempts = new Set();
+  const logicalTaskNames = new Set();
+  let complete = false;
+  const attemptsRoot = path.join(run, "role-attempts");
+  if (fs.existsSync(attemptsRoot)) {
+    for (const logicalTaskName of fs.readdirSync(attemptsRoot).sort()) {
+      if (logicalTaskName.startsWith("_")) continue;
+      const attemptRoot = path.join(attemptsRoot, logicalTaskName);
+      if (!fs.statSync(attemptRoot).isDirectory()) continue;
+      const recordFiles = [];
+      for (const name of fs.readdirSync(attemptRoot).sort()) {
+        const candidate = path.join(attemptRoot, name);
+        if (name.endsWith(".json") && fs.statSync(candidate).isFile()) recordFiles.push(candidate);
+        else if (fs.statSync(candidate).isDirectory()) for (const nested of fs.readdirSync(candidate).filter((item) => item.endsWith(".json")).sort()) recordFiles.push(path.join(candidate, nested));
+      }
+      for (const recordFile of recordFiles) {
+        const name = path.basename(recordFile);
+        const record = readJson(recordFile);
+        const expectedV1 = ["accepted_at", "attempt", "launch_record", "launch_record_sha256", "logical_task_name", "schema_version"];
+        const expectedV2 = [...expectedV1, "work_key_sha256"];
+        if (!record || ![expectedV1.sort().join(), expectedV2.sort().join()].includes(Object.keys(record).sort().join()) || ![1, 2].includes(record.schema_version) || record.logical_task_name !== logicalTaskName || !Number.isInteger(record.attempt) || record.attempt < 1 || name !== `attempt-${record.attempt}.json`) throw new Error(`Accepted attempt record for ${logicalTaskName} is malformed.`);
+        const launchRelative = normalizeRolePath(run, record.launch_record, "launch_record");
+        const launchFile = path.join(run, launchRelative);
+        if (!fs.existsSync(launchFile) || record.launch_record_sha256 !== hashAt(launchFile, launchRelative)) throw new Error(`Accepted attempt ${record.attempt} for ${logicalTaskName} does not match its immutable launch record.`);
+        const launch = readJson(launchFile);
+        const observedWorkKey = launchWorkKey(launch);
+        if (record.schema_version === 2 && record.work_key_sha256 !== observedWorkKey) throw new Error(`Accepted attempt ${record.attempt} for ${logicalTaskName} has a mismatched work identity.`);
+        if (logicalTaskName === requestedLogicalTaskName && observedWorkKey !== workKey && (launch.contract_revision ?? 1) === current.contract_revision && (launch.charter_revision ?? 1) === current.charter_revision) throw Object.assign(new Error(`Logical task ${logicalTaskName} is already bound to different role/output work in this frozen revision.`), { code: "S1_LOGICAL_TASK_REBOUND" });
+        if (observedWorkKey !== workKey) continue;
+        if ((launch.logical_task_name ?? path.basename(launchRelative, ".json")) !== logicalTaskName || launch.attempt !== record.attempt || attempts.has(record.attempt)) throw new Error(`Accepted attempts for work ${workKey} have duplicate or inconsistent attempt numbers.`);
+        logicalTaskNames.add(logicalTaskName);
+        attempts.add(record.attempt);
+      }
+    }
+  }
+  const receiptRoot = path.join(run, "role-receipts");
+  if (fs.existsSync(receiptRoot)) for (const name of fs.readdirSync(receiptRoot).filter((item) => item.endsWith(".json")).sort()) {
+    const launchFile = path.join(run, "role-launches", name);
+    if (!fs.existsSync(launchFile)) continue;
+    const launch = readJson(launchFile);
+    const receiptLogicalTaskName = launch.logical_task_name ?? path.basename(name, ".json");
+    if (receiptLogicalTaskName === requestedLogicalTaskName && launchWorkKey(launch) !== workKey && (launch.contract_revision ?? 1) === current.contract_revision && (launch.charter_revision ?? 1) === current.charter_revision) throw Object.assign(new Error(`Logical task ${receiptLogicalTaskName} is already bound to different role/output work in this frozen revision.`), { code: "S1_LOGICAL_TASK_REBOUND" });
+    if (launchWorkKey(launch) !== workKey) continue;
+    const logicalTaskName = receiptLogicalTaskName;
+    if (!Number.isInteger(launch.attempt) || launch.attempt < 1) throw new Error(`Executed receipt for work ${workKey} has an invalid attempt number.`);
+    logicalTaskNames.add(logicalTaskName);
+    attempts.add(launch.attempt);
+    const receipt = readJson(path.join(receiptRoot, name));
+    if (receipt.execution_status === "COMPLETE" && receipt.gate_verdict === "PASS") complete = true;
+  }
+  return { attempts, complete, logicalTaskNames, nextAttempt: attempts.size ? Math.max(...attempts) + 1 : 1 };
+}
+
+function acceptAttempt(run, logicalTaskName, attempt, launchRelative, workKey) {
+  const launchFile = path.join(run, launchRelative);
+  const record = {
+    schema_version: 2,
+    logical_task_name: logicalTaskName,
+    work_key_sha256: workKey,
+    attempt,
+    launch_record: launchRelative,
+    launch_record_sha256: hashAt(launchFile, launchRelative),
+    accepted_at: new Date().toISOString(),
+  };
+  const file = path.join(run, "role-attempts", logicalTaskName, workKey, `attempt-${attempt}.json`);
+  try {
+    atomicJson(file, record, true);
+  } catch (error) {
+    if (error.code === "EEXIST") throw new LaunchAuthorizationError("S1_TASK_ATTEMPT_SEQUENCE", `Logical task ${logicalTaskName} already consumed accepted attempt ${attempt}.`);
+    throw error;
+  }
+}
+
+function rolePrompt(role, roleContractFile = ROLE_CONTRACT_FILE) {
+  const source = fs.readFileSync(roleContractFile, "utf8");
+  const envelope = /^## Common role envelope\s+```text\s*([\s\S]*?)```/m.exec(source)?.[1]?.trim();
+  if (!envelope) throw new Error("ScientistOne common role envelope is malformed.");
+  const headings = [...source.matchAll(/^## (.+)$/gm)];
+  const target = role.replaceAll("_", "").toLowerCase();
+  const historicalHeadings = { i2_judge: "i2specificationjudge", i4_judge: "i4alignmentjudge" };
+  const accepted = new Set([target, historicalHeadings[role]].filter(Boolean));
+  const headingIndex = headings.findIndex((match) => accepted.has(match[1].replaceAll(/[^a-z0-9]/gi, "").toLowerCase()));
+  if (headingIndex < 0) throw new Error(`ScientistOne role card is missing for ${role}.`);
+  const start = headings[headingIndex].index + headings[headingIndex][0].length;
+  const end = headings[headingIndex + 1]?.index ?? source.length;
+  const card = source.slice(start, end).trim();
+  if (!card) throw new Error(`ScientistOne role card is empty for ${role}.`);
+  return { envelope, card };
+}
+
+function canonicalAssignment({ role, run, launchRelative, declaredInputs, inputArtifacts, declaredOutputs, allowedExternalSources, brief, attempt, logicalTaskName, legacy = false }) {
+  const prompt = rolePrompt(role, legacy ? LEGACY_ROLE_CONTRACT_FILE : ROLE_CONTRACT_FILE);
+  const binding = {
+    run_path: run,
+    launch_record: launchRelative,
+    role,
+    logical_task_name: logicalTaskName,
+    attempt,
+    declared_inputs: declaredInputs,
+    input_artifacts: inputArtifacts,
+    declared_outputs: declaredOutputs,
+    allowed_external_sources: allowedExternalSources,
+    task_brief: brief,
+  };
+  const closing = legacy ? "Use saved artifacts as authority. Follow the frozen ScientistOne 1.2 receipt contract in the role card." : "Use saved artifacts as authority. Return the compact handoff in your role receipt.";
+  return `${prompt.envelope}\n\nRole card\n${prompt.card}\n\nBinding task brief\n${JSON.stringify(binding, null, 2)}\n\n${closing}`;
+}
+
 async function prepareRoleLaunch(args, options = {}) {
   assertObject(args, "prepare_role_launch arguments");
   const run = validateRunPath(args.run_path);
+  const runRecord = readJson(path.join(run, "run.json"));
+  const legacy = legacyRun(run);
+  if (!["running", "repairing"].includes(runRecord.state)) throw Object.assign(new Error(`ScientistOne specialists can launch only while the run is running or repairing; received ${runRecord.state}.`), { code: "S1_RUN_TERMINAL_OR_INACTIVE" });
+  if (runRecord.pending_checkpoint) throw Object.assign(new Error(`ScientistOne cannot launch a specialist while the ${runRecord.pending_checkpoint.phase} checkpoint is pending recovery.`), { code: "S1_CHECKPOINT_PENDING" });
+  if (runRecord.pending_invalidation) throw Object.assign(new Error("ScientistOne cannot launch a specialist while an invalidation is pending recovery."), { code: "S1_INVALIDATION_PENDING" });
   if (typeof args.task_name !== "string" || !/^[a-z0-9_]{1,120}$/.test(args.task_name)) throw new Error("task_name must use 1-120 lowercase letters, digits, or underscores.");
   const logicalTaskName = args.logical_task_name ?? args.task_name;
   if (typeof logicalTaskName !== "string" || !/^[a-z0-9_]{1,120}$/.test(logicalTaskName)) throw new Error("logical_task_name must use 1-120 lowercase letters, digits, or underscores.");
@@ -395,16 +650,30 @@ async function prepareRoleLaunch(args, options = {}) {
   const declaredInputs = stringArray(args.declared_inputs, "declared_inputs").map((value) => normalizeRolePath(run, value, "declared_inputs"));
   const declaredOutputs = stringArray(args.declared_outputs, "declared_outputs").map((value) => normalizeRolePath(run, value, "declared_outputs"));
   if (!declaredOutputs.length) throw new Error("declared_outputs must not be empty.");
-  const allowedExternalSources = stringArray(args.allowed_external_sources ?? [], "allowed_external_sources");
   const runBinding = currentRunBinding(run);
+  const workKey = legacy ? null : taskWorkKey(args.role, declaredOutputs, runBinding.contract_revision, runBinding.charter_revision);
+  if (!legacy) bindWorkIdentity(run, logicalTaskName, workKey, args.role, declaredOutputs, runBinding.contract_revision, runBinding.charter_revision);
+  const allowedExternalSources = stringArray(args.allowed_external_sources ?? [], "allowed_external_sources");
+  const config = readJson(path.join(run, "contract", "run-config.json"));
+  if (!legacy) {
+    const maxAttempts = config.orchestration.max_task_attempts;
+    if (attempt > maxAttempts) throw Object.assign(new Error(`Specialist work attempt ${attempt} exceeds the frozen limit ${maxAttempts} for ${logicalTaskName}. Preserve the failures and close the run as INCOMPLETE if no accepted path remains.`), { code: "S1_TASK_ATTEMPTS_EXHAUSTED" });
+    const taskState = executedLogicalTaskState(run, workKey, logicalTaskName);
+    if (taskState.logicalTaskNames.size && !taskState.logicalTaskNames.has(logicalTaskName)) throw Object.assign(new Error(`Logical task name ${logicalTaskName} is an alias for existing role/output work ${[...taskState.logicalTaskNames].sort().join(", ")}; reuse its stable logical name.`), { code: "S1_LOGICAL_TASK_ALIAS" });
+    if (taskState.complete) throw Object.assign(new Error(`Logical task ${logicalTaskName} already has a COMPLETE/PASS receipt and cannot be executed again.`), { code: "S1_LOGICAL_TASK_COMPLETE" });
+    if (attempt !== taskState.nextAttempt) throw Object.assign(new Error(`Logical task ${logicalTaskName} requires accepted attempt ${taskState.nextAttempt}; received ${attempt}. Rejected grant authorization may reuse the current attempt, but an accepted launch may not.`), { code: "S1_TASK_ATTEMPT_SEQUENCE" });
+  }
   const inputArtifacts = declaredInputs.map((relative) => bindArtifact(run, relative));
+  const brief = taskBrief(args.task_brief, declaredInputs);
   const startedAt = new Date().toISOString();
   const launchRelative = `role-launches/${args.task_name}.json`;
   const launchFile = path.join(run, launchRelative);
+  const assignment = canonicalAssignment({ role: args.role, run, launchRelative, declaredInputs, inputArtifacts, declaredOutputs, allowedExternalSources, brief, attempt, logicalTaskName, legacy });
   const launch = {
     schema_version: 1,
     task_id: `native-${args.task_name}`,
     logical_task_name: logicalTaskName,
+    ...(legacy ? {} : { work_key_sha256: workKey }),
     attempt,
     contract_revision: runBinding.contract_revision,
     charter_revision: runBinding.charter_revision,
@@ -415,8 +684,11 @@ async function prepareRoleLaunch(args, options = {}) {
     model: runtime.model,
     reasoning_effort: runtime.reasoning_effort,
     model_routing_sha256: routing.routing_sha256,
-    role_contract_sha256: createHash("sha256").update(fs.readFileSync(ROLE_CONTRACT_FILE)).digest("hex"),
+    role_contract_sha256: createHash("sha256").update(fs.readFileSync(legacy ? LEGACY_ROLE_CONTRACT_FILE : ROLE_CONTRACT_FILE)).digest("hex"),
     gate_schema_version: 1,
+    ...(legacy ? {} : { task_brief: brief, task_brief_sha256: sha256(brief) }),
+    assignment,
+    assignment_sha256: sha256(assignment),
     declared_inputs: declaredInputs,
     input_artifacts: inputArtifacts,
     allowed_external_sources: allowedExternalSources,
@@ -443,6 +715,8 @@ async function prepareRoleLaunch(args, options = {}) {
     run_path: run,
     launch_record: launchRelative,
     logical_task_name: logicalTaskName,
+    work_key_sha256: workKey,
+    legacy,
     attempt,
     expires_at: new Date(now + (options.grantTtlMs ?? LAUNCH_GRANT_TTL_MS)).toISOString(),
   }, true);
@@ -455,6 +729,8 @@ async function prepareRoleLaunch(args, options = {}) {
     logical_task_name: logicalTaskName,
     attempt,
     model_tier: runtime.tier,
+    assignment,
+    assignment_sha256: launch.assignment_sha256,
   };
 }
 
@@ -477,18 +753,51 @@ function consumeLaunchToken(marker, options = {}) {
     if (grant.schema_version !== 1 || grant.token !== token || grant.marker !== marker || !Number.isFinite(Date.parse(grant.expires_at))) throw new LaunchAuthorizationError("S1_LAUNCH_GRANT_MISMATCH", "ScientistOne launch authorization is malformed or does not match its marker.");
     if (Date.parse(grant.expires_at) < (options.now ?? Date.now())) throw new LaunchAuthorizationError("S1_LAUNCH_GRANT_EXPIRED", "ScientistOne launch authorization expired before the specialist started.");
     const run = validateRunPath(grant.run_path);
+    const runRecord = readJson(path.join(run, "run.json"));
+    const legacy = grant.legacy === true && legacyRun(run);
+    if (!["running", "repairing"].includes(runRecord.state)) throw new LaunchAuthorizationError("S1_RUN_TERMINAL_OR_INACTIVE", `ScientistOne specialists can launch only while the run is running or repairing; received ${runRecord.state}.`);
+    if (runRecord.pending_checkpoint) throw new LaunchAuthorizationError("S1_CHECKPOINT_PENDING", `ScientistOne cannot consume a launch while the ${runRecord.pending_checkpoint.phase} checkpoint is pending recovery.`);
+    if (runRecord.pending_invalidation) throw new LaunchAuthorizationError("S1_INVALIDATION_PENDING", "ScientistOne cannot consume a launch while an invalidation is pending recovery.");
     const runtimeRecord = readRunRouting(run);
     const launchFile = path.join(run, normalizeRolePath(run, grant.launch_record, "launch_record"));
     const launch = readJson(launchFile);
     const runtime = expectedRoleRuntime(run, launch.role);
+    const runBinding = currentRunBinding(run);
     const cleanTaskName = path.basename(grant.launch_record, ".json");
     const logicalTaskName = launch.logical_task_name ?? cleanTaskName;
+    const workKey = legacy ? null : launchWorkKey(launch);
     const attempt = launch.attempt ?? 1;
-    if (markerRole !== launch.role || launch.task_id !== `native-${cleanTaskName}` || grant.logical_task_name !== logicalTaskName || grant.attempt !== attempt || launch.fork_turns !== "none" || launch.model_tier !== runtime.tier || launch.model !== runtime.model || launch.reasoning_effort !== runtime.reasoning_effort || launch.model_routing_sha256 !== runtimeRecord.routing_sha256) throw new LaunchAuthorizationError("S1_LAUNCH_POLICY_MISMATCH", "ScientistOne launch authorization does not match the frozen role policy or launch attempt.");
-    return { task_name: cleanTaskName, logical_task_name: logicalTaskName, attempt, model: runtime.model, reasoning_effort: runtime.reasoning_effort };
+    if (markerRole !== launch.role || launch.task_id !== `native-${cleanTaskName}` || grant.logical_task_name !== logicalTaskName || grant.work_key_sha256 !== workKey || grant.attempt !== attempt || launch.contract_revision !== runBinding.contract_revision || launch.charter_revision !== runBinding.charter_revision || canonical(launch.predecessor) !== canonical(runBinding.predecessor) || launch.fork_turns !== "none" || launch.model_tier !== runtime.tier || launch.model !== runtime.model || launch.reasoning_effort !== runtime.reasoning_effort || launch.model_routing_sha256 !== runtimeRecord.routing_sha256) throw new LaunchAuthorizationError("S1_LAUNCH_POLICY_MISMATCH", "ScientistOne launch authorization does not match the frozen role policy, revision, predecessor, or launch attempt.");
+    if (!legacy) {
+      const taskState = executedLogicalTaskState(run, workKey, logicalTaskName);
+      if (taskState.logicalTaskNames.size && !taskState.logicalTaskNames.has(logicalTaskName)) throw new LaunchAuthorizationError("S1_LOGICAL_TASK_ALIAS", `Logical task name ${logicalTaskName} aliases existing role/output work.`);
+      if (taskState.complete) throw new LaunchAuthorizationError("S1_LOGICAL_TASK_COMPLETE", `Logical task ${logicalTaskName} already has a COMPLETE/PASS receipt.`);
+      if (attempt !== taskState.nextAttempt) throw new LaunchAuthorizationError("S1_TASK_ATTEMPT_SEQUENCE", `Logical task ${logicalTaskName} requires accepted attempt ${taskState.nextAttempt}; received ${attempt}.`);
+      acceptAttempt(run, logicalTaskName, attempt, normalizeRolePath(run, grant.launch_record, "launch_record"), workKey);
+    }
+    return { task_name: cleanTaskName, logical_task_name: logicalTaskName, attempt, model: runtime.model, reasoning_effort: runtime.reasoning_effort, assignment: launch.assignment, assignment_sha256: launch.assignment_sha256 };
   } finally {
     try { fs.unlinkSync(claimed); } catch {}
   }
+}
+
+function peekLaunchAssignment(marker, options = {}) {
+  if (typeof marker !== "string") return null;
+  const match = TOKEN_PATTERN.exec(marker);
+  if (!match) return null;
+  const [, markerRole, token] = match;
+  const file = path.join(launchGrantDirectory(options), `${token}.json`);
+  let grant;
+  try { grant = readJson(file); } catch { return null; }
+  if (grant.schema_version !== 1 || grant.token !== token || grant.marker !== marker || Date.parse(grant.expires_at) < (options.now ?? Date.now())) return null;
+  const run = validateRunPath(grant.run_path);
+  const launch = readJson(path.join(run, normalizeRolePath(run, grant.launch_record, "launch_record")));
+  if (launch.role !== markerRole || !nonemptyAssignment(launch.assignment, launch.assignment_sha256)) return null;
+  return { assignment: launch.assignment, assignment_sha256: launch.assignment_sha256 };
+}
+
+function nonemptyAssignment(assignment, digest) {
+  return typeof assignment === "string" && assignment.length > 0 && typeof digest === "string" && sha256(assignment) === digest;
 }
 
 export {
@@ -502,6 +811,7 @@ export {
   loadModelPolicy,
   launchGrantDirectory,
   normalizeCatalog,
+  peekLaunchAssignment,
   prepareRoleLaunch,
   readLiveCatalog,
   readRunRouting,

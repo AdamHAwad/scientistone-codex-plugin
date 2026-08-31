@@ -24,7 +24,7 @@ const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const MONITOR_VERIFY_TTL_MS = 5 * 60 * 1000;
 const RESEARCHER_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
 const RESEARCHER_TIMEOUT_MESSAGE = "I see it's been an hour. I've saved everything—don't worry. When you're ready to get back into things, send me a message and I'll open it again.";
-const APPROVAL_AUTHORITY = "The researcher approved this study once and authorized autonomous safe in-scope execution and repair through the final verified deliverables. Do not request another approval.";
+const APPROVAL_AUTHORITY = "The researcher approved this study once and authorized autonomous safe in-scope execution plus the frozen bounded repair path toward final verified deliverables. Do not request another approval or exceed the saved retry and repair limits.";
 const ACTIVE_DRAFT_STATES = new Set(["draft", "submitted", "review_ready", "changes_requested", "approved"]);
 const EDITABLE_REVIEW_FIELDS = ["question", "objective", "materials", "prior_work", "evaluation", "requirements", "negative_or_inconclusive", "deliverables", "study_plan_markdown"];
 const REQUIRED_REVIEW_FIELDS = new Set(["question", "objective", "evaluation", "negative_or_inconclusive", "deliverables", "study_plan_markdown"]);
@@ -83,7 +83,7 @@ const roleLabels = {
   paper_critic: "Paper reviewer",
   claim_verifier: "Claim reviewer",
   i1_score_auditor: "Result checker",
-  i1_verifier_builder: "Result-check builder",
+  i1_verifier_builder: "Result policy author",
   i2_judge: "Method specification reviewer",
   i3_reference_auditor: "Reference checker",
   i4_judge: "Paper and method reviewer",
@@ -114,7 +114,7 @@ const roleDescriptions = {
   paper_critic: "Checks the draft for unsupported or overstated claims.",
   claim_verifier: "Links each paper claim to its exact saved source or result.",
   i1_score_auditor: "Checks that the paper reports the same result as the canonical evaluation.",
-  i1_verifier_builder: "Builds the task-specific deterministic checks that compare reported results with the canonical evaluation.",
+  i1_verifier_builder: "Writes the declarative result policy that the bundled, tested interpreter applies to the frozen evaluation.",
   i2_judge: "Checks that the selected method solves the approved task without exploiting the test.",
   i3_reference_auditor: "Checks that cited sources exist and support the claims attached to them.",
   i4_judge: "Checks that the paper describes the selected method faithfully.",
@@ -543,7 +543,7 @@ function readJsonDirectory(directory) {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     try {
-      values.push(readJson(path.join(directory, entry.name)));
+      values.push({ name: entry.name, value: readJson(path.join(directory, entry.name)) });
     } catch {
       // A partial record is reported by the verifier instead of exposed to the browser.
     }
@@ -599,11 +599,25 @@ async function monitorIntegrity(run, record, options = {}) {
   const ttl = cached?.ok ? (options.verifyTtlMs ?? MONITOR_VERIFY_TTL_MS) : Math.min(options.verifyTtlMs ?? MONITOR_VERIFY_TTL_MS, 30_000);
   if (cached?.signature === signature && now - cached.checked_ms < ttl) return { ...cached, cached: true, authoritative: false };
   if (monitorIntegrityInflight.has(key)) return monitorIntegrityInflight.get(key);
-  const promise = verifyRun(run, options).then((result) => {
-    const value = { ok: result.ok, record: result.record, signature, checked_ms: now, checked_at: new Date(now).toISOString(), cached: false, authoritative: false };
+  const promise = (async () => {
+    let candidate = record;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const candidateSignature = monitorIntegritySignature(candidate);
+      const result = await verifyRun(run, options);
+      const latest = readJson(path.join(run, "run.json"));
+      const latestSignature = monitorIntegritySignature(latest);
+      if (latestSignature !== candidateSignature) {
+        candidate = latest;
+        continue;
+      }
+      const value = { ok: result.ok, record: latest, signature: latestSignature, checked_ms: now, checked_at: new Date(now).toISOString(), cached: false, authoritative: false };
+      monitorIntegrityCache.set(run, value);
+      return value;
+    }
+    const value = { ok: false, record: candidate, signature: monitorIntegritySignature(candidate), checked_ms: now, checked_at: new Date(now).toISOString(), cached: false, authoritative: false };
     monitorIntegrityCache.set(run, value);
     return value;
-  }).finally(() => monitorIntegrityInflight.delete(key));
+  })().finally(() => monitorIntegrityInflight.delete(key));
   monitorIntegrityInflight.set(key, promise);
   return promise;
 }
@@ -644,24 +658,27 @@ function invalidationReturns(run, phases) {
 
 async function monitorSnapshot(run, options = {}) {
   const record = readJson(path.join(run, "run.json"));
-  const phases = record.mode === "external_audit" ? ["contract", "audit", "complete"] : ["contract", "investigation", "discovery", "selection", "ablation", "writing", "verification", "audit", "complete"];
   const integrity = await monitorIntegrity(run, record, options);
+  const displayRecord = integrity.record ?? record;
+  const phases = displayRecord.mode === "external_audit" ? ["contract", "audit", "complete"] : ["contract", "investigation", "discovery", "selection", "ablation", "writing", "verification", "audit", "complete"];
   const launches = readJsonDirectory(path.join(run, "role-launches"));
   const receipts = readJsonDirectory(path.join(run, "role-receipts"));
-  const completedTasks = new Set(receipts.map((item) => item.agent_task));
-  const agents = launches.map((item) => ({
+  const verifiedRecord = integrity.ok ? displayRecord : null;
+  const promotedReceipts = new Set(Object.values(verifiedRecord?.checkpoints ?? {}).flatMap((checkpoint) => checkpoint.outputs ?? []).map((item) => item.path).filter((item) => /^role-receipts\/[^/]+\.json$/.test(item)).map((item) => path.basename(item)));
+  const receiptsByName = new Map(receipts.map((item) => [item.name, item.value]));
+  const agents = launches.map(({ name, value: item }) => ({
     task: item.task_id ?? item.agent_task ?? item.started_at,
     role: item.role,
     name: roleLabels[item.role] ?? "Research specialist",
     description: roleDescriptions[item.role] ?? "Completes one bounded part of the approved study and saves the result.",
     phase: inferRolePhase(item),
-    status: completedTasks.has(item.task_id) || completedTasks.has(item.agent_task) || receipts.some((receipt) => receipt.launch_record_sha256 && receipt.role === item.role && receipt.started_at === item.started_at) ? "complete" : "working",
+    status: promotedReceipts.has(name) && receiptsByName.get(name)?.agent_task === path.basename(name, ".json") && receiptsByName.get(name)?.launch_record === `role-launches/${name}` ? "complete" : "working",
     started_at: item.started_at ?? null,
   }));
   const progress = phases.map((phase) => {
-    const receiptExists = fs.existsSync(path.join(run, "receipts", `${phase}.json`));
-    let status = receiptExists ? "complete" : phase === record.phase ? "current" : "upcoming";
-    if (phase === record.phase && record.attention) status = "attention";
+    const receiptVerified = Boolean(verifiedRecord?.checkpoints?.[phase]);
+    let status = receiptVerified ? "complete" : phase === displayRecord.phase ? "current" : "upcoming";
+    if (phase === displayRecord.phase && displayRecord.attention) status = "attention";
     return { phase, label: phaseLabels[phase], description: phaseDescriptions[phase], status, agents: agents.filter((agent) => agent.phase === phase) };
   });
   const files = [];
@@ -669,15 +686,15 @@ async function monitorSnapshot(run, options = {}) {
     if (fs.existsSync(path.join(run, relative))) files.push({ label, path: path.join(run, relative) });
   }
   return {
-    id: record.id,
-    mode: record.mode,
-    state: record.state,
-    outcome: record.outcome,
+    id: displayRecord.id,
+    mode: displayRecord.mode,
+    state: displayRecord.state,
+    outcome: displayRecord.outcome,
     question: planQuestion(run),
-    current_phase: record.phase,
-    current_label: phaseLabels[record.phase] ?? "Study in progress",
-    updated_at: record.updated_at,
-    attention: Boolean(record.attention),
+    current_phase: displayRecord.phase,
+    current_label: phaseLabels[displayRecord.phase] ?? "Study in progress",
+    updated_at: displayRecord.updated_at,
+    attention: Boolean(displayRecord.attention),
     integrity: {
       ok: integrity.ok,
       authoritative: false,
@@ -953,11 +970,11 @@ const tools = [
   },
   {
     name: "prepare_role_launch",
-    description: "Resolve and freeze ScientistOne's semantic model policy, then authorize one native Codex specialist launch. Call immediately before every specialist spawn and use the returned task_name, fork_turns, model, and reasoning_effort exactly. For an automatic retry, keep logical_task_name, increment attempt, and use a fresh task_name.",
+    description: "Resolve ScientistOne's semantic model policy, then authorize one native Codex specialist launch. Call immediately before every specialist spawn and use the returned task_name, fork_turns, model, reasoning_effort, and assignment exactly. Keep logical_task_name stable. A grant or dispatch failure before authorization may reuse the same attempt with a fresh task_name; after a specialist launch is accepted, use the next attempt.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
-      required: ["run_path", "task_name", "role", "declared_inputs", "declared_outputs"],
+      required: ["run_path", "task_name", "role", "declared_inputs", "declared_outputs", "task_brief"],
       properties: {
         run_path: { type: "string" },
         task_name: { type: "string", pattern: "^[a-z0-9_]{1,120}$" },
@@ -967,6 +984,26 @@ const tools = [
         declared_inputs: { type: "array", items: { type: "string" } },
         declared_outputs: { type: "array", minItems: 1, items: { type: "string" } },
         allowed_external_sources: { type: "array", items: { type: "string" } },
+        task_brief: {
+          type: "object",
+          additionalProperties: false,
+          required: ["objective", "context", "acceptance_gate", "constraints", "upstream_summary"],
+          properties: {
+            objective: { type: "string" },
+            context: { type: "string" },
+            acceptance_gate: { type: "string" },
+            constraints: { type: "string" },
+            upstream_summary: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["input_path", "summary"],
+                properties: { input_path: { type: "string" }, summary: { type: "string" } },
+              },
+            },
+          },
+        },
       },
     },
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
@@ -1057,7 +1094,19 @@ async function callTool(name, args = {}, options = {}) {
   }
   if (name === "open_run_monitor") {
     const runPath = decodeRunPath(Buffer.from(fs.realpathSync(args.run_path)).toString("base64url"));
-    return { run_path: runPath, url: pageUrl("run", { path: Buffer.from(runPath).toString("base64url") }) };
+    const snapshot = await monitorSnapshot(runPath);
+    return {
+      run_path: runPath,
+      url: pageUrl("run", { path: Buffer.from(runPath).toString("base64url") }),
+      verified_status: {
+        state: snapshot.state,
+        outcome: snapshot.outcome,
+        current_phase: snapshot.current_phase,
+        updated_at: snapshot.updated_at,
+        attention: snapshot.attention,
+        integrity: snapshot.integrity,
+      },
+    };
   }
   throw new Error(`Unknown tool: ${name}`);
 }

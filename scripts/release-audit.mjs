@@ -49,11 +49,19 @@ for (const relative of files) {
 
 const manifestPath = path.join(root, "plugins/scientistone/.codex-plugin/plugin.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-if (manifest.version !== "1.2.0" || manifest.license !== "Apache-2.0") {
-  findings.push({ file: "plugins/scientistone/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.2.0 and Apache-2.0" });
+if (manifest.version !== "1.3.0" || manifest.license !== "Apache-2.0") {
+  findings.push({ file: "plugins/scientistone/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.3.0 and Apache-2.0" });
 }
-if (manifest.mcpServers !== "./.mcp.json" || manifest.hooks !== "./hooks/hooks.json" || "apps" in manifest) {
-  findings.push({ file: "plugins/scientistone/.codex-plugin/plugin.json", type: "runtime wiring", remediation: "ship only the bundled local MCP and lifecycle hooks; do not declare a competing registered app" });
+
+const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+const packageLock = JSON.parse(await readFile(path.join(root, "package-lock.json"), "utf8"));
+const citation = await readFile(path.join(root, "CITATION.cff"), "utf8");
+const capacityPreflight = await readFile(path.join(root, "plugins/scientistone/skills/scientistone/scripts/capacity-preflight.mjs"), "utf8");
+if (packageJson.version !== manifest.version || packageLock.version !== manifest.version || packageLock.packages?.[""]?.version !== manifest.version || !citation.includes(`version: ${manifest.version}`) || !capacityPreflight.includes(`version: "${manifest.version}"`)) {
+  findings.push({ file: "release metadata", type: "cross-file version mismatch", remediation: `set package, lockfile, citation, capacity preflight, and plugin manifest to ${manifest.version}` });
+}
+if (manifest.mcpServers !== "./.mcp.json" || "hooks" in manifest || "apps" in manifest) {
+  findings.push({ file: "plugins/scientistone/.codex-plugin/plugin.json", type: "runtime wiring", remediation: "declare only the bundled local MCP; hooks are discovered from hooks/hooks.json and unsupported manifest fields must remain absent" });
 }
 
 const requiredRuntimeFiles = [
@@ -68,8 +76,11 @@ const requiredRuntimeFiles = [
   "plugins/scientistone/scripts/launch-scientistone-mcp.cmd",
   "plugins/scientistone/hooks/hooks.json",
   "plugins/scientistone/hooks/enforce-role-launch.mjs",
-  "plugins/scientistone/hooks/enforce-study-autonomy.mjs",
+  "plugins/scientistone/skills/scientistone/references/legacy-model-policy-1.2.0.json",
+  "plugins/scientistone/skills/scientistone/references/legacy-roles-1.2.0.md",
   "plugins/scientistone/skills/scientistone/scripts/capacity-preflight.mjs",
+  "plugins/scientistone/skills/scientistone/scripts/i1-interpreter.mjs",
+  "plugins/scientistone/skills/scientistone/scripts/legacy-coe-1.2.0.mjs",
   "plugins/scientistone/skills/scientistone/scripts/scheduler.mjs",
   "plugins/scientistone/LICENSE",
   "plugins/scientistone/NOTICE",

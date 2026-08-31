@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { consumeLaunchToken, TOKEN_PATTERN } from "../mcp/model-routing.mjs";
+import { consumeLaunchToken, peekLaunchAssignment, TOKEN_PATTERN } from "../mcp/model-routing.mjs";
 
 function response(value) {
   process.stdout.write(`${JSON.stringify(value)}\n`);
@@ -30,9 +30,13 @@ try {
     process.exit(0);
   }
   if (!TOKEN_PATTERN.test(input.task_name)) throw new Error("Malformed ScientistOne launch authorization.");
-  if (typeof input.message !== "string" || !input.message) throw new Error("ScientistOne specialist launches require the unchanged role-envelope message.");
+  if (typeof input.message !== "string" || !input.message) throw new Error("ScientistOne specialist launches require the canonical assignment returned by prepare_role_launch.");
+  const pending = peekLaunchAssignment(input.task_name);
+  if (!pending) throw new Error("ScientistOne launch authorization is missing.");
+  if (input.message !== pending.assignment) throw new Error("ScientistOne specialist message differs from the hash-bound canonical assignment.");
   const runtime = consumeLaunchToken(input.task_name);
   if (!runtime) throw new Error("ScientistOne launch authorization is missing.");
+  if (input.message !== runtime.assignment) throw new Error("ScientistOne specialist message differs from the hash-bound canonical assignment.");
   const updatedInput = { ...input, task_name: runtime.task_name, fork_turns: "none", model: runtime.model, reasoning_effort: runtime.reasoning_effort };
   delete updatedInput.agent_type;
   response({

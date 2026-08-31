@@ -24,8 +24,8 @@ Unsupported claims are removed or weakened; they are not repaired from model mem
 ## Researcher charter and execution contract
 
 - The approved question, named inputs, constraints, exclusions, data boundaries, and limits on interpretation are the researcher charter. One `Approve and start study` action authorizes autonomous, safe, in-scope execution through the final verified deliverables.
-- Outcome operationalizations, generated evaluators, verifiers, schemas, paths, hashes, seeds, method details, and other implementation choices are the versioned execution contract. The lead repairs or replaces defects in this layer within the same run without a second approval, preserves the superseded material, and sends each revision to a fresh auditor.
-- A result-blind repair may replace only the defective generated material. A result-aware repair must invalidate and rerun every successor of the contract; it may not tune a check to rescue an observed result.
+- Outcome operationalizations, evaluators, declarative I1 policies, schemas, paths, hashes, seeds, method details, and other scientific implementation choices are the versioned execution contract. The lead may repair a demonstrated defect within the frozen budget, preserves superseded material, and sends each material revision to a fresh auditor.
+- A result-blind repair may replace only the defective generated material. A result-aware scientific-contract repair invalidates its dependent successors; it may not tune a check to rescue an observed result.
 - A repair that would exceed a fixed charter boundary must preserve that boundary and use the strongest safe in-scope fallback, with the resulting limitation carried into the paper. The lead never asks for broader authority after approval.
 - A separate run is created only when the researcher explicitly requests a different question or intentional research fork—not as an agent-proposed repair.
 - The original request remains beside the normalized plan.
@@ -37,7 +37,8 @@ Unsupported claims are removed or weakened; they are not repaired from model mem
 - Failed experiments, rejected sources, invalid candidates, negative findings, and repair attempts remain in the evidence bundle.
 - The paper describes the science, not the internal workflow.
 - A negative, null, or limited conclusion is a valid scientific outcome when the approved protocol completed honestly.
-- An approved run does not pause or fail because an operational path broke. It remains running or repairing until verified delivery or explicit researcher cancellation; unavailable resources become repaired paths or documented limitations.
+- An approved run does not hide an operational failure or loop indefinitely. It remains running or repairing only while a declared work package has an accepted path within two attempts and its gate retains its one automatic repair wave. Exhaustion becomes a truthful, terminal `INCOMPLETE` record; it is never converted into a scientific PASS or null result. Corrected work starts in a new run that references the preserved incomplete record.
+- Build only what the current frozen study and gate require. Speculative hardening, duplicate ledgers, bespoke per-study verification frameworks, and future-proofing are non-goals unless a concrete evidence-backed failure makes them necessary.
 
 ## Integrity audit
 

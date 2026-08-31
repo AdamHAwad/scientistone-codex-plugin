@@ -30,9 +30,9 @@ Codex gives the workflow a local project, file and command tools, native subagen
 
 The lead agent coordinates the study. Each specialist gets declared inputs, outputs, and source permissions. Specialists write files for the next role to inspect. Chat is not the source of truth.
 
-This matters most for score verification. No single formula can cover a near-zero metric, a paired trial, a hardware benchmark, and a study with several outcomes. A fresh verifier-builder agent writes code and fixtures for the approved task. Then ScientistOne hashes and freezes the policy, code, runtime, inputs, and tolerances before any candidate result exists. A separate auditor later runs that exact verifier.
+This matters most for score verification. No single formula can cover a near-zero metric, a paired trial, a hardware benchmark, and a study with several outcomes. A fresh result-blind agent writes a declarative policy for the approved task. ScientistOne binds that policy to a release-tested common interpreter, the evaluator interface, inputs, and fixed tolerances before any candidate result exists. A separate auditor later reruns the evaluator and applies that exact frozen policy.
 
-The agents can adapt the code to the science. They cannot adapt a test to rescue a result they have already seen. If the frozen verifier missed a valid result type, ScientistOne preserves the old work, revises and re-audits the test, and reruns every affected stage in the same study.
+The agents can adapt the policy to the science. They cannot adapt a test to rescue a result they have already seen. If the frozen policy omitted a valid supported result type, ScientistOne preserves the old work, makes the smallest versioned correction, re-audits it, and reruns every affected stage within the fixed repair budget. Unsupported semantics close honestly as incomplete instead of being approximated.
 
 ![Nine research stages move an approved question toward a checked study](docs/images/from-question-to-completed-study.png)
 
@@ -44,7 +44,7 @@ The agents can adapt the code to the science. They cannot adapt a test to rescue
 4. Independent roles test several directions and keep failed work as evidence.
 5. A separate evaluator applies the frozen protocol. Candidate role instructions forbid access to held-out answers and private checks, and receipts record declared access.
 6. Four integrity audits check reported scores, method and result claims, references, and evidence coverage.
-7. The study ends only after its declared files and final verifier pass.
+7. The study ends only after its declared files and final Chain-of-Evidence verification pass.
 
 ![A reported result is checked against the selected code, evaluator, paper, and saved evidence](docs/images/how-a-result-is-checked.png)
 
@@ -92,7 +92,17 @@ AdamHAwad/scientistone-codex-plugin
 4. Select **Install**.
 5. Wait for Codex to confirm the install.
 
-### 4. Start a study
+### 4. Trust the launch hook
+
+1. Open a Codex task and enter `/hooks`.
+2. Review the ScientistOne plugin hook and select **Trust**.
+
+Codex intentionally skips newly installed or changed plugin hooks until you
+trust their exact definition. ScientistOne uses this hook to authorize each
+specialist launch and record its bounded attempt, so complete this review after
+installation and after an update that changes the hook.
+
+### 5. Start a study
 
 1. Select **Try now** on the ScientistOne page.
 2. Codex opens a new task with a ScientistOne example prompt in the message box.
@@ -106,7 +116,7 @@ does not remove any research stage, repetition, evidence check, or audit; it
 only limits how much independent work can run at once. Higher concurrency may
 consume the user's Codex allowance faster while a study is active.
 
-ScientistOne opens a full-page setup guide in Codex's built-in browser. Explain what you want to study, add any files the study needs, choose the limits, and review the plan. **Approve and start study** is the study's one approval checkpoint. After it, the same page becomes a live flowchart and ScientistOne continues autonomously through contract repair, research, writing, verification, audit, and delivery. It does not ask you to approve generated evaluator, verifier, method, or environment repairs again.
+ScientistOne opens a full-page setup guide in Codex's built-in browser. Explain what you want to study, add any files the study needs, choose the limits, and review the plan. **Approve and start study** is the study's one approval checkpoint. After it, the same page becomes a live flowchart and ScientistOne advances through bounded contract repair, research, writing, verification, audit, and delivery. It does not ask you to approve in-scope generated evaluator, I1-policy, method, or environment repairs again. If the frozen attempt or repair limits are exhausted, it saves a terminal `INCOMPLETE` result instead of looping; corrected work starts as a new run that references the preserved record.
 
 A study may later need a project-specific tool, such as a Python library required by the approved method. ScientistOne first uses existing or reversible project-local tools covered by the approved plan. When a capability would exceed the plan or Codex's enforced safety boundary, ScientistOne keeps that boundary, uses a safe in-scope alternative, and records the limitation instead of pausing to request a broader study approval. That tool belongs to the study, not to ScientistOne itself.
 
@@ -133,7 +143,7 @@ docs/                   Architecture, privacy, permissions, and release verifica
 scripts/                Packaging and hygiene checks
 ```
 
-This repository is the ScientistOne Codex marketplace. Its catalog points Codex to `plugins/scientistone/`, which contains the complete local MCP, browser interface, three skills, lifecycle hook, launchers, licenses, and brand assets.
+This repository is the ScientistOne Codex marketplace. Its catalog points Codex to `plugins/scientistone/`, which contains the complete local MCP, browser interface, three skills, launch-authorization hook, launchers, licenses, and brand assets.
 
 For verification, `npm run package:plugin` copies the installable plugin into `dist/scientistone/` from an explicit allowlist. It leaves out tests, caches, secrets, run output, and repository-only files. [Plugin bundle](docs/plugin-bundle.md) lists the included paths and exclusions. [Release tests](docs/release-tests.md) describes the clean-install checks.
 

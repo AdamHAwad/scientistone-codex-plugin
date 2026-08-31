@@ -29,16 +29,16 @@ function visit(value, callback) {
   for (const item of Object.values(value)) visit(item, callback);
 }
 
-test("protocol freezes task-specific I1 policy and verifier before candidate results", () => {
+test("protocol freezes a declarative I1 policy and common interpreter before candidate results", () => {
   const normalized = protocol.replace(/\s+/g, " ").toLowerCase();
   for (const required of [
     "contract/i1-verification-policy.json",
-    "private/evaluator/i1-verifier/",
+    "contract/control-plane/i1-interpreter.mjs",
     "i1-verification.md",
     "i1-verification-policy.schema.json",
     "before candidate generation or any candidate result exists",
     "variance affects uncertainty but never widens",
-    "archive the contract and every successor",
+    "rerun all affected successors",
   ]) assert.ok(normalized.includes(required.toLowerCase()), `missing protocol requirement: ${required}`);
 
   assert.doesNotMatch(protocol, /Before release, a scientific owner must confirm the tolerance formula/);
@@ -67,10 +67,13 @@ test("I1 policy schema is closed, internally resolvable, and covers task-adaptiv
   assert.deepEqual(schema.properties.profile.enum, ["task_adaptive_v1", "adrs_legacy_v1"]);
   assert.equal(schema.properties.frozen_before_candidate_generation.type, "boolean");
   assert.equal(schema.properties.result_blind_authoring.const, true);
-  assert.equal(schema.properties.verifier.properties.network.const, false);
+  assert.equal(schema.properties.execution.properties.network.const, false);
+  assert.equal(schema.properties.interpreter.properties.version.const, "1.1.0");
+  assert.equal(schema.properties.execution.properties.safe_output_paths.minItems, 3);
+  assert.equal(schema.properties.execution.properties.safe_output_paths.maxItems, 3);
 
   const requiredRoot = new Set(schema.required);
-  for (const field of ["bindings", "metrics", "decision_rule", "variance_policy", "verifier", "verdicts"]) {
+  for (const field of ["bindings", "metrics", "decision_rule", "variance_policy", "interpreter", "execution", "verdicts"]) {
     assert.ok(requiredRoot.has(field), `root policy must require ${field}`);
   }
 
@@ -95,6 +98,10 @@ test("I1 policy schema is closed, internally resolvable, and covers task-adaptiv
     "hardware_sensitive",
   ]);
   assert.deepEqual(schema.$defs.metric.properties.comparison_design.enum, ["exact", "paired", "independent"]);
+  assert.equal(schema.$defs.metric.allOf[0].if.properties.determinism_class.const, "deterministic");
+  assert.equal(schema.$defs.metric.allOf[0].then.properties.comparison_design.const, "exact");
+  assert.ok(schema.$defs.metric.properties.repetitions.required.includes("canonical_run_ids"));
+  assert.ok(schema.$defs.metric.properties.repetitions.required.includes("audit_run_ids"));
   assert.deepEqual(schema.$defs.decisionRule.properties.type.enum, ["all", "primary_and_constraints", "multiplicity_controlled"]);
 
   visit(schema, (value) => {
@@ -112,7 +119,7 @@ test("research freezes before candidates while external reconstruction stays res
   assert.deepEqual(externalRule.then.properties.bindings.required, ["source_bundle_manifest"]);
   assert.equal(externalRule.then.oneOf[1].properties.freeze_stage.const, "pre_i1_execution_external");
   assert.equal(externalRule.then.oneOf[1].properties.frozen_before_candidate_generation.const, false);
-  assert.match(protocol, /the I1 Verifier Builder works\s+result-blind/);
+  assert.match(protocol, /fresh result-blind I1 policy author/);
   assert.match(guide, /It cannot invent a post-hoc\s+equivalence margin/);
 });
 

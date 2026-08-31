@@ -8,19 +8,23 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { installTestRouting, seedI1Audit, seedI1Contract, testRuntime } from "./i1-contract-fixture.mjs";
 import { TEST_CATALOG } from "./model-routing-fixture.mjs";
-import { prepareRoleLaunch } from "../../plugins/scientistone/mcp/model-routing.mjs";
+import { consumeLaunchToken, ensureRunRouting, prepareRoleLaunch } from "../../plugins/scientistone/mcp/model-routing.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../plugins/scientistone");
 const COE = path.join(ROOT, "skills", "scientistone", "scripts", "coe.mjs");
+const ROLE_CONTRACT = path.join(ROOT, "skills", "scientistone", "references", "roles.md");
 const BUDGETS = { idea_ceiling: 2, minimum_eligible_ideas: 1, candidate_node_ceiling: 1, minimum_evaluated_candidates: 1, evaluation_ceiling_per_node: 1, ablation_ceiling: 1, minimum_valid_ablations: 1, canonical_repetitions: 2, audit_panel_size: 3 };
 
 const run = (...args) => spawnSync(process.execPath, [COE, ...args], { encoding: "utf8" });
+const runWithEnv = (extraEnv, ...args) => spawnSync(process.execPath, [COE, ...args], { encoding: "utf8", env: { ...process.env, ...extraEnv } });
 function put(root, relative, content = `${relative}\n`) { const file = path.join(root, relative); fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, content); }
 function json(root, relative, value) { put(root, relative, `${JSON.stringify(value, null, 2)}\n`); }
 function read(root, relative) { return JSON.parse(fs.readFileSync(path.join(root, relative), "utf8")); }
 function copy(root, source, destination) { const target = path.join(root, destination); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.copyFileSync(path.join(root, source), target); }
 function hash(root, relative) { const result = run("hash", root, relative); assert.equal(result.status, 0, result.stderr); return result.stdout.trim(); }
 function fileHash(file) { return createHash("sha256").update(fs.readFileSync(file)).digest("hex"); }
+function canonical(value) { if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`; return JSON.stringify(value); }
+function workKey(role, outputs, contractRevision, charterRevision) { return createHash("sha256").update(canonical({ contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...outputs].sort() })).digest("hex"); }
 function bootstrap(root, mode, source = "existing") {
   let tools;
   if (source === "portable_official") {
@@ -44,36 +48,51 @@ function minimalPdf() {
   let pdf = "%PDF-1.4\n"; const offsets = []; for (const object of objects) { offsets.push(Buffer.byteLength(pdf, "latin1")); pdf += object; } const xref = Buffer.byteLength(pdf, "latin1"); return `${pdf}xref\n0 5\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
 }
 
-function role(root, { role: name, task = name, inputs = ["study-plan.md"], outputs, allowed_external_sources = [], receipt_allowed_external_sources = allowed_external_sources, external_results_used = [], environment_changes = [], omit_environment_changes = false, execution_status = "COMPLETE", gate_verdict = "PASS", model: modelOverride, reasoning_effort: effortOverride }) {
+function role(root, { role: name, task = name, logical_task_name = task, attempt = 1, inputs = ["study-plan.md"], outputs, allowed_external_sources = [], receipt_allowed_external_sources = allowed_external_sources, external_results_used = [], environment_changes = [], omit_environment_changes = false, execution_status = "COMPLETE", gate_verdict = "PASS", model: modelOverride, reasoning_effort: effortOverride }) {
   const started_at = "2026-08-22T12:00:00Z";
+  const record = read(root, "run.json");
   const runtime = testRuntime(root, name);
-  const model = modelOverride ?? runtime.model;
-  const reasoning_effort = effortOverride ?? runtime.reasoning_effort;
-  json(root, `role-launches/${task}.json`, { schema_version: 1, task_id: `native-${task}`, role: name, fork_turns: "none", model_tier: runtime.tier, model, reasoning_effort, model_routing_sha256: runtime.routing_sha256, declared_inputs: inputs, allowed_external_sources, declared_outputs: outputs, started_at });
-  const receipt = { schema_version: 1, role: name, agent_task: task, model, reasoning_effort, fork_turns: "none", started_at, completed_at: "2026-08-22T12:00:01Z", declared_inputs: inputs, allowed_external_sources: receipt_allowed_external_sources, external_results_used, environment_changes, outputs, undeclared_inputs_accessed: [], limitations: [], execution_status, gate_verdict, launch_record_sha256: hash(root, `role-launches/${task}.json`) };
+  const launchPath = `role-launches/${task}.json`;
+  const seeded = fs.existsSync(path.join(root, launchPath)) && modelOverride == null && effortOverride == null ? read(root, launchPath) : null;
+  const model = modelOverride ?? seeded?.model ?? runtime.model;
+  const reasoning_effort = effortOverride ?? seeded?.reasoning_effort ?? runtime.reasoning_effort;
+  if (!seeded) {
+    const task_brief = { acceptance_gate: "Produce the declared outputs", constraints: "Use only declared inputs", context: "Synthetic regression fixture", objective: `Complete ${task}`, upstream_summary: [] };
+    const assignment = `Synthetic canonical assignment for ${task}`;
+    const key = workKey(name, outputs, record.contract_revision, record.charter_revision);
+    json(root, launchPath, { schema_version: 1, task_id: `native-${task}`, logical_task_name, work_key_sha256: key, attempt, contract_revision: record.contract_revision, charter_revision: record.charter_revision, predecessor: record.last_checkpoint === null ? null : { path: `receipts/${record.last_checkpoint}.json`, sha256: record.checkpoints[record.last_checkpoint].receipt_sha256 }, role: name, fork_turns: "none", model_tier: runtime.tier, model, reasoning_effort, model_routing_sha256: runtime.routing_sha256, role_contract_sha256: fileHash(ROLE_CONTRACT), gate_schema_version: 1, task_brief, task_brief_sha256: createHash("sha256").update(JSON.stringify(task_brief)).digest("hex"), assignment, assignment_sha256: createHash("sha256").update(assignment).digest("hex"), declared_inputs: inputs, input_artifacts: inputs.map((path) => ({ path, sha256: hash(root, path) })), allowed_external_sources, declared_outputs: outputs, started_at });
+  }
+  const activeLaunch = read(root, launchPath);
+  json(root, `role-attempts/${activeLaunch.logical_task_name}/${activeLaunch.work_key_sha256}/attempt-${activeLaunch.attempt}.json`, { schema_version: 2, logical_task_name: activeLaunch.logical_task_name, work_key_sha256: activeLaunch.work_key_sha256, attempt: activeLaunch.attempt, launch_record: launchPath, launch_record_sha256: hash(root, launchPath), accepted_at: "2026-08-22T12:00:00.500Z" });
+  const receipt = { schema_version: 1, role: name, agent_task: task, logical_task_name: activeLaunch.logical_task_name, attempt: activeLaunch.attempt, contract_revision: activeLaunch.contract_revision, charter_revision: activeLaunch.charter_revision, predecessor: activeLaunch.predecessor, model, reasoning_effort, model_routing_sha256: activeLaunch.model_routing_sha256, role_contract_sha256: activeLaunch.role_contract_sha256, assignment_sha256: activeLaunch.assignment_sha256, task_brief_sha256: activeLaunch.task_brief_sha256, gate_schema_version: activeLaunch.gate_schema_version, fork_turns: "none", started_at, completed_at: "2026-08-22T12:00:01Z", declared_inputs: inputs, input_artifacts: inputs.map((path) => ({ path, sha256: hash(root, path) })), allowed_external_sources: receipt_allowed_external_sources, external_results_used, environment_changes, outputs, output_artifacts: outputs.map((path) => ({ path, sha256: hash(root, path) })), undeclared_inputs_accessed: [], limitations: [], handoff: { summary: `Completed ${task}`, decisions: [], evidence_ids: [], conflicts: [], unresolved: [], recommended_next_action: "Continue to the next verified gate" }, execution_status, gate_verdict, launch_record: launchPath, launch_record_sha256: hash(root, launchPath) };
   if (omit_environment_changes) delete receipt.environment_changes;
   json(root, `role-receipts/${task}.json`, receipt);
   return `role-receipts/${task}.json`;
 }
-function checkpointResult(root, phase, outputs, roles = []) {
+function checkpointResult(root, phase, outputs, roles = [], childEnv = null) {
   const flags = ["--input", "study-plan.md"];
-  if (phase === "contract") { for (const item of ["request.md", "environment/bootstrap.json", "environment/model-routing.json", "contract/run-config.json", "contract/input-manifest.json"]) flags.push("--input", item); if (fs.existsSync(path.join(root, "contract/source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json"); else for (const item of ["contract/evaluator-contract.md", "contract/evaluator-manifest.json"]) flags.push("--input", item); for (const item of ["contract/i1-verification-policy.json", "private/evaluator/i1-verifier"]) if (fs.existsSync(path.join(root, item))) flags.push("--input", item); }
+  if (phase === "contract") { for (const item of ["request.md", "environment/bootstrap.json", "contract/run-config.json", "contract/input-manifest.json"]) flags.push("--input", item); if (fs.existsSync(path.join(root, "contract/source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json"); else for (const item of ["contract/evaluator-contract.md", "contract/evaluator-manifest.json"]) flags.push("--input", item); for (const item of ["contract/i1-verification-policy.json", "contract/control-plane/i1-interpreter.mjs"]) if (fs.existsSync(path.join(root, item))) flags.push("--input", item); }
   for (const output of [...outputs, ...roles.map((item) => role(root, item))]) flags.push("--output", output);
   const checked = run("preflight", root, phase, ...flags);
-  return checked.status === 0 ? run("checkpoint", root, phase, ...flags) : checked;
+  return checked.status === 0 ? childEnv ? runWithEnv(childEnv, "checkpoint", root, phase, ...flags) : run("checkpoint", root, phase, ...flags) : checked;
 }
-function checkpoint(root, phase, outputs, roles = []) { const result = checkpointResult(root, phase, outputs, roles); assert.equal(result.status, 0, result.stderr); }
+function checkpoint(root, phase, outputs, roles = [], childEnv = null) { const result = checkpointResult(root, phase, outputs, roles, childEnv); assert.equal(result.status, 0, result.stderr); }
 function newRun(t, mode = "research", environmentSource = "existing") { const root = fs.mkdtempSync(path.join(os.tmpdir(), `scientistone-${mode}-`)); t.after(() => fs.rmSync(root, { recursive: true, force: true })); put(root, "request.md", "Approved request.\n"); put(root, "study-plan.md", "# Approved plan\n"); bootstrap(root, mode, environmentSource); json(root, "contract/custom-profile.json", BUDGETS); assert.equal(run("configure", root, "custom", mode, "contract/custom-profile.json").status, 0); assert.equal(run("init", root).status, 0); installTestRouting(root); return root; }
 
-function writeContractArtifacts(root, evaluatorText = "Metric score; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n") {
+function writeContractArtifacts(root, evaluatorText = "Metric score; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n", childEnv = null) {
+  const contractRevision = read(root, "run.json").contract_revision;
+  const contractAttempt = 1;
+  const suffix = contractRevision === 1 ? "" : `_r${contractRevision}`;
+  const builderTask = `i1_verifier_builder${suffix}`;
+  const auditorTask = `contract_auditor${suffix}`;
   put(root, "contract/evaluator-contract.md", evaluatorText);
   json(root, "contract/evaluator-manifest.json", { schema_version: 1, files: [{ path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), access_class: "evaluator_only" }] });
   put(root, "contract/audit.md", "Overall verdict: PASS\n");
-  const i1Contract = seedI1Contract({ root, mode: "research", runtime: testRuntime(root, "i1_verifier_builder"), hash, fileHash, json, put });
-  checkpoint(root, "contract", ["contract", "private/evaluator/i1-verifier"], [
-    { role: "i1_verifier_builder", inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs },
-    { role: "contract_auditor", inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"] },
-  ]);
+  const i1Contract = seedI1Contract({ root, mode: "research", runtime: testRuntime(root, "i1_verifier_builder"), hash, fileHash, json, put, builderTask, builderAttempt: contractAttempt });
+  checkpoint(root, "contract", ["contract"], [
+    { role: "i1_verifier_builder", task: builderTask, logical_task_name: "i1_verifier_builder", attempt: contractAttempt, inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs },
+    { role: "contract_auditor", task: auditorTask, logical_task_name: "contract_auditor", attempt: contractAttempt, inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"] },
+  ], childEnv);
 }
 
 function contract(t, environmentSource = "existing") {
@@ -83,13 +102,14 @@ function contract(t, environmentSource = "existing") {
   return root;
 }
 const evaluatorInputs = () => ["contract/evaluator-contract.md", "contract/evaluator-manifest.json", "private/evaluator/evaluate.mjs"];
-function evaluation(root, snapshot, destination, id, canonical = false, values = [1]) { const raw = `private/evaluator/raw/${id}.txt`; put(root, raw, `raw ${id}\n`); const record = { schema_version: 1, snapshot_sha256: hash(root, snapshot), metric: { name: "score", value: values.reduce((a, b) => a + b, 0) / values.length, unit: "points", direction: "maximize" }, protocol: "approved", repetitions: values.map((value, seed) => ({ seed, value })), command_or_procedure: "node evaluate.mjs", environment: { software: ["node"], hardware: "test" }, raw_output_ref: raw, raw_output_sha256: hash(root, raw), evaluated_at: "2026-08-22T12:00:00Z", status: "valid" }; record[canonical ? "snapshot_path" : "snapshot"] = snapshot; json(root, destination, record); return raw; }
-function investigate(root) {
+function evaluation(root, snapshot, destination, id, canonical = false, values = [1]) { const raw = `private/evaluator/raw/${id}.txt`; put(root, raw, `raw ${id}\n`); const repetitions = values.map((value, seed) => ({ seed, value })); const record = { schema_version: 1, snapshot_sha256: hash(root, snapshot), metric: { id: "score", name: "score", value: values.reduce((a, b) => a + b, 0) / values.length, unit: "points", direction: "maximize", estimand: "mean", estimand_parameters: {}, repetitions }, protocol: "approved", repetitions, command_or_procedure: "node evaluate.mjs", environment: { software: ["node"], hardware: "test" }, raw_output_ref: raw, raw_output_sha256: hash(root, raw), evaluated_at: "2026-08-22T12:00:00Z", status: "valid" }; record[canonical ? "snapshot_path" : "snapshot"] = snapshot; json(root, destination, record); return raw; }
+function investigate(root, attempt = 1) {
+  const retry = (logicalTaskName) => ({ task: attempt === 1 ? logicalTaskName : `${logicalTaskName}_a${attempt}`, logical_task_name: logicalTaskName, attempt });
   put(root, "evidence/search-log.jsonl", '{"query":"q"}\n'); put(root, "evidence/sources.jsonl", '{"id":"s","bibkey":"smith2025"}\n'); put(root, "investigation/notes/s.md"); put(root, "investigation/directions/d.md"); put(root, "investigation/protocol-audit.md", "Overall verdict: PASS\n"); put(root, "investigation/brief.md"); put(root, "investigation/references.bib"); put(root, "investigation/critic.md", "Overall verdict: PASS\n");
-  checkpoint(root, "investigation", ["evidence", "investigation"], [{ role: "literature_mapper", inputs: ["study-plan.md"], outputs: ["evidence/search-log.jsonl", "evidence/sources.jsonl"] }, { role: "evidence_reader", inputs: ["study-plan.md", "evidence/sources.jsonl"], outputs: ["investigation/notes/s.md"] }, { role: "evidence_synthesizer", inputs: ["study-plan.md", "investigation/notes"], outputs: ["investigation/directions/d.md"] }, { role: "protocol_auditor", inputs: ["study-plan.md", "investigation/directions"], outputs: ["investigation/protocol-audit.md"] }, { role: "brief_writer", inputs: ["study-plan.md", "investigation/directions", "investigation/protocol-audit.md", "evidence/sources.jsonl"], outputs: ["investigation/brief.md", "investigation/references.bib"] }, { role: "brief_critic", inputs: ["study-plan.md", "investigation/brief.md"], outputs: ["investigation/critic.md"] }]);
+  checkpoint(root, "investigation", ["evidence", "investigation"], [{ role: "literature_mapper", ...retry("literature_mapper"), inputs: ["study-plan.md"], outputs: ["evidence/search-log.jsonl", "evidence/sources.jsonl"] }, { role: "evidence_reader", ...retry("evidence_reader"), inputs: ["study-plan.md", "evidence/sources.jsonl"], outputs: ["investigation/notes/s.md"] }, { role: "evidence_synthesizer", ...retry("evidence_synthesizer"), inputs: ["study-plan.md", "investigation/notes"], outputs: ["investigation/directions/d.md"] }, { role: "protocol_auditor", ...retry("protocol_auditor"), inputs: ["study-plan.md", "investigation/directions"], outputs: ["investigation/protocol-audit.md"] }, { role: "brief_writer", ...retry("brief_writer"), inputs: ["study-plan.md", "investigation/directions", "investigation/protocol-audit.md", "evidence/sources.jsonl"], outputs: ["investigation/brief.md", "investigation/references.bib"] }, { role: "brief_critic", ...retry("brief_critic"), inputs: ["study-plan.md", "investigation/brief.md"], outputs: ["investigation/critic.md"] }]);
 }
 function discover(root, change = null, receipt = {}) {
-  put(root, "discovery/ideas.jsonl", '{"id":"i1","kind":"conservative"}\n{"id":"i2","kind":"unconventional"}\n'); put(root, "discovery/idea-critique.jsonl", '{"idea_id":"i1","status":"eligible"}\n{"idea_id":"i2","status":"rejected"}\n'); const base = "discovery/nodes/n1"; put(root, `${base}/idea.md`); json(root, `${base}/shared-input-manifest.json`, { schema_version: 1, files: [read(root, "contract/input-manifest.json").files[0]] }); put(root, `${base}/experimental-log.md`); put(root, `${base}/method-report.md`); put(root, `${base}/legitimacy-audit.md`, "Overall verdict: PASS\n"); put(root, `${base}/snapshots/v1/method.txt`, "method\n"); const raw = evaluation(root, `${base}/snapshots/v1`, `${base}/evaluations/v1.json`, "node"); if (change === "expose") { const value = read(root, `${base}/evaluations/v1.json`); value.heldout_rows = []; json(root, `${base}/evaluations/v1.json`, value); } json(root, "discovery/index.json", { nodes: [{ id: "n1", path: base, status: "eligible", evaluation_path: `${base}/evaluations/v1.json`, legitimacy_verdict_path: `${base}/legitimacy-audit.md` }], retained: ["n1"] });
+  put(root, "discovery/ideas.jsonl", '{"id":"i1","kind":"conservative"}\n{"id":"i2","kind":"unconventional"}\n'); put(root, "discovery/idea-critique.jsonl", change === "stop-below-min" ? '{"idea_id":"i1","status":"rejected"}\n{"idea_id":"i2","status":"rejected"}\n' : '{"idea_id":"i1","status":"eligible"}\n{"idea_id":"i2","status":"rejected"}\n'); const base = "discovery/nodes/n1"; put(root, `${base}/idea.md`); json(root, `${base}/shared-input-manifest.json`, { schema_version: 1, files: [read(root, "contract/input-manifest.json").files[0]] }); put(root, `${base}/experimental-log.md`); put(root, `${base}/method-report.md`); put(root, `${base}/legitimacy-audit.md`, "Overall verdict: PASS\n"); put(root, `${base}/snapshots/v1/method.txt`, "method\n"); const raw = evaluation(root, `${base}/snapshots/v1`, `${base}/evaluations/v1.json`, "node"); if (change === "expose") { const value = read(root, `${base}/evaluations/v1.json`); value.heldout_rows = []; json(root, `${base}/evaluations/v1.json`, value); } json(root, "discovery/index.json", { nodes: [{ id: "n1", path: base, status: "eligible", evaluation_path: `${base}/evaluations/v1.json`, legitimacy_verdict_path: `${base}/legitimacy-audit.md` }], retained: ["n1"], ...(change === "stop-below-min" ? { stop_reason: "evidence_saturation" } : {}) });
   const candidateInputs = ["study-plan.md", "investigation/brief.md", `${base}/idea.md`, `${base}/shared-input-manifest.json`]; if (change === "leak") candidateInputs.push("private/evaluator/evaluate.mjs");
   const roles = [{ role: "ideator", inputs: ["study-plan.md", "investigation/brief.md"], outputs: ["discovery/ideas.jsonl"] }, { role: "idea_critic", inputs: ["study-plan.md", "discovery/ideas.jsonl"], outputs: ["discovery/idea-critique.jsonl"] }, { role: "candidate_developer", task: "candidate", inputs: candidateInputs, outputs: [`${base}/experimental-log.md`, `${base}/method-report.md`, `${base}/snapshots/v1`], ...receipt }, { role: "evaluator", task: "node_evaluator", inputs: ["study-plan.md", `${base}/snapshots`, ...evaluatorInputs()], outputs: [`${base}/evaluations/v1.json`, raw] }, { role: "legitimacy_auditor", inputs: ["study-plan.md", `${base}/idea.md`, `${base}/method-report.md`, `${base}/evaluations`], outputs: [`${base}/legitimacy-audit.md`] }];
   if (change === "duplicate") roles.push({ role: "ideator", task: "second_ideator", inputs: ["study-plan.md", "investigation/brief.md"], outputs: ["discovery/ideas.jsonl"] });
@@ -120,8 +140,8 @@ const report = (verdict = "PASS") => `Overall verdict: ${verdict}\nI1 verdict: $
 const reproduction = () => "## Selected snapshot\nselection/selected and hash.\n## Environment\nenvironment/bootstrap.json.\n## Inputs and access limits\nShared input; private evaluator.\n## Procedure\nRun evaluator.\n## Expected canonical output\nselection/canonical-evaluation.json.\n## Verification\nRun `<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs verify <run>` and inspect manifest.\n";
 function audit(root, change = null) {
   const selectedSnapshotSha256 = read(root, "selection/canonical-evaluation.json").snapshot_sha256;
-  const i1Audit = seedI1Audit({ root, mode: "research", selectedSnapshotSha256, evidencePath: "selection/canonical-evaluation.json", hash, json, put });
-  json(root, "audit/i3.json", i3()); json(root, "audit/claim-provenance.json", { verdict: "PASS", total_numerical_claims: 2, assessed_count: 2, supported_count: 2, coverage_ratio: 1, mismatches: [], unavailable_items: [], evidence_paths: ["paper/provenance.jsonl"] }); const roles = [{ role: "i1_score_auditor", inputs: ["study-plan.md", "environment/bootstrap.json", "contract/i1-verification-policy.json", "private/evaluator/i1-verifier", "paper/paper.tex", "paper/paper.pdf", "selection/selected", "selection/canonical-evaluation.json", ...evaluatorInputs()], outputs: i1Audit.outputs }, { role: "i3_reference_auditor", inputs: ["study-plan.md", "paper/references.bib"], outputs: ["audit/i3.json"] }, { role: "claim_provenance_auditor", inputs: ["study-plan.md", "paper/claims.jsonl", "paper/provenance.jsonl", "selection/canonical-evaluation.json"], outputs: ["audit/claim-provenance.json"] }]; const votes = [];
+  const i1Audit = seedI1Audit({ root, mode: "research", selectedSnapshotSha256, evidencePath: "selection/canonical-evaluation.json", hash, json, put, ...(change === "lineage-canonical" ? { canonicalValue: 2, lineageValue: 1 } : {}) });
+  json(root, "audit/i3.json", i3()); json(root, "audit/claim-provenance.json", { verdict: "PASS", total_numerical_claims: 2, assessed_count: 2, supported_count: 2, coverage_ratio: 1, mismatches: [], unavailable_items: [], evidence_paths: ["paper/provenance.jsonl"] }); const roles = [{ role: "i1_score_auditor", inputs: ["study-plan.md", "environment/bootstrap.json", "contract/i1-verification-policy.json", "contract/control-plane/i1-interpreter.mjs", "paper/paper.tex", "paper/paper.pdf", "selection/selected", "selection/canonical-evaluation.json", ...evaluatorInputs()], outputs: i1Audit.outputs }, { role: "i3_reference_auditor", inputs: ["study-plan.md", "paper/references.bib"], outputs: ["audit/i3.json"] }, { role: "claim_provenance_auditor", inputs: ["study-plan.md", "paper/claims.jsonl", "paper/provenance.jsonl", "selection/canonical-evaluation.json"], outputs: ["audit/claim-provenance.json"] }]; const votes = [];
   for (const panel of ["i2", "i4"]) { for (let n = 1; n <= 3; n++) { const file = `audit/${panel}/judge-${n}.json`; votes.push(file); if (panel === "i2") json(root, file, { judge_id: `${panel}-${n}`, selected_snapshot_sha256: hash(root, "selection/selected"), evaluator_contract_sha256: hash(root, "contract/evaluator-contract.md"), checked_categories: ["evaluator_import"], flagged: false, category: null, evidence_paths: ["selection/canonical-evaluation.json"], rationale: "No violation.", verdict: "PASS" }); else json(root, file, { judge_id: `${panel}-${n}`, paper_method_locations: ["paper.tex:5"], selected_artifacts: [{ path: "selection/selected/method.txt", sha256: hash(root, "selection/selected/method.txt") }], checked_categories: ["method_class_mismatch"], checked_core_mechanisms: ["method"], flagged: false, category: null, evidence_paths: ["selection/selected/method.txt"], rationale: "Aligned.", verdict: "PASS" }); roles.push({ role: `${panel}_judge`, task: `${panel}_${n}`, inputs: panel === "i2" ? ["study-plan.md", "contract/input-manifest.json", "selection/selected", "selection/canonical-evaluation.json", ...evaluatorInputs()] : ["study-plan.md", "paper/paper.tex", "selection/selected"], outputs: [file] }); } json(root, `audit/${panel}/aggregate.json`, { status: "ASSESSED", judge_count: 3, threshold: 2, flag_votes: 0, flagged: false }); }
   put(root, "audit/report.md", report()); put(root, "delivery/reproduction.md", reproduction()); roles.push({ role: "audit_reporter", inputs: ["study-plan.md", "audit/i1.json", "audit/i3.json", "audit/claim-provenance.json", ...votes], outputs: ["audit/i2/aggregate.json", "audit/i4/aggregate.json", "audit/report.md"] }, { role: "reproduction_writer", inputs: ["study-plan.md", "environment/bootstrap.json", "selection/selected/manifest.json", "selection/canonical-evaluation.json", "audit/report.md"], outputs: ["delivery/reproduction.md"] });
   if (change === "reporter-extra") { json(root, "audit/reporter-extra.json", { verdict: "PASS" }); roles.find((role) => role.role === "audit_reporter").outputs.push("audit/reporter-extra.json"); }
@@ -133,22 +153,80 @@ function deliver(root) { for (const [source, destination] of [["study-plan.md", 
 function through(t, phase = "complete", environmentSource = "existing") { const root = contract(t, environmentSource); if (phase === "contract") return root; investigate(root); if (phase === "investigation") return root; let result = discover(root); assert.equal(result.status, 0, result.stderr); if (phase === "discovery") return root; result = select(root); assert.equal(result.status, 0, result.stderr); if (phase === "selection") return root; ablate(root); if (phase === "ablation") return root; result = write(root); assert.equal(result.status, 0, result.stderr); if (phase === "writing") return root; result = verifyPhase(root); assert.equal(result.status, 0, result.stderr); if (phase === "verification") return root; result = audit(root); assert.equal(result.status, 0, result.stderr); if (phase === "audit") return root; deliver(root); return root; }
 
 function bundle(root, unavailable = null) { const values = [["paper.any", "paper", ["I1", "I3", "I4", "claim_provenance"], "shared"], ["method.any", "method", ["I2", "I4"], "shared"], ["evaluation.any", "evaluation", ["I1", "I2", "claim_provenance"], "shared"], ["evaluator.any", "evaluator", ["I2"], "evaluator_only"], ["references.any", "reference", ["I3", "claim_provenance"], "shared"]]; const items = values.map(([name, artifact_type, intended_checks, access_class]) => { const frozen_path = `source-bundle/${name}`; put(root, frozen_path, `${name}\n`); return { supplied_path: `/arbitrary/${name}`, frozen_path, artifact_type, sha256: hash(root, frozen_path), intended_checks, access_class, available: true, missing_reason: null }; }); if (unavailable) items.push({ supplied_path: `/arbitrary/missing-${unavailable}`, frozen_path: `source-bundle/missing-${unavailable}`, artifact_type: "other", sha256: null, intended_checks: [unavailable], access_class: "shared", available: false, missing_reason: `${unavailable} input missing` }); return items; }
-function externalContract(t, unavailable = null) { const root = newRun(t, "external_audit"); json(root, "contract/input-manifest.json", { schema_version: 1, files: [] }); json(root, "contract/source-bundle-manifest.json", { schema_version: 1, items: bundle(root, unavailable) }); put(root, "contract/audit.md", "Overall verdict: PASS\n"); const i1Contract = seedI1Contract({ root, mode: "external_audit", runtime: testRuntime(root, "i1_verifier_builder"), hash, fileHash, json, put }); checkpoint(root, "contract", ["contract", "private/evaluator/i1-verifier"], [{ role: "i1_verifier_builder", inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs }, { role: "contract_auditor", inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"] }]); return root; }
-function externalContractResult(root) { const i1Contract = seedI1Contract({ root, mode: "external_audit", runtime: testRuntime(root, "i1_verifier_builder"), hash, fileHash, json, put }); return checkpointResult(root, "contract", ["contract", "private/evaluator/i1-verifier"], [{ role: "i1_verifier_builder", inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs }, { role: "contract_auditor", inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"] }]); }
+function externalContract(t, unavailable = null) { const root = newRun(t, "external_audit"); json(root, "contract/input-manifest.json", { schema_version: 1, files: [] }); json(root, "contract/source-bundle-manifest.json", { schema_version: 1, items: bundle(root, unavailable) }); put(root, "contract/audit.md", "Overall verdict: PASS\n"); const i1Contract = seedI1Contract({ root, mode: "external_audit", runtime: testRuntime(root, "i1_verifier_builder"), hash, fileHash, json, put }); checkpoint(root, "contract", ["contract"], [{ role: "i1_verifier_builder", inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs }, { role: "contract_auditor", inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"] }]); return root; }
+function externalContractResult(root) { const i1Contract = seedI1Contract({ root, mode: "external_audit", runtime: testRuntime(root, "i1_verifier_builder"), hash, fileHash, json, put }); return checkpointResult(root, "contract", ["contract"], [{ role: "i1_verifier_builder", inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs }, { role: "contract_auditor", inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"] }]); }
 function externalAudit(root, falselyPassI1 = false) {
   const items = read(root, "contract/source-bundle-manifest.json").items; const paths = (check) => items.filter((item) => item.available && item.intended_checks.includes(check)).map((item) => item.frozen_path); const unavailable = (check) => items.filter((item) => !item.available && item.intended_checks.includes(check)).map((item) => item.frozen_path); const e = paths("I1")[0];
   const missingI1 = unavailable("I1");
   const i1Audit = seedI1Audit({ root, mode: "external_audit", selectedSnapshotSha256: null, evidencePath: missingI1.length && !falselyPassI1 ? "contract/source-bundle-manifest.json" : e, unavailableItem: missingI1[0], hash, json, put, notAssessed: missingI1.length > 0 && !falselyPassI1 });
   const fields = { title: "External" }; json(root, "audit/i3.json", { verdict: "PASS", entries: [{ bibkey: "external", populated_fields: fields, resolved_primary_record: fields, retrieved_at: "2026-08-22T12:00:00Z", field_comparisons: [{ field: "title", expected: "External", actual: "External", matches: true }], status: "verified", evidence_path: paths("I3")[0] }], totals: { entries: 1, verified: 1, unresolved: 0, mismatch: 0 } }); json(root, "audit/claim-provenance.json", { verdict: "PASS", total_numerical_claims: 0, assessed_count: 0, supported_count: 0, coverage_ratio: 1, mismatches: [], unavailable_items: [], evidence_paths: [paths("claim_provenance")[0]] });
-  const roles = [{ role: "i1_score_auditor", inputs: ["study-plan.md", "environment/bootstrap.json", "contract/i1-verification-policy.json", "private/evaluator/i1-verifier", ...paths("I1")], outputs: i1Audit.outputs }, { role: "i3_reference_auditor", inputs: ["study-plan.md", ...paths("I3")], outputs: ["audit/i3.json"] }, { role: "claim_provenance_auditor", inputs: ["study-plan.md", ...paths("claim_provenance")], outputs: ["audit/claim-provenance.json"] }]; const votes = [];
+  const roles = [{ role: "i1_score_auditor", inputs: ["study-plan.md", "environment/bootstrap.json", "contract/i1-verification-policy.json", "contract/control-plane/i1-interpreter.mjs", ...paths("I1")], outputs: i1Audit.outputs }, { role: "i3_reference_auditor", inputs: ["study-plan.md", ...paths("I3")], outputs: ["audit/i3.json"] }, { role: "claim_provenance_auditor", inputs: ["study-plan.md", ...paths("claim_provenance")], outputs: ["audit/claim-provenance.json"] }]; const votes = [];
   for (const panel of ["i2", "i4"]) { for (let n = 1; n <= 3; n++) { const file = `audit/${panel}/judge-${n}.json`; votes.push(file); if (panel === "i2") json(root, file, { judge_id: `${panel}-${n}`, selected_snapshot_sha256: "a".repeat(64), evaluator_contract_sha256: "b".repeat(64), checked_categories: ["evaluator_import"], flagged: false, category: null, evidence_paths: [paths("I2")[0]], rationale: "Checked.", verdict: "PASS" }); else json(root, file, { judge_id: `${panel}-${n}`, paper_method_locations: ["source"], selected_artifacts: [{ path: paths("I4")[0], sha256: hash(root, paths("I4")[0]) }], checked_categories: ["method_class_mismatch"], checked_core_mechanisms: ["method"], flagged: false, category: null, evidence_paths: [paths("I4")[0]], rationale: "Checked.", verdict: "PASS" }); roles.push({ role: `${panel}_judge`, task: `${panel}_${n}`, inputs: ["study-plan.md", ...paths(panel.toUpperCase())], outputs: [file] }); } json(root, `audit/${panel}/aggregate.json`, { status: "ASSESSED", judge_count: 3, threshold: 2, flag_votes: 0, flagged: false }); }
-  put(root, "audit/report.md", report()); put(root, "delivery/reproduction.md", "## Source bundle\ncontract/source-bundle-manifest.json.\n## Inputs and access limits\nFrozen inputs.\n## Audit procedure\nRun audits.\n## Expected audit output\naudit/report.md.\n## Verification\nRun `<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs verify <run>` and inspect manifest.\n"); roles.push({ role: "audit_reporter", inputs: ["study-plan.md", "audit/i1.json", "audit/i3.json", "audit/claim-provenance.json", ...votes], outputs: ["audit/i2/aggregate.json", "audit/i4/aggregate.json", "audit/report.md"] }, { role: "reproduction_writer", inputs: ["study-plan.md", "environment/bootstrap.json", "contract/source-bundle-manifest.json", "audit/report.md"], outputs: ["delivery/reproduction.md"] }); return checkpointResult(root, "audit", ["audit", "delivery/reproduction.md"], roles);
+  const auditVerdicts = missingI1.length && !falselyPassI1
+    ? "Overall verdict: NOT_ASSESSED\nI1 verdict: NOT_ASSESSED\nI2 verdict: PASS\nI3 verdict: PASS\nI4 verdict: PASS\nclaim_provenance verdict: PASS\n"
+    : report();
+  put(root, "audit/report.md", auditVerdicts); put(root, "delivery/reproduction.md", "## Source bundle\ncontract/source-bundle-manifest.json.\n## Inputs and access limits\nFrozen inputs.\n## Audit procedure\nRun audits.\n## Expected audit output\naudit/report.md.\n## Verification\nRun `<resolved-node-path> <scientistone-skill-root>/scripts/coe.mjs verify <run>` and inspect manifest.\n"); roles.push({ role: "audit_reporter", inputs: ["study-plan.md", "audit/i1.json", "audit/i3.json", "audit/claim-provenance.json", ...votes], outputs: ["audit/i2/aggregate.json", "audit/i4/aggregate.json", "audit/report.md"] }, { role: "reproduction_writer", inputs: ["study-plan.md", "environment/bootstrap.json", "contract/source-bundle-manifest.json", "audit/report.md"], outputs: ["delivery/reproduction.md"] }); return checkpointResult(root, "audit", ["audit", "delivery/reproduction.md"], roles);
 }
 
 test("existing compatible shared tools are recorded without installation", (t) => {
   const root = contract(t);
   assert.ok(read(root, "environment/bootstrap.json").tools.every((tool) => tool.status === "not_required" || tool.source === "existing"));
-  assert.equal(run("verify", root).status, 0);
+  const verified = run("verify", root);
+  assert.equal(verified.status, 0, verified.stderr);
+});
+
+test("checkpoint retries recover journal-only and journal-plus-receipt interruptions", (t) => {
+  for (const interruption of ["after_journal", "after_receipt"]) {
+    const root = newRun(t);
+    put(root, "inputs/shared/data.csv", "x\n1\n");
+    put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
+    json(root, "contract/input-manifest.json", { schema_version: 1, files: [{ source_path: "data.csv", frozen_path: "inputs/shared/data.csv", sha256: hash(root, "inputs/shared/data.csv"), classification: "shared" }, { source_path: "evaluate.mjs", frozen_path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), classification: "evaluator_only" }] });
+    assert.throws(() => writeContractArtifacts(root, undefined, { SCIENTISTONE_TEST_INTERRUPT_CHECKPOINT: interruption }), /Injected checkpoint interruption/);
+    const interrupted = read(root, "run.json");
+    assert.equal(interrupted.pending_checkpoint.phase, "contract");
+    assert.equal(fs.existsSync(path.join(root, "receipts/contract.json")), interruption === "after_receipt");
+    const interruptedVerify = run("verify", root);
+    if (interruption === "after_journal") assert.equal(interruptedVerify.status, 0, interruptedVerify.stderr);
+    else assert.notEqual(interruptedVerify.status, 0, "an unanchored candidate receipt must not verify as promoted");
+
+    const retry = run("checkpoint", root, "contract",
+      "--input", "study-plan.md",
+      "--input", "request.md",
+      "--input", "environment/bootstrap.json",
+      "--input", "contract/run-config.json",
+      "--input", "contract/input-manifest.json",
+      "--input", "contract/evaluator-contract.md",
+      "--input", "contract/evaluator-manifest.json",
+      "--input", "contract/i1-verification-policy.json",
+      "--input", "contract/control-plane/i1-interpreter.mjs",
+      "--output", "contract",
+      "--output", "role-receipts/i1_verifier_builder.json",
+      "--output", "role-receipts/contract_auditor.json");
+    assert.equal(retry.status, 0, retry.stderr);
+    assert.equal(read(root, "run.json").pending_checkpoint, null);
+    const verified = run("verify", root);
+    assert.equal(verified.status, 0, verified.stderr);
+  }
+});
+
+test("an interrupted invalidation rolls forward exactly once on retry", (t) => {
+  const root = through(t, "investigation");
+  put(root, "repairs/interrupted-invalidation.md", "The investigation gate needs its one bounded repair.\n");
+  const interrupted = runWithEnv({ SCIENTISTONE_TEST_INTERRUPT_INVALIDATION: "after_journal" }, "invalidate", root, "investigation", "repairs/interrupted-invalidation.md");
+  assert.notEqual(interrupted.status, 0);
+  assert.match(interrupted.stderr, /Injected invalidation interruption/);
+  assert.equal(read(root, "run.json").pending_invalidation.kind, "invalidate");
+  assert.match(run("verify", root).stderr, /interrupted invalidate/i);
+
+  const recovered = run("invalidate", root, "investigation", "repairs/interrupted-invalidation.md");
+  assert.equal(recovered.status, 0, recovered.stderr);
+  const record = read(root, "run.json");
+  assert.equal(record.pending_invalidation, null);
+  assert.equal(record.repair_waves.investigation, 1);
+  assert.equal(record.invalidation_roots.length, 1);
+  assert.equal(fs.readdirSync(path.join(root, "receipts/superseded")).length, 1);
+  const verified = run("verify", root);
+  assert.equal(verified.status, 0, verified.stderr);
 });
 
 test("the CoE rejects a launch whose model or effort differs from the frozen role policy", (t) => {
@@ -159,13 +237,14 @@ test("the CoE rejects a launch whose model or effort differs from the frozen rol
   json(root, "contract/evaluator-manifest.json", { schema_version: 1, files: [{ path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), access_class: "evaluator_only" }] });
   put(root, "contract/audit.md", "Overall verdict: PASS\n");
   const i1Contract = seedI1Contract({ root, mode: "research", runtime: testRuntime(root, "i1_verifier_builder"), hash, fileHash, json, put });
-  const result = checkpointResult(root, "contract", ["contract", "private/evaluator/i1-verifier"], [{ role: "i1_verifier_builder", inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs }, { role: "contract_auditor", inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"], model: "wrong-model", reasoning_effort: "low" }]);
+  const result = checkpointResult(root, "contract", ["contract"], [{ role: "i1_verifier_builder", inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs }, { role: "contract_auditor", inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"], model: "wrong-model", reasoning_effort: "low" }]);
   assert.match(result.stderr, /does not match the frozen ScientistOne model policy/);
 });
 
 test("portable run-local tools support a complete verified chain", (t) => {
   const root = through(t, "complete", "portable_official");
-  assert.equal(run("verify", root).status, 0);
+  const verified = run("verify", root);
+  assert.equal(verified.status, 0, verified.stderr);
   assert.ok(read(root, "environment/bootstrap.json").tools.every((tool) => tool.path.startsWith("environment/tools/")));
 });
 
@@ -187,7 +266,7 @@ test("incomplete bootstrap and unrecorded or unsafe dependency changes block pro
   json(missing, "contract/evaluator-manifest.json", { schema_version: 1, files: [{ path: "private/evaluator/evaluate.mjs", sha256: hash(missing, "private/evaluator/evaluate.mjs"), access_class: "evaluator_only" }] });
   put(missing, "contract/audit.md", "Overall verdict: PASS\n");
   const contractInputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/run-config.json", "contract/input-manifest.json", "contract/evaluator-contract.md", "contract/evaluator-manifest.json"];
-  assert.match(checkpointResult(missing, "contract", ["contract"], [{ role: "contract_auditor", inputs: contractInputs, outputs: ["contract/audit.md"] }]).stderr, /Missing artifact|Cannot read valid JSON/);
+  assert.throws(() => checkpointResult(missing, "contract", ["contract"], [{ role: "contract_auditor", inputs: contractInputs, outputs: ["contract/audit.md"] }]), /Missing artifact|Cannot read valid JSON/);
 
   for (const change of [
     { name: "numpy", version: "latest", scope: "run_local", source: "pypi", reason: "test" },
@@ -209,11 +288,62 @@ test("only COMPLETE plus PASS launches promote, and output ownership is exclusiv
 test("external-source permissions are bound to the supervisor launch", (t) => { const root = through(t, "investigation"); assert.match(discover(root, null, { allowed_external_sources: [], receipt_allowed_external_sources: ["web search"] }).stderr, /Allowed external sources.*differ from supervisor launch record/); });
 test("evaluator access, outputs, and feedback are sanitized", (t) => { const leak = through(t, "investigation"); assert.match(discover(leak, "leak").stderr, /evaluator-only input/); const exposed = through(t, "investigation"); assert.match(discover(exposed, "expose").stderr, /Unknown candidate-visible field.*heldout_rows/); const root = contract(t); put(root, "private/evaluator/feedback.json", JSON.stringify({ schema_version: 1, execution_status: "COMPLETE", public_metric: { name: "score", value: 1, unit: "points", direction: "maximize" }, safe_failure_category: null, candidate_visible_note: "Done." })); assert.equal(run("sanitize-feedback", root, "private/evaluator/feedback.json", "discovery/nodes/n1/feedback/v1.json").status, 0); put(root, "private/evaluator/bad.json", JSON.stringify({ schema_version: 1, execution_status: "COMPLETE", public_metric: null, safe_failure_category: null, candidate_visible_note: "Done.", heldout_rows: [] })); assert.match(run("sanitize-feedback", root, "private/evaluator/bad.json", "discovery/nodes/n1/feedback/bad.json").stderr, /heldout_rows/); });
 test("selection lineage is byte-bound to an eligible sealed snapshot", (t) => { const root = through(t, "discovery"); assert.match(select(root, true).stderr, /differs from lineage source/); });
-test("selection preflight binds the canonical metric to frozen I1 policy and rejects downstream inputs", (t) => { const metric = through(t, "discovery"); assert.match(select(metric, false, "metric").stderr, /does not match exactly one frozen primary I1 metric/); assert.equal(fs.existsSync(path.join(metric, "receipts/selection.json")), false); const downstream = through(t, "discovery"); assert.match(select(downstream, false, "downstream").stderr, /declares downstream input paper\/claims\.jsonl while producing selection evidence/); assert.equal(fs.existsSync(path.join(downstream, "receipts/selection.json")), false); });
+test("selection preflight binds the canonical metric to frozen I1 policy and rejects downstream inputs", (t) => {
+  const metric = through(t, "discovery");
+  assert.match(select(metric, false, "metric").stderr, /Canonical metric does not match its frozen policy/);
+  assert.equal(fs.existsSync(path.join(metric, "receipts/selection.json")), false);
+  const downstream = through(t, "discovery");
+  assert.match(select(downstream, false, "downstream").stderr, /declares downstream input paper\/claims\.jsonl while producing selection evidence/);
+  assert.equal(fs.existsSync(path.join(downstream, "receipts/selection.json")), false);
+});
 test("grounding, claim inventory, exact sentences, evidence resolution, cycles, and study/prior-work sources are enforced", (t) => { const wrong = through(t, "ablation"); assert.match(write(wrong, true).stderr, /grounding ratio is inconsistent/); const base = through(t, "writing"); for (const [change, expected] of [["missing", /claim inventory differs/], ["extra", /claim inventory differs/], ["sentence", /does not occur/], ["mapping", /differs from its claim record/], ["target", /Missing artifact/], ["cycle", /Circular inference/], ["study_source", /canonical or ablation metric/]]) { const clone = fs.mkdtempSync(path.join(os.tmpdir(), "coe-claims-")); t.after(() => fs.rmSync(clone, { recursive: true, force: true })); fs.cpSync(base, clone, { recursive: true }); assert.match(verifyPhase(clone, change).stderr, expected); } assert.equal(verifyPhase(base).status, 0); });
 test("substantive audits, visual inspection, reproduction, and reporter ownership reject bare or overbroad records", (t) => { const base = through(t, "verification"); for (const [change, expected] of [["i1", /Malformed task-adaptive I1 aggregate/], ["i3", /I3.*non-empty entries/], ["claim", /total_numerical_claims/], ["vote", /Malformed substantive I2 vote/], ["report", /Audit report is empty/], ["reproduction", /Reproduction guide/], ["reporter-extra", /Audit reporter owns an invalid report set/]]) { const clone = fs.mkdtempSync(path.join(os.tmpdir(), "coe-audit-")); t.after(() => fs.rmSync(clone, { recursive: true, force: true })); fs.cpSync(base, clone, { recursive: true }); assert.match(audit(clone, change).stderr, expected); } const visual = through(t, "writing"); assert.match(verifyPhase(visual, "visual").stderr, /must record every checked page/); });
-test("external bundles use arbitrary names and reject empty, unassessable, or falsely PASS inputs", (t) => { const root = externalContract(t); assert.equal(externalAudit(root).status, 0); copy(root, "contract/source-bundle-manifest.json", "deliverables/source-bundle-manifest.json"); copy(root, "audit/report.md", "deliverables/audit-report.md"); copy(root, "delivery/reproduction.md", "deliverables/reproduction.md"); assert.equal(run("manifest", root).status, 0); assert.equal(run("set-outcome", root, "audit_passed").status, 0); checkpoint(root, "complete", ["deliverables"]); assert.equal(run("verify", root).status, 0); const empty = newRun(t, "external_audit"); json(empty, "contract/input-manifest.json", { schema_version: 1, files: [] }); json(empty, "contract/source-bundle-manifest.json", { schema_version: 1, items: [] }); put(empty, "contract/audit.md", "Overall verdict: PASS\n"); assert.match(externalContractResult(empty).stderr, /non-empty items/); const none = newRun(t, "external_audit"); json(none, "contract/input-manifest.json", { schema_version: 1, files: [] }); json(none, "contract/source-bundle-manifest.json", { schema_version: 1, items: bundle(none).map((item) => ({ ...item, available: false, sha256: null, missing_reason: "missing" })) }); put(none, "contract/audit.md", "Overall verdict: PASS\n"); assert.match(externalContractResult(none).stderr, /no assessable integrity check/); const falsePass = externalContract(t, "I1"); assert.match(externalAudit(falsePass, true).stderr, /reports PASS even though required source-bundle inputs are unavailable/); });
-test("validated state and attention commands keep phase aligned to receipts", (t) => { const root = contract(t); assert.equal(read(root, "run.json").phase, "investigation"); assert.match(run("set-state", root, "paused").stderr, /validated attention/); put(root, "attention.md", "Required action: Supply the missing file.\n"); assert.equal(run("set-attention", root, "attention.md").status, 0); assert.equal(run("set-state", root, "paused").status, 0); assert.match(run("set-state", root, "running").stderr, /clear-attention/); assert.equal(run("clear-attention", root).status, 0); assert.equal(run("set-state", root, "running").status, 0); const record = read(root, "run.json"); record.phase = "selection"; json(root, "run.json", record); assert.match(run("verify", root).stderr, /expected investigation, received selection/); });
+test("I1 lineage must bind the displayed claim to the recomputed canonical estimate", (t) => { const root = through(t, "verification"); assert.match(audit(root, "lineage-canonical").stderr, /Malformed I1 lineage metric/); });
+test("external bundles preserve evidence-limited audits without false PASS", (t) => {
+  const root = externalContract(t);
+  assert.equal(externalAudit(root).status, 0);
+  copy(root, "contract/source-bundle-manifest.json", "deliverables/source-bundle-manifest.json");
+  copy(root, "audit/report.md", "deliverables/audit-report.md");
+  copy(root, "delivery/reproduction.md", "deliverables/reproduction.md");
+  assert.equal(run("manifest", root).status, 0);
+  assert.equal(run("set-outcome", root, "audit_passed").status, 0);
+  checkpoint(root, "complete", ["deliverables"]);
+  const verified = run("verify", root);
+  assert.equal(verified.status, 0, verified.stderr);
+
+  const empty = newRun(t, "external_audit");
+  json(empty, "contract/input-manifest.json", { schema_version: 1, files: [] });
+  json(empty, "contract/source-bundle-manifest.json", { schema_version: 1, items: [] });
+  put(empty, "contract/audit.md", "Overall verdict: PASS\n");
+  assert.match(externalContractResult(empty).stderr, /non-empty items/);
+
+  const none = newRun(t, "external_audit");
+  json(none, "contract/input-manifest.json", { schema_version: 1, files: [] });
+  json(none, "contract/source-bundle-manifest.json", { schema_version: 1, items: bundle(none).map((item) => ({ ...item, available: false, sha256: null, missing_reason: "missing" })) });
+  put(none, "contract/audit.md", "Overall verdict: PASS\n");
+  assert.equal(externalContractResult(none).status, 0);
+
+  const falsePass = externalContract(t, "I1");
+  assert.match(externalAudit(falsePass, true).stderr, /reports PASS even though required source-bundle inputs are unavailable/);
+  const notAssessed = externalContract(t, "I1");
+  const unavailableResult = externalAudit(notAssessed);
+  assert.equal(unavailableResult.status, 0, unavailableResult.stderr);
+});
+test("1.3 removes the obsolete pause and attention control path", (t) => { const root = contract(t); assert.equal(read(root, "run.json").phase, "investigation"); for (const args of [["set-state", root, "paused"], ["set-attention", root, "attention.md"], ["clear-attention", root]]) assert.notEqual(run(...args).status, 0); assert.equal(read(root, "run.json").state, "running"); assert.equal(run("verify", root).status, 0); const record = read(root, "run.json"); record.phase = "selection"; json(root, "run.json", record); assert.match(run("verify", root).stderr, /expected investigation, received selection/); });
+test("scientific stop reasons cannot waive frozen discovery minima", (t) => {
+  const root = contract(t);
+  investigate(root);
+  assert.match(discover(root, "stop-below-min").stderr, /too few eligible ideas/);
+});
+test("future model routing changes preserve the verified contract and original route", async (t) => {
+  const root = contract(t);
+  const original = fs.readFileSync(path.join(root, "environment/model-routing.json"));
+  const newer = { models: TEST_CATALOG.models.map((item) => ({ ...item, slug: `${item.slug}-next` })) };
+  const active = await ensureRunRouting(root, { catalog: newer });
+  assert.match(active.tiers.strong.model, /-next$/);
+  assert.deepEqual(fs.readFileSync(path.join(root, "environment/model-routing.json")), original);
+  assert.equal(run("verify", root).status, 0);
+});
 test("native launch records produce hash-bound reusable receipts and reject drift or duplicate logical work", async (t) => {
   const root = contract(t);
   const stateHome = fs.mkdtempSync(path.join(os.tmpdir(), "scientistone-grants-"));
@@ -229,7 +359,9 @@ test("native launch records produce hash-bound reusable receipts and reject drif
       declared_inputs: ["study-plan.md"],
       declared_outputs: [output],
       allowed_external_sources: ["scholarly_web"],
+      task_brief: { objective: "Map the first literature round", context: "Investigation is ready", acceptance_gate: "Save one search-log artifact", constraints: "Use only declared study context", upstream_summary: [{ input_path: "study-plan.md", summary: "Approved research plan" }] },
     }, { catalog: TEST_CATALOG, stateHome });
+    consumeLaunchToken(prepared.task_name, { stateHome });
     put(root, output, `{\"attempt\":${attempt}}\n`);
     const launch = read(root, prepared.launch_record);
     json(root, `role-receipts/${task}.json`, {
@@ -245,6 +377,8 @@ test("native launch records produce hash-bound reusable receipts and reject drif
       reasoning_effort: launch.reasoning_effort,
       model_routing_sha256: launch.model_routing_sha256,
       role_contract_sha256: launch.role_contract_sha256,
+      assignment_sha256: launch.assignment_sha256,
+      task_brief_sha256: launch.task_brief_sha256,
       gate_schema_version: launch.gate_schema_version,
       fork_turns: "none",
       started_at: launch.started_at,
@@ -258,6 +392,7 @@ test("native launch records produce hash-bound reusable receipts and reject drif
       output_artifacts: [{ path: output, sha256: hash(root, output) }],
       undeclared_inputs_accessed: [],
       limitations: [],
+      handoff: { summary: "Literature round completed.", decisions: [], evidence_ids: [output], conflicts: [], unresolved: [], recommended_next_action: "Review the saved search log." },
       execution_status: "COMPLETE",
       gate_verdict: "PASS",
       launch_record: prepared.launch_record,
@@ -276,8 +411,10 @@ test("native launch records produce hash-bound reusable receipts and reject drif
   put(root, "evidence/search-log-a1.jsonl", '{"attempt":1}\n');
   assert.equal(run("verify-role", root, first).status, 0);
 
-  await completedAttempt("literature_map_a2", 2, "evidence/search-log-a2.jsonl");
-  assert.match(run("verify-role", root, first).stderr, /another COMPLETE\/PASS receipt|duplicate/i);
+  await assert.rejects(
+    completedAttempt("literature_map_a2", 2, "evidence/search-log-a1.jsonl"),
+    (error) => error.code === "S1_LOGICAL_TASK_COMPLETE",
+  );
 });
 test("invalidation preserves evidence and detects every archived-tree mutation class", (t) => {
   const root = through(t, "investigation");
@@ -323,6 +460,45 @@ test("invalidation preserves evidence and detects every archived-tree mutation c
     if (!new Set(["EPERM", "EACCES", "ENOTSUP"]).has(error?.code)) throw error;
     t.diagnostic(`symlink mutation case unavailable on this platform: ${error.code}`);
   }
+});
+
+test("repair exhaustion archives the exact affected chain before terminal INCOMPLETE", (t) => {
+  const root = through(t, "investigation");
+  put(root, "repairs/investigation-r1.md", "The first investigation gate defect requires one bounded repair.\n");
+  const repaired = run("invalidate", root, "investigation", "repairs/investigation-r1.md");
+  assert.equal(repaired.status, 0, repaired.stderr);
+  investigate(root, 2);
+  put(root, "repairs/investigation-limit.md", "The investigation gate remains invalid.\n");
+  const exhausted = run("invalidate", root, "investigation", "repairs/investigation-limit.md");
+  assert.notEqual(exhausted.status, 0);
+  const terminalRecord = read(root, "run.json");
+  const terminal = read(root, "terminal/incomplete.json");
+  assert.equal(terminalRecord.state, "blocked_exhausted");
+  assert.equal(terminalRecord.phase, "investigation");
+  assert.equal(terminalRecord.last_checkpoint, "contract");
+  assert.equal(fs.existsSync(path.join(root, "receipts/investigation.json")), false);
+  assert.equal(terminal.repair_gate, "investigation");
+  const terminalVerified = run("verify", root);
+  assert.equal(terminalVerified.status, 0, terminalVerified.stderr);
+  terminal.repair_gate = "contract";
+  json(root, "terminal/incomplete.json", terminal);
+  const tamperedRecord = read(root, "run.json");
+  tamperedRecord.terminal_anchor.sha256 = hash(root, "terminal");
+  json(root, "run.json", tamperedRecord);
+  assert.match(run("verify", root).stderr, /Terminal repair exhaustion/);
+});
+
+test("a completed delivery is immutable and cannot be reopened as exhaustion", (t) => {
+  const root = through(t, "complete");
+  put(root, "repairs/final-limit.md", "The final delivery gate requires a correction beyond its frozen repair budget.\n");
+  const exhausted = run("invalidate", root, "complete", "repairs/final-limit.md");
+  assert.notEqual(exhausted.status, 0);
+  const terminalRecord = read(root, "run.json");
+  assert.equal(terminalRecord.state, "complete");
+  assert.equal(terminalRecord.phase, "complete");
+  assert.equal(terminalRecord.last_checkpoint, "complete");
+  const completedVerified = run("verify", root);
+  assert.equal(completedVerified.status, 0, completedVerified.stderr);
 });
 
 test("a result-blind contract defect repairs and re-audits inside the same run", (t) => {
@@ -374,11 +550,12 @@ test("a rejected pre-checkpoint contract is repaired without restarting the stud
   assert.equal(record.last_checkpoint, null);
   assert.equal(fs.existsSync(path.join(root, "contract/audit.md")), false);
   assert.equal(fs.existsSync(path.join(root, "role-receipts/contract_auditor.json")), false);
-  assert.equal(fs.existsSync(path.join(root, "role-launches/contract_auditor.json")), false);
+  assert.equal(fs.existsSync(path.join(root, "role-launches/contract_auditor.json")), true, "accepted launch evidence is immutable across repair");
   assert.equal(fs.existsSync(path.join(root, "private/evaluator/evaluate.mjs")), true, "frozen evaluator-only input must survive generated-contract repair");
   const archive = path.join(root, record.invalidation_roots.at(-1).path);
   assert.equal(fs.existsSync(path.join(archive, "artifacts/contract/audit.md")), true);
   assert.equal(fs.existsSync(path.join(archive, "artifacts/role-receipts/contract_auditor.json")), true);
+  assert.equal(fs.existsSync(path.join(archive, "artifacts/role-launches/contract_auditor.json")), true);
   assert.equal(run("verify", root).status, 0);
 
   installTestRouting(root);
@@ -389,7 +566,7 @@ test("a rejected pre-checkpoint contract is repaired without restarting the stud
 
 test("a result-blind repair after investigation archives prior work without asking for approval", (t) => {
   const root = through(t, "investigation");
-  json(root, "repairs/pre-candidate.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The verifier fixture omitted a valid input shape before candidate work began.", repair: "Add the missing result-blind fixture and rerun contract review.", researcher_approval: null });
+  json(root, "repairs/pre-candidate.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The frozen evaluator contract omitted a valid input shape before candidate work began.", repair: "Correct the result-blind evaluator contract and rerun contract review.", researcher_approval: null });
   const revised = run("revise-contract", root, "repairs/pre-candidate.json");
   assert.equal(revised.status, 0, revised.stderr);
   const record = read(root, "run.json");
@@ -404,7 +581,7 @@ test("a result-blind repair after investigation archives prior work without aski
 test("a result-aware evaluator repair archives every successor and reruns from contract", (t) => {
   const root = through(t, "selection");
   const selectedBefore = fileHash(path.join(root, "selection/canonical-evaluation.json"));
-  json(root, "repairs/contract-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "The frozen verifier mishandles a valid result shape.", repair: "Correct the implementation without changing the approved metric or decision rule, then rerun all affected work.", researcher_approval: null });
+  json(root, "repairs/contract-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "The frozen I1 policy mishandles a valid supported result shape.", repair: "Correct the policy without changing the approved metric or decision rule, then rerun all affected work.", researcher_approval: null });
   const revised = run("revise-contract", root, "repairs/contract-r1.json");
   assert.equal(revised.status, 0, revised.stderr);
   const record = read(root, "run.json");
@@ -412,7 +589,7 @@ test("a result-aware evaluator repair archives every successor and reruns from c
   assert.equal(record.last_checkpoint, null);
   assert.deepEqual(record.checkpoints, {});
   assert.equal(fs.existsSync(path.join(root, "selection/canonical-evaluation.json")), false);
-  assert.equal(fs.existsSync(path.join(root, "role-launches/canonical_evaluator.json")), false);
+  assert.equal(fs.existsSync(path.join(root, "role-launches/canonical_evaluator.json")), true, "accepted launch evidence is immutable across repair");
   const archiveRoot = path.join(root, record.invalidation_roots.at(-1).path);
   const metadata = JSON.parse(fs.readFileSync(path.join(archiveRoot, "invalidation.json"), "utf8"));
   const archivedSelection = metadata.archived_artifacts.find((item) => item.path === "selection");
@@ -434,10 +611,10 @@ test("partial uncheckpointed candidate work cannot survive a contract revision",
   const root = contract(t);
   put(root, "discovery/nodes/partial/snapshots/v1/method.txt", "partial candidate\n");
   put(root, "private/evaluator/raw/partial.txt", "observed result\n");
-  json(root, "repairs/incorrectly-blind.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "Verifier defect discovered during partial evaluation.", repair: "Correct the verifier and rerun the partial candidate.", researcher_approval: null });
+  json(root, "repairs/incorrectly-blind.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "Evaluator-contract defect discovered during partial evaluation.", repair: "Correct the evaluator contract and rerun the partial candidate.", researcher_approval: null });
   assert.match(run("revise-contract", root, "repairs/incorrectly-blind.json").stderr, /must declare result_aware true/);
 
-  json(root, "repairs/result-aware.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "Verifier defect discovered during partial evaluation.", repair: "Correct the verifier and rerun the partial candidate without using the observed value to set the rule.", researcher_approval: null });
+  json(root, "repairs/result-aware.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "Evaluator-contract defect discovered during partial evaluation.", repair: "Correct the evaluator contract and rerun the partial candidate without using the observed value to set the rule.", researcher_approval: null });
   const revised = run("revise-contract", root, "repairs/result-aware.json");
   assert.equal(revised.status, 0, revised.stderr);
   const record = read(root, "run.json");
@@ -464,5 +641,3 @@ test("an explicit researcher approval can amend the charter without losing the o
   assert.equal(fs.readFileSync(path.join(archive, "artifacts/study-plan.md"), "utf8"), "# Approved plan\n");
   assert.equal(run("verify", root).status, 0);
 });
-
-export { checkpoint as contractCheckpoint, copy as contractCopy, externalAudit, externalContract, json as contractJson, newRun as contractNewRun, put as contractPut, read as contractRead, run as contractRun, through as contractThrough };

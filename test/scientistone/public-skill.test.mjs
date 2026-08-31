@@ -10,12 +10,12 @@ async function text(relative) {
 
 test("public manifest ships one complete local Codex experience", async () => {
   const manifest = JSON.parse(await text(".codex-plugin/plugin.json"));
-  assert.equal(manifest.version, "1.2.0");
+  assert.equal(manifest.version, "1.3.0");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
   assert.equal("apps" in manifest, false);
-  assert.equal(manifest.hooks, "./hooks/hooks.json");
+  assert.equal("hooks" in manifest, false);
   assert.match(manifest.repository, /^https:\/\/github\.com\//);
   assert.match(manifest.interface.privacyPolicyURL, /^https:\/\//);
   assert.match(manifest.interface.termsOfServiceURL, /^https:\/\//);
@@ -73,19 +73,31 @@ test("all three public skills are present and have frontmatter", async () => {
 test("Codex skills route setup, review, and monitoring through the bundled MCP", async () => {
   const skill = await text("skills/scientistone/SKILL.md");
   const monitor = await text("skills/scientistone-monitor/SKILL.md");
+  const results = await text("skills/scientistone-results/SKILL.md");
   assert.match(skill, /start_study_setup/);
   assert.match(skill, /wait_for_researcher/);
   assert.match(skill, /publish_study_review/);
   assert.match(skill, /attach_run_monitor/);
   assert.match(monitor, /open_run_monitor/);
+  assert.match(monitor, /returned `verified_status` is the verified snapshot/i);
+  assert.match(monitor, /Do not run a second CLI verification/i);
+  assert.doesNotMatch(monitor, /Before acting, read completely/);
+  assert.doesNotMatch(results, /Before acting, read completely/);
   assert.match(skill, /wait_timed_out: true/);
   assert.match(skill, /close the same built-in browser tab/i);
   assert.match(skill, /resume_latest: true/);
+  assert.match(skill, /installation alone does not trust it/i);
+  assert.match(skill, /open `\/hooks`/i);
   const mcp = JSON.parse(await text(".mcp.json"));
   assert.equal(mcp.mcpServers.scientistone_mcp.tool_timeout_sec, 3700);
 });
 
-test("ScientistOne offers one opt-in parallel-capacity preflight before intake", async () => {
+test("the shipped UI omits development-only design notes", async () => {
+  const html = await text("mcp/ui/index.html");
+  assert.doesNotMatch(html, /THESIS:|OWN-WORLD:|seed 71fc7200|DESIGN\.md/);
+});
+
+test("ScientistOne offers one optional parallel-capacity optimization without blocking intake", async () => {
   const skill = await text("skills/scientistone/SKILL.md");
   const helper = await text("skills/scientistone/scripts/capacity-preflight.mjs");
   assert.match(skill, /check_parallel_capacity/);
@@ -93,7 +105,7 @@ test("ScientistOne offers one opt-in parallel-capacity preflight before intake",
   assert.match(skill, /may use your Codex allowance faster/i);
   assert.match(skill, /approve_parallel_capacity[\s\S]+one-use `confirmation_token`/);
   assert.match(skill, /decline_parallel_capacity/);
-  assert.match(skill, /before creating an intake draft or run/i);
+  assert.match(skill, /optional execution optimization, never a gate on\s+intake or scientific work/i);
   assert.match(skill, /declined, managed,[\s\S]+never triggers another prompt/i);
   assert.match(skill, /absolute ScientistOne ceiling of 16 live specialists/i);
   assert.match(skill, /never run\s+it through the agent terminal/i);
@@ -118,7 +130,7 @@ test("setup doctrine requires the bundled local server", async () => {
   assert.match(intake, /never sent to a remote ScientistOne service/i);
 });
 
-test("sparse intake and generated-contract defects remain recoverable", async () => {
+test("sparse intake and generated-contract defects use bounded recovery", async () => {
   const skill = await text("skills/scientistone/SKILL.md");
   const intake = await text("skills/scientistone/references/intake.md");
   const protocol = await text("skills/scientistone/references/protocol.md");
@@ -127,7 +139,8 @@ test("sparse intake and generated-contract defects remain recoverable", async ()
   assert.match(intake, /Blank purpose, prior-work, evaluation, limit, or deliverable fields are valid intake/i);
   assert.match(skill, /result-blind defect[\s\S]+same run/i);
   assert.match(skill, /result-aware defect[\s\S]+invalidate_and_rerun/i);
-  assert.match(skill, /approved run stays `running` or `repairing` until verified completion/i);
+  assert.match(skill, /at\s+most two attempts[\s\S]+at\s+most one automatic repair wave/i);
+  assert.match(skill, /blocked_exhausted[\s\S]+INCOMPLETE/i);
   assert.match(protocol, /RESEARCHER_APPROVED_AMENDMENT/);
   assert.match(roles, /Do not treat a repairable\s+contract defect as BLOCKED/i);
 });
@@ -160,12 +173,12 @@ test("the optimized scheduler preserves causal barriers while filling independen
   assert.match(scheduler, /MAX_CAPACITY = 16/);
 });
 
-test("phase preflight is read-only and mandatory before downstream work", async () => {
+test("checkpoint is the authoritative promotion gate and preflight is optional", async () => {
   const skill = await text("skills/scientistone/SKILL.md");
   const artifacts = await text("skills/scientistone/references/artifacts.md");
   const coe = await text("skills/scientistone/scripts/coe.mjs");
-  assert.match(skill, /read-only `coe\.mjs preflight`[\s\S]+before any downstream specialist launches/i);
-  assert.match(artifacts, /same artifact,[\s\S]+lineage, metric, and manifest gates without writing a\s+receipt/i);
+  assert.match(skill, /`coe\.mjs checkpoint` is the one\s+authoritative, failure-atomic promotion gate/i);
+  assert.match(skill, /`coe\.mjs preflight` is an\s+optional read-only dry run/i);
   assert.match(coe, /function preflight/);
   assert.match(coe, /validatePhasePromotion/);
 });
@@ -190,21 +203,19 @@ test("the compressed common role prefix retains every safety and evidence obliga
   ]) assert.match(envelope, pattern);
 });
 
-test("one approval drives an approved run through verified delivery", async () => {
+test("one approval grants bounded execution through verified delivery", async () => {
   const skill = await text("skills/scientistone/SKILL.md");
   const intake = await text("skills/scientistone/references/intake.md");
   const protocol = await text("skills/scientistone/references/protocol.md");
   const roles = await text("skills/scientistone/references/roles.md");
   const hooks = JSON.parse(await text("hooks/hooks.json"));
-  assert.match(skill, /Approve and start study.*durable authority/i);
-  assert.match(skill, /Immediately after approval, use native goal tools/i);
-  assert.match(skill, /never ask the researcher for approval, permission, authority, confirmation/i);
-  assert.match(skill, /Do not create `attention\.md` after approval/i);
-  assert.match(skill, /Do not report completion or end an approved run until[\s\S]+final verifier passes/i);
+  assert.match(skill, /Approve and start study[\s\S]+authorizes\s+safe, reversible, in-scope execution/i);
+  assert.match(skill, /Durable approval is not unlimited authority or an instruction to loop/i);
+  assert.match(skill, /one bounded goal[\s\S]+fresh verification proves completion or `blocked_exhausted`/i);
+  assert.match(skill, /goal[\s\S]+must never continue work after either terminal state/i);
+  assert.match(skill, /Do not report completion until every deliverable required by the plan exists and the final verifier passes/i);
   assert.match(intake, /only approval checkpoint/i);
-  assert.match(protocol, /Never reopen approval or ask the researcher/i);
-  assert.match(roles, /Classify every REVISE finding as `AUTOMATIC_REPAIR`/i);
-  assert.doesNotMatch(roles, /Classify every REVISE finding[^\n]+REAPPROVAL_REQUIRED/i);
-  assert.ok(Array.isArray(hooks.hooks.Stop) && hooks.hooks.Stop.length === 1);
-  assert.match(hooks.hooks.Stop[0].hooks[0].command, /enforce-study-autonomy\.mjs/);
+  assert.match(protocol, /Approval grants durable authority for bounded in-scope repairs/i);
+  assert.match(roles, /closed essential checklist/i);
+  assert.equal("Stop" in hooks.hooks, false);
 });
