@@ -38,6 +38,7 @@ const CONTRACT_GENERATED_PATHS = ["contract/evaluator-contract.md", "contract/ev
 const CONTRACT_ROLE_NAMES = new Set(["i1_verifier_builder", "contract_auditor"]);
 const CONTRACT_SUCCESSOR_ROOTS = ["evidence", "investigation", "discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"];
 const RESULT_AWARE_ROOTS = ["discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"];
+const RESULT_AWARE_PRIVATE_ROOTS = ["private/evaluator/raw", "private/evaluator/i1-runs"];
 const PRIVATE_ROLES = new Set(["evaluator", "i1_verifier_builder", "i1_score_auditor", "i2_judge"]);
 const REQUIRED_OUTPUTS = {
   contract: ["contract/run-config.json", "contract/input-manifest.json", I1_INTERPRETER_PATH, "contract/i1-verification-policy.json", "contract/audit.md"],
@@ -2114,11 +2115,29 @@ function contractSuccessorPaths(run) {
   return [...paths];
 }
 
+function isResultAwarePath(relative) {
+  return RESULT_AWARE_ROOTS.some((root) => relative === root || relative.startsWith(`${root}/`))
+    || RESULT_AWARE_PRIVATE_ROOTS.some((root) => relative === root || relative.startsWith(`${root}/`));
+}
+
 function resultAwareEvidenceExists(run, record, successorPaths) {
   if (RESULT_AWARE_ROOTS.some((relative) => fs.existsSync(path.join(run, relative)))) return true;
-  if (successorPaths.some((relative) => relative.startsWith("private/evaluator/"))) return true;
+  if (successorPaths.some(isResultAwarePath)) return true;
   const discoveryIndex = phasesFor(record).indexOf("discovery");
   return discoveryIndex >= 0 && Object.keys(record.checkpoints).some((phase) => phasesFor(record).indexOf(phase) >= discoveryIndex);
+}
+
+function archivedResultAwareContractEvidenceExists(run, record) {
+  for (const root of record.invalidation_roots) {
+    const metadata = readJson(path.join(artifactPath(run, root.path).target, "invalidation.json"));
+    if (metadata.from_phase !== "contract") continue;
+    const archivedPaths = [
+      ...metadata.expected_outputs.map((item) => item.path),
+      ...metadata.archived_artifacts.map((item) => item.path),
+    ];
+    if (archivedPaths.some(isResultAwarePath)) return true;
+  }
+  return false;
 }
 
 function removeContractGeneratedPaths(run, paths) {
@@ -2308,11 +2327,19 @@ function reviseContract(runArg, reasonArg, amendedPlanArg) {
   const record = verifyRunRecord(run, { allowReceiptDrift: true });
   if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Cannot revise a contract while run state is ${record.state} or a checkpoint is pending`);
   const { reason, value } = contractRepairReason(run, reasonArg);
-  const repairAllowed = consumeRepairWave(run, record, "contract", reason);
   const additionalPaths = contractGeneratedPaths(run);
   const successorPaths = contractSuccessorPaths(run);
   const detectedResultAwareness = resultAwareEvidenceExists(run, record, successorPaths);
-  if (detectedResultAwareness && !value.result_aware) fail(`Contract repair reason must declare result_aware true because candidate or downstream evidence exists at ${reason.path}`);
+  const resultAwareRepair = detectedResultAwareness || archivedResultAwareContractEvidenceExists(run, record);
+  if (value.result_aware !== resultAwareRepair) {
+    const expected = resultAwareRepair ? "true because candidate or downstream evidence exists" : "false because no candidate or downstream evidence exists";
+    fail(`Contract repair reason must declare result_aware ${expected} at ${reason.path}`);
+  }
+  // Pre-result contract stabilization is bounded by the closed audit scope, not
+  // by an arbitrary retry count. The repair-wave budget starts only after a
+  // candidate or downstream result exists, when another revision would
+  // invalidate evidence.
+  const repairAllowed = !resultAwareRepair || consumeRepairWave(run, record, "contract", reason);
   additionalPaths.push(...successorPaths);
   let amendedPlan = null;
   if (value.classification === "RESEARCHER_APPROVED_AMENDMENT") {
@@ -2324,7 +2351,7 @@ function reviseContract(runArg, reasonArg, amendedPlanArg) {
   } else if (amendedPlanArg) {
     fail("Automatic contract repair cannot replace study-plan.md");
   }
-  const prepared = prepareInvalidation(run, record, "contract", reason, { repairWaveConsumed: repairAllowed, contractRevision: repairAllowed, additionalPaths, amendedPlan: repairAllowed ? amendedPlan : null });
+  const prepared = prepareInvalidation(run, record, "contract", reason, { repairWaveConsumed: resultAwareRepair && repairAllowed, contractRevision: repairAllowed, additionalPaths, amendedPlan: repairAllowed ? amendedPlan : null });
   const { archive, transaction, invalidatedPhases, revisionAfter } = prepared;
   const archivePath = path.relative(run, archive).replaceAll(path.sep, "/");
   const terminal = repairAllowed ? null : {
@@ -2332,7 +2359,7 @@ function reviseContract(runArg, reasonArg, amendedPlanArg) {
       repair_gate: "contract",
       exhausted_counter: record.repair_waves.contract ?? 0,
       exhausted_limit: record.orchestration.max_repair_waves_per_gate,
-      last_failure: `Repair budget exhausted for contract: ${reason.path}`,
+      last_failure: `Post-result repair budget exhausted for contract: ${reason.path}`,
       evidence_paths: [archivePath],
       remaining_work: ["Resolve the blocking contract gate without weakening its acceptance criteria."],
       resume_requirement: "Start a new run that references this INCOMPLETE record after correcting the blocking evidence or supplying genuinely required authority/input.",
@@ -2342,8 +2369,8 @@ function reviseContract(runArg, reasonArg, amendedPlanArg) {
   writeJson(path.join(run, "run.json"), record);
   if (process.env.SCIENTIST1_TEST_INTERRUPT_INVALIDATION === "after_journal") fail("Injected invalidation interruption after journal");
   const finished = finishPendingInvalidation(run, record);
-  if (!repairAllowed) fail("Repair budget exhausted for contract; the affected chain was superseded and the run is blocked_exhausted.");
-  appendEvent(run, { event: "contract_revision_started", revision: revisionAfter, charter_revision: record.charter_revision, classification: value.classification, result_aware: value.result_aware, amended_plan: amendedPlan, reason: reason.path, archive: archivePath });
+  if (!repairAllowed) fail("Post-result repair budget exhausted for contract; the affected chain was superseded and the run is blocked_exhausted.");
+  appendEvent(run, { event: "contract_revision_started", revision: revisionAfter, charter_revision: record.charter_revision, classification: value.classification, result_aware: value.result_aware, repair_wave_consumed: resultAwareRepair, amended_plan: amendedPlan, reason: reason.path, archive: archivePath });
   process.stdout.write(`${finished.archive}\n`);
 }
 

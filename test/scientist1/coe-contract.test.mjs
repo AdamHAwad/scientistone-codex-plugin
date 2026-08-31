@@ -564,6 +564,63 @@ test("a rejected pre-checkpoint contract is repaired without restarting the stud
   assert.equal(run("verify", root).status, 0);
 });
 
+test("pre-result contract stabilization can make multiple minimal revisions without exhausting the run", (t) => {
+  const root = contract(t);
+  const requestBefore = read(root, "run.json").request_sha256;
+  const planBefore = read(root, "run.json").study_plan_sha256;
+
+  json(root, "repairs/contract-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The generated evaluator invented an unapproved readiness score.", repair: "Remove only the invented score and retain the approved primary outcome.", researcher_approval: null });
+  const first = run("revise-contract", root, "repairs/contract-r1.json");
+  assert.equal(first.status, 0, first.stderr);
+  assert.deepEqual(read(root, "run.json").repair_waves, {});
+
+  installTestRouting(root);
+  writeContractArtifacts(root, "Corrected primary metric; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n");
+  json(root, "repairs/contract-r2.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The corrected policy still binds the wrong evaluator argv.", repair: "Correct only the argv binding and refresh its dependent hashes.", researcher_approval: null });
+  const second = run("revise-contract", root, "repairs/contract-r2.json");
+  assert.equal(second.status, 0, second.stderr);
+
+  const record = read(root, "run.json");
+  assert.equal(record.contract_revision, 3);
+  assert.equal(record.state, "repairing");
+  assert.equal(record.phase, "contract");
+  assert.equal(record.request_sha256, requestBefore);
+  assert.equal(record.study_plan_sha256, planBefore);
+  assert.deepEqual(record.repair_waves, {}, "pre-result contract cleanup must not consume a downstream repair wave");
+  assert.equal(fs.existsSync(path.join(root, "terminal/incomplete.json")), false);
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("contract result-awareness is derived from saved evidence instead of an agent guess", (t) => {
+  const root = newRun(t);
+  put(root, "inputs/shared/data.csv", "x\n1\n");
+  put(root, "private/evaluator/generated-evaluator.mjs", "export default true;\n");
+  json(root, "contract/input-manifest.json", { schema_version: 1, files: [
+    { source_path: "data.csv", frozen_path: "inputs/shared/data.csv", sha256: hash(root, "inputs/shared/data.csv"), classification: "shared" },
+  ] });
+  put(root, "contract/evaluator-contract.md", "Approved deterministic evaluation.\n");
+  json(root, "contract/evaluator-manifest.json", { schema_version: 1, files: [{ path: "private/evaluator/generated-evaluator.mjs", sha256: hash(root, "private/evaluator/generated-evaluator.mjs"), access_class: "evaluator_only" }] });
+  json(root, "repairs/misclassified.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "The generated policy uses the wrong input hash.", repair: "Correct the hash before candidate work.", researcher_approval: null });
+  const rejected = run("revise-contract", root, "repairs/misclassified.json");
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /must declare result_aware false because no candidate or downstream evidence exists/);
+  const record = read(root, "run.json");
+  assert.equal(record.contract_revision, 1);
+  assert.deepEqual(record.repair_waves, {});
+  assert.equal(record.state, "running");
+  assert.equal(run("verify", root).status, 0);
+
+  json(root, "repairs/correctly-classified.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The generated evaluator contract uses the wrong input hash.", repair: "Correct only the hash before candidate work.", researcher_approval: null });
+  const repaired = run("revise-contract", root, "repairs/correctly-classified.json");
+  assert.equal(repaired.status, 0, repaired.stderr);
+  const repairedRecord = read(root, "run.json");
+  assert.equal(repairedRecord.contract_revision, 2);
+  assert.deepEqual(repairedRecord.repair_waves, {});
+  assert.equal(repairedRecord.state, "repairing");
+  assert.equal(fs.existsSync(path.join(root, "terminal/incomplete.json")), false);
+  assert.equal(run("verify", root).status, 0);
+});
+
 test("a result-blind repair after investigation archives prior work without asking for approval", (t) => {
   const root = through(t, "investigation");
   json(root, "repairs/pre-candidate.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The frozen evaluator contract omitted a valid input shape before candidate work began.", repair: "Correct the result-blind evaluator contract and rerun contract review.", researcher_approval: null });
@@ -595,6 +652,25 @@ test("a result-aware evaluator repair archives every successor and reruns from c
   const archivedSelection = metadata.archived_artifacts.find((item) => item.path === "selection");
   assert.ok(archivedSelection);
   assert.equal(fileHash(path.join(root, archivedSelection.archived_path, "canonical-evaluation.json")), selectedBefore);
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("post-result contract revisions retain the frozen repair-wave ceiling", (t) => {
+  const root = through(t, "selection");
+  json(root, "repairs/result-aware-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "The frozen policy mishandles one supported result shape.", repair: "Correct that result shape without changing the approved metric, then rerun affected work.", researcher_approval: null });
+  const first = run("revise-contract", root, "repairs/result-aware-r1.json");
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(read(root, "run.json").repair_waves.contract, 1);
+
+  put(root, "contract/evaluator-contract.md", "A second result-aware contract defect remains.\n");
+  json(root, "repairs/result-aware-r2.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "A second result-aware policy defect remains.", repair: "Correct the remaining defect and rerun affected work.", researcher_approval: null });
+  const exhausted = run("revise-contract", root, "repairs/result-aware-r2.json");
+  assert.notEqual(exhausted.status, 0);
+  assert.match(exhausted.stderr, /Post-result repair budget exhausted for contract/);
+  const record = read(root, "run.json");
+  assert.equal(record.state, "blocked_exhausted");
+  assert.equal(record.phase, "contract");
+  assert.equal(read(root, "terminal/incomplete.json").repair_gate, "contract");
   assert.equal(run("verify", root).status, 0);
 });
 

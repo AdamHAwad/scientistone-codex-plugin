@@ -442,7 +442,7 @@ function renderReview() {
       </section>
       <aside class="review-actions" aria-labelledby="approval-title">
         <h2 id="approval-title">Is this the study you want?</h2>
-        <p>Approve once to start the study. After approval, S1 will execute the approved plan, make only evidence-backed repairs within the frozen two-attempt and one-wave limits, and verify each promoted phase. If a required path is exhausted, it will preserve the evidence and report the run as incomplete instead of looping or weakening the study. To revise several sections before it starts, describe the changes below.</p>
+        <p>Approve once to start the study. After approval, S1 will execute the approved plan and verify each promoted phase. Initial contract review is a short closed-checklist pass: concrete defects are corrected minimally, optional improvements do not create work, and pre-result corrections do not exhaust the study. Result-aware and downstream repairs retain frozen attempt and wave limits. If one of those required paths is exhausted, S1 will preserve the evidence and report the run as incomplete instead of weakening the study. To revise several sections before it starts, describe the changes below.</p>
         <button class="button button-primary" id="approve" type="button">Approve and start study</button>
         <div class="change-form">
           <label for="change-note">Other changes</label>

@@ -20,8 +20,11 @@ dependency-ready work. When native goal tooling is both available and
 authorized for the request, one bounded goal may track progress only until
 freshly verified completion or terminal `blocked_exhausted`; the run ledger
 remains the authority.
-Each logical specialist task has at most two accepted launch attempts and each gate has
-at most one automatic repair wave. A drained run with no accepted path closes
+Each logical specialist task has at most two accepted launch attempts.
+Downstream gates and result-aware contract changes have at most one automatic
+repair wave. Pre-result contract stabilization instead uses a closed checklist,
+all-findings-at-once review, and minimal repair deltas without an arbitrary wave
+count. A drained run with no accepted path closes
 with a terminal `INCOMPLETE` record instead of spawning continuation work
 indefinitely. Completion still requires fresh final CoE verification.
 
@@ -68,10 +71,14 @@ The policy author may choose a supported exact or statistical check. It must
 declare the quantity being estimated, comparison design, uncertainty method,
 bounds, hardware conditions, and failure rules before results. Audit variance
 cannot widen the tolerance. A policy repair creates a new contract revision in
-the same run and consumes the frozen repair budget. If results already exist,
-Scientist1 archives and reruns every affected successor under the repaired
-contract. Unsupported semantics close `INCOMPLETE`; they are never approximated
-with an easier generic rule.
+the same run. Before results, the auditor must enumerate all blockers in one
+pass and a re-audit may only check those findings plus defects introduced by
+the repair itself; optional hardening cannot create work and no downstream
+repair wave is consumed. If results already exist, Scientist1 archives and
+reruns every affected successor under the repaired contract and consumes the
+frozen result-aware repair wave. Unsupported semantics close `INCOMPLETE` only
+when no faithful executable contract exists or the post-result repair path is
+exhausted; they are never approximated with an easier generic rule.
 
 ## Role separation
 
@@ -100,7 +107,8 @@ is the sole authority that promotes it.
 
 Checkpoint revalidates the candidate receipt and every bound input/output
 immediately before atomically advancing `run.json`. Invalidation first archives
-the entire affected chain. If its gate has exhausted the frozen repair budget,
+the entire affected chain. If a downstream or result-aware gate has exhausted
+the frozen repair budget,
 the same transaction records the exact gate and a verifiable terminal
 `INCOMPLETE` state rather than attempting another repair.
 

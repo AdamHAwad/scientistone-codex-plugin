@@ -10,7 +10,7 @@ async function text(relative) {
 
 test("public manifest ships one complete local Codex experience", async () => {
   const manifest = JSON.parse(await text(".codex-plugin/plugin.json"));
-  assert.equal(manifest.version, "1.3.1");
+  assert.equal(manifest.version, "1.3.2");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -134,7 +134,7 @@ test("setup doctrine requires the bundled local server", async () => {
   assert.match(intake, /never sent to a remote Scientist1 service/i);
 });
 
-test("sparse intake and generated-contract defects use bounded recovery", async () => {
+test("sparse intake and generated-contract defects use minimal staged recovery", async () => {
   const skill = await text("skills/scientist1/SKILL.md");
   const intake = await text("skills/scientist1/references/intake.md");
   const protocol = await text("skills/scientist1/references/protocol.md");
@@ -143,7 +143,14 @@ test("sparse intake and generated-contract defects use bounded recovery", async 
   assert.match(intake, /Blank purpose, prior-work, evaluation, limit, or deliverable fields are valid intake/i);
   assert.match(skill, /result-blind defect[\s\S]+same run/i);
   assert.match(skill, /result-aware defect[\s\S]+invalidate_and_rerun/i);
-  assert.match(skill, /at\s+most two attempts[\s\S]+at\s+most one automatic repair wave/i);
+  assert.match(skill, /Pre-result contract stabilization has no\s+arbitrary wave count/i);
+  assert.match(skill, /first auditor must\s+report every blocking defect it can observe in one pass/i);
+  assert.match(skill, /re-audit[\s\S]+do not introduce a new requirement unless the repair itself\s+created/i);
+  assert.match(intake, /optional hardening, alternative designs, additional precision, and possible future edge cases are nonblocking/i);
+  assert.match(protocol, /without\s+consuming a downstream repair wave/i);
+  assert.match(roles, /A blocker must be one of:/i);
+  assert.match(roles, /On the first audit, enumerate every observable blocker in one pass/i);
+  assert.match(roles, /Stop reviewing as soon as the closed checklist passes/i);
   assert.match(skill, /blocked_exhausted[\s\S]+INCOMPLETE/i);
   assert.match(protocol, /RESEARCHER_APPROVED_AMENDMENT/);
   assert.match(roles, /Do not treat a repairable\s+contract defect as BLOCKED/i);

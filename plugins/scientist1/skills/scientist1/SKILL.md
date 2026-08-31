@@ -100,8 +100,11 @@ the same run without another approval.
 Durable approval is not unlimited authority or an instruction to loop. Never
 weaken a gate, replace the approved scientific question, or disguise missing
 authority/input as a scientific null. Each executed specialist task has at
-most two attempts and each gate has at most one automatic repair wave. When a
-required path remains unavailable or those limits are exhausted, save
+most two attempts. A downstream gate or result-aware contract change has at
+most one automatic repair wave. Pre-result contract stabilization has no
+arbitrary wave count: apply only concrete, result-blind, minimal corrections
+until the closed audit passes. When a required path remains unavailable or a
+post-result/downstream limit is exhausted, save
 `terminal/incomplete.json`, set `blocked_exhausted`, and report the run honestly
 as `INCOMPLETE` with the exact recovery condition. It is terminal for that run,
 is not a completed study, and cannot receive a scientific PASS. Corrected work
@@ -235,6 +238,20 @@ Retry only the smallest failed work package and preserve every failed artifact. 
 - For a result-aware defect in the scientific contract, use `revise-contract` with `post_result_guard: "invalidate_and_rerun"`. The CoE archives the old contract and its dependent successors, increments the contract revision, and returns the same run to contract review. Never tune a policy or evaluator to rescue an observed result.
 - If the most direct repair would exceed a fixed charter boundary, keep the question and boundary fixed, choose the strongest safe in-scope design or limited conclusion, record the deviation and its scientific consequence, and continue. Do not solicit a charter amendment. If the researcher independently supplies a change, record it as a researcher-initiated amendment in the same run.
 - A safe limited design is valid only when it still answers the frozen question and passes every applicable gate. Otherwise preserve the partial evidence and close `INCOMPLETE`; never manufacture a paper or scientific null from an operational blocker.
+
+Contract stabilization before candidate evidence is a short closed-world
+normalization pass, not an open-ended design review. The first auditor must
+report every blocking defect it can observe in one pass. A blocking defect is
+limited to an invented or contradictory commitment, a missing executable
+definition required by the approved evaluation, or a deterministic
+schema/interpreter failure. On re-audit, check the prior findings and the exact
+repair delta; do not introduce a new requirement unless the repair itself
+created a directly evidenced contradiction or invalid machine contract.
+Suggestions, stronger alternatives, possible future edge cases, and extra
+hardening never create repair work. Patch only the affected generated fields
+and their hash-bound dependents, then stop as soon as the closed checklist
+passes. Derive result-awareness from saved candidate/downstream evidence; never
+guess it from the seriousness of a finding.
 
 Operational launch errors with codes such as `S1_LAUNCH_GRANT_NOT_FOUND`, `S1_LAUNCH_GRANT_EXPIRED`, or `S1_LAUNCH_GRANT_MISMATCH` are recoverable: prepare a new one-use grant, retain the logical task name and attempt, and redispatch. Do not require a Codex restart, global installation, or manually copied runtime.
 

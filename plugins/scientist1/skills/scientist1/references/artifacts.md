@@ -239,6 +239,12 @@ completed scientific result. Corrected work starts in a new run that explicitly
 references the preserved terminal diagnosis; the exhausted run never resets its
 attempt or repair counters.
 
+`max_repair_waves_per_gate` applies to downstream gates and result-aware
+contract changes. Result-blind contract stabilization before candidate evidence
+does not increment `repair_waves.contract`; each revision remains archived and
+hash-bound, but there is no arbitrary count that can terminalize an otherwise
+repairable initial contract.
+
 There is no post-approval pause/attention state in a 1.3 run. Select a safe
 in-scope fallback when one exists within the frozen limits; otherwise use the
 `exhaust` command and preserve the exact restart requirement. Checkpoint is the
@@ -282,10 +288,10 @@ The reason object has exactly these fields:
   "schema_version": 1,
   "classification": "AUTOMATIC_REPAIR",
   "charter_changed": false,
-  "result_aware": true,
-  "post_result_guard": "invalidate_and_rerun",
-  "finding": "The frozen policy omitted a valid evaluator result shape.",
-  "repair": "Correct the result-blind policy declaration and rerun contract audit.",
+  "result_aware": false,
+  "post_result_guard": null,
+  "finding": "The pre-result policy binds the wrong evaluator argv.",
+  "repair": "Correct only the argv binding and its dependent hashes, then rerun the closed audit.",
   "researcher_approval": null
 }
 ```
@@ -294,9 +300,13 @@ Use `RESEARCHER_APPROVED_AMENDMENT` only when the researcher independently
 supplied the change, with `charter_changed: true` and a `researcher_approval`
 object containing the amended plan's path and SHA-256. Never use the class as
 a reason to stop and solicit approval.
-An automatic repair cannot replace `study-plan.md`. A result-aware repair must
-use `invalidate_and_rerun`; the command archives every successor before it
-returns the same run to contract review.
+An automatic repair cannot replace `study-plan.md`. The command derives result
+awareness from saved candidate/downstream evidence and rejects a mismatched
+agent declaration. Pre-result revisions are unlimited by count but remain
+limited to concrete closed-checklist defects and minimal deltas. A result-aware
+repair must use `invalidate_and_rerun`; the command archives every successor
+before it returns the same run to contract review and consumes the frozen
+repair wave.
 
 ## CoE verifier
 

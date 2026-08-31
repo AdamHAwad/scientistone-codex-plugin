@@ -24,7 +24,9 @@ access limitation; brief-repair limit; `idea_ceiling`,
 `minimum_eligible_ideas`, `candidate_node_ceiling`,
 `minimum_evaluated_candidates`, `evaluation_ceiling_per_node`,
 `ablation_ceiling`, `minimum_valid_ablations`, exact audit panel size, two
-accepted launch attempts per logical task, and one automatic repair wave per gate.
+accepted launch attempts per logical task, and one automatic repair wave per
+downstream or result-aware gate. Pre-result contract stabilization is governed
+by the closed checklist and minimal-delta rule, not a numeric wave ceiling.
 
 The plan lists estimated maximum evaluations and compute implications before
 approval. Valid phase stop reasons are evidence saturation under the stated
@@ -69,8 +71,10 @@ The Contract Auditor checks the scientific policy against a closed essential
 checklist and the frozen interpreter hash. It rejects a policy inferred from candidate results, a relative
 margin whose scale is the observed audit mean, variance that widens an
 equivalence margin, unsupported semantics, or undeclared network use.
-Suggestions are nonblocking. A later scientific surprise cannot silently
-change the policy.
+Suggestions are nonblocking. The auditor reports all observable blockers in
+one pass and cannot broaden the checklist on re-audit; a later re-audit may add
+only a defect directly introduced by the repair delta. A later scientific
+surprise cannot silently change the policy.
 
 Separate the approved researcher charter from the generated execution
 contract. The charter is the approved question, named inputs, constraints,
@@ -100,14 +104,25 @@ and use `revise-contract` from `artifacts.md`:
 Spawn one fresh Contract Auditor with `fork_turns: "none"` using the Common
 Role Envelope and Contract Auditor card. Its declared files are only the
 contract inputs, frozen I1 interpreter, and policy, plus the source-bundle manifest
-in external-audit mode. It writes `contract/audit.md` and its unique receipt.
+in external-audit mode. A re-audit additionally receives only the immediately
+prior archived audit, its structured revision reason, and the repaired
+artifacts so it can enforce scope continuity without rediscovering the study.
+It writes `contract/audit.md` and its unique receipt.
 Do not promote a plan with a material finding. A PASS receipt means
 `execution_status: COMPLETE` and `gate_verdict: PASS`.
 
-On REVISE, preserve the rejected material, make the smallest correction, and
-dispatch a fresh Contract Auditor within the one-wave gate budget. A limited
-contract is valid only when it still answers the frozen question and every
-applicable gate can pass. Otherwise preserve the blocker and close INCOMPLETE.
+On REVISE before candidate evidence, preserve the rejected material, patch
+only the exact invented/contradictory field, missing executable definition, or
+deterministic schema/interpreter defect and its hash-bound dependents, then
+dispatch a fresh Contract Auditor. This stabilization may repeat without
+consuming a downstream repair wave, but its scope may never grow: re-audit the
+prior findings and repair delta against the same closed checklist, and add a
+new blocker only if the repair itself introduced it. Optional hardening,
+stronger alternative designs, and hypothetical edge cases never create work.
+Once candidate or downstream evidence exists, the one-wave result-aware budget
+applies. A limited contract is valid only when it still answers the frozen
+question and every applicable gate can pass. Otherwise preserve the genuine
+post-result or permanent blocker and close INCOMPLETE.
 
 Before dispatching any specialist, the lead writes a supervisor-generated
 `role-launches/<agent-task>.json` from native task metadata. It records the

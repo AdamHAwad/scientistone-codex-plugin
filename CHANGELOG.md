@@ -2,6 +2,22 @@
 
 This project follows Semantic Versioning.
 
+## 1.3.2 - 2026-08-31
+
+- Separated pre-result contract stabilization from costly downstream and
+  result-aware repair waves. Initial contract corrections can now repeat in the
+  same run without an arbitrary count terminalizing the study.
+- Made result-awareness a control-plane fact derived from saved candidate and
+  downstream evidence, preventing an agent from misclassifying a pre-candidate
+  correction and consuming the frozen result-aware repair budget.
+- Restricted contract review to a closed set of concrete blockers, required all
+  observable findings in the first pass, and limited re-audit to prior findings
+  plus defects introduced by the exact repair delta. Optional hardening,
+  alternative designs, and hypothetical edge cases no longer create work.
+- Preserved the one-wave ceiling for post-result contract changes and downstream
+  scientific gates, where repeated repair could invalidate evidence or tune a
+  contract after observing results.
+
 ## 1.3.1 - 2026-08-31
 
 - Applied the Scientist1 identity across marketplace metadata, bundled skills

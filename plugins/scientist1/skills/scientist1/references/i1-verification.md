@@ -44,9 +44,13 @@ declarative contract, not a per-study software project.
 The Contract Auditor recomputes policy/interpreter hashes and checks the closed
 essential checklist. Only a PASS contract may begin candidate work.
 Suggestions are nonblocking. Unsupported semantics must be revised before
-results or close INCOMPLETE after the repair budget; never approximate them
-with a mean, scalar, or favorable post-hoc rule. If results exist, invalidate
-and rerun only evidence that depends on the changed scientific contract.
+results through minimal result-blind stabilization; there is no arbitrary
+pre-result repair-wave ceiling. A re-audit checks the prior finding and repair
+delta without expanding the checklist. Once results exist, the frozen
+result-aware repair budget applies and exhaustion closes INCOMPLETE. Never
+approximate unsupported semantics with a mean, scalar, or favorable post-hoc
+rule. If results exist, invalidate and rerun only evidence that depends on the
+changed scientific contract.
 
 ## Required structured policy
 

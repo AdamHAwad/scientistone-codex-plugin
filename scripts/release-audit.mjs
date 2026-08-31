@@ -62,8 +62,8 @@ for (const relative of files) {
 
 const manifestPath = path.join(root, "plugins/scientist1/.codex-plugin/plugin.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-if (manifest.version !== "1.3.1" || manifest.license !== "Apache-2.0") {
-  findings.push({ file: "plugins/scientist1/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.3.1 and Apache-2.0" });
+if (manifest.version !== "1.3.2" || manifest.license !== "Apache-2.0") {
+  findings.push({ file: "plugins/scientist1/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.3.2 and Apache-2.0" });
 }
 
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));

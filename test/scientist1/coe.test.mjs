@@ -537,7 +537,7 @@ test("built-in profile budgets cannot be relabelled", (t) => {
   assert.match(run("init", root).stderr, /budgets do not match the built-in profile/);
 });
 
-test("1.3 freezes the exact bounded attempt and repair limits", (t) => {
+test("1.3 freezes executed-task and downstream repair limits", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-orchestration-limits-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   put(root, "request.md");

@@ -85,9 +85,13 @@ inputs before an expensive launch, bind the relevant upstream handoff to those
 inputs, launch every ready independent task, and avoid duplicative progress
 chatter. For a repairable generated-contract defect, write
 the structured revision reason, invoke the same-run `revise-contract` flow,
-and dispatch a fresh auditor. If results exist, invalidate only affected
-successors. Never weaken a gate or silently change the approved question. When
-the frozen attempt or repair limit is exhausted, preserve the blocker and close
+patch only the affected generated fields and hash-bound dependents, and dispatch
+a fresh auditor. Pre-result contract stabilization does not consume a repair
+wave. Derive `result_aware` from saved candidate/downstream evidence instead of
+guessing it from the finding. If results exist, invalidate only affected
+successors and consume the result-aware repair wave. Never weaken a gate or
+silently change the approved question. When an executed-task, downstream, or
+result-aware repair limit is exhausted, preserve the blocker and close
 `INCOMPLETE`; do not force another wave or manufacture a limited paper.
 
 Set `role` in the receipt to exactly `lead`.
@@ -106,7 +110,9 @@ Verify that the normalized plan faithfully represents the researcher without
 choosing a method. Read the request, plan, environment bootstrap, run configuration, input manifest,
 evaluator contract, evaluator manifest, frozen common I1 interpreter, and I1
 policy in research mode; read the source-bundle
-manifest and result-blind I1 contract instead in external-audit mode.
+manifest and result-blind I1 contract instead in external-audit mode. On a
+re-audit, also read the immediately prior archived audit and its structured
+revision reason; no older history is needed.
 
 Set `role` in the receipt to exactly `contract_auditor`.
 
@@ -116,27 +122,41 @@ uncertainty and failures; budgets/stopping; evaluator separation; I1
 bindings/support; deliverables; and contradictions. Reject a
 policy based on candidate results, audit variance that widens a task-adaptive
 margin, an unsupported interpreter feature, or ADRS legacy outside its declared
-scope. A genuinely material charter/CoE violation not captured by a named row
-may block only with exact evidence; put suggestions in a separate nonblocking
-section. Do not invent speculative security hardening, paraphrase detectors,
-format rules, or future-proofing requirements. Write only
+scope. A blocker must be one of: an invented or contradictory commitment
+against the approved charter; a missing executable definition without which
+the approved evaluation cannot run or has multiple incompatible meanings; or
+a deterministic schema/interpreter failure. A genuinely material charter/CoE
+violation not captured by a named row may block only when it fits one of those
+classes with exact evidence. Put everything else in a separate nonblocking
+section. Do not invent speculative security hardening, extra scientific
+requirements, stronger alternative designs, paraphrase detectors, format
+rules, edge-case matrices, or future-proofing requirements. Write only
 `contract/audit.md` and the assigned receipt. The audit has exactly one
 `Overall verdict: PASS|REVISE` line, a checklist, exact evidence paths, and
 exact revisions; do not rewrite the plan or request researcher reapproval.
+On the first audit, enumerate every observable blocker in one pass. On a
+re-audit, read the prior audit from the declared superseded evidence, verify
+its findings and the exact repair delta, and do not add a requirement that was
+already observable before. A new blocker is allowed only when the repair
+itself introduced a directly evidenced contradiction or invalid machine
+contract. Stop reviewing as soon as the closed checklist passes.
 Classify every REVISE finding as `AUTOMATIC_REPAIR`. State the smallest
 result-blind correction that preserves the approved question, named inputs,
 constraints, exclusions, data boundaries, and limits on interpretation.
 Generated evaluation details, outcome operationalizations, schemas, methods,
-and environments are repairable contract choices within the frozen repair
-budget; exhausted or genuinely unavailable requirements close INCOMPLETE.
+and environments are repairable contract choices. Pre-result corrections may
+repeat without consuming a downstream repair wave. Once results exist, the
+frozen result-aware repair budget applies; exhausted or genuinely unavailable
+requirements close INCOMPLETE.
 If the direct path is unsafe, unlawful, unavailable, or would exceed a fixed
 boundary, require a safe in-scope contract that can still answer the question
 honestly, or return the exact blocker. A
 `RESEARCHER_APPROVED_AMENDMENT` may record a change the researcher independently
 supplied, but the auditor and lead must not solicit one.
 
-Before submitting, ask: Did I separate a clerical defect from a change to the
-researcher's scientific commitment?
+Before submitting, ask: Did I report all concrete blockers at once, avoid
+turning optional improvements into work, and separate a clerical defect from a
+change to the researcher's scientific commitment?
 
 ## Literature mapper
 
