@@ -19,6 +19,7 @@ THIRD_PARTY_NOTICES.md
 assets/logo.svg
 assets/logo.png
 hooks/enforce-role-launch.mjs
+hooks/enforce-study-completion.mjs
 hooks/hooks.json
 licenses/NEWSREADER-LICENSE
 licenses/PHOSPHOR-LICENSE
@@ -57,7 +58,7 @@ skills/scientist1-results/assets/logo.svg
 ```
 
 The manifest points to three packaged skills and the bundled local MCP. Codex
-discovers the launch-authorization hook from the default `hooks/hooks.json`
+discovers the launch-authorization and completion-enforcement hooks from the default `hooks/hooks.json`
 path; the manifest does not override it. It contains no registered app mapping. The root PNG is the
 marketplace icon. Each skill carries the centered blue-and-green S1 SVG named
 by its metadata.
@@ -77,5 +78,5 @@ tools, and `.DS_Store`. A narrow compatibility controller derived from the
 released 1.2 verifier is bundled only so in-progress 1.2 runs remain verifiable
 without rewriting their frozen scientific contract. The exact released role
 contract and model policy are also bundled so genuine in-progress 1.2 runs can
-launch remaining specialists without being reinterpreted by 1.3; every new run
-uses the 1.3 control plane.
+launch remaining specialists without being reinterpreted by 1.4; every new run
+uses the 1.4 control plane.

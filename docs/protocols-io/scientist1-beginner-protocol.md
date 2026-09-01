@@ -2,7 +2,7 @@
 
 ## Protocols.io description
 
-Scientist1 helps you plan a study, review the plan, and save the work. You tell it what you want to learn and which files it may use. It can read sources, test methods, compare results, write a paper, and check the paper against the saved evidence. A completed, verified run may include a paper, code, sources, results, and check reports in one folder.
+Scientist1 helps you plan a study, review the plan, and save the work. You tell it what you want to learn and which files it may use. It can read sources, test methods, compare results, write a paper, and check the paper against the saved evidence. Every completed, verified research run includes a paper, code, sources, results, and check reports in one folder.
 
 This guide starts at the beginning. It shows you how to get ChatGPT, open Codex, install Scientist1, run a small practice study, and read the result. You do not need to know how to code. You do need to review the study plan and use your own judgment.
 
@@ -14,7 +14,7 @@ Scientist1; Codex; AI-assisted research; computational research; research workfl
 
 - About 30 to 60 minutes of your time for setup and the guided practice. This does not include the time the AI study takes to run.
 - The AI study can take longer. Time depends on the question, files, plan, model, and your account limits.
-- A real study may take hours and may pause to ask you a question.
+- A real study may take hours. After you approve it, Scientist1 keeps the same run active through the verified paper rather than ending at an intermediate problem.
 
 ## Before you start
 
@@ -58,7 +58,7 @@ Scientist1 gives you two places to follow the study. On the left, the main Codex
 
 On the right, Codex opens a built-in browser. It first shows seven setup screens. After you approve the plan, that page becomes a live study map. You can select any stage for more detail, ask the main AI a question, or simply watch.
 
-After you answer the seven setup screens and approve the plan, Scientist1 can continue without you watching each step. Keep Codex open. The main AI will pause if it needs a research decision or a permission that only you can give.
+After you answer the seven setup screens and approve the plan, Scientist1 continues without you watching each step. Keep Codex open. Ordinary scientific and repair decisions stay with the approved run; Codex may still show a platform permission request for an external action.
 
 ![A research question moves through nine checked stages before delivery.](assets/10-study-flow.png)
 
@@ -95,7 +95,7 @@ Codex is included with Plus, Pro, Business, Enterprise, and Edu. OpenAI also giv
 1. Open the current [Codex pricing page](https://chatgpt.com/codex/pricing/).
 2. Read the Codex limits for each plan.
 3. Choose what fits your work:
-   - **Free** can be enough to learn the screens and try a small task. A full study may stop at the use limit.
+   - **Free** can be enough to learn the screens and try a small task. A full study may need to resume after the account allowance resets.
    - **Plus** is a useful starting paid plan for a person who plans to run full studies.
    - **Pro** is for people who expect to run larger or more frequent work.
    - **Business, Enterprise, or Edu** may be supplied by your school or employer. Ask your administrator what is enabled.
@@ -104,7 +104,7 @@ Codex is included with Plus, Pro, Business, Enterprise, and Edu. OpenAI also giv
 6. Before you pay, check the price, billing period, and renewal terms.
 7. Return to this guide after your account page shows the plan you chose.
 
-Prices and limits can change. A paid plan does not promise that every full study will finish within its included use. Use the live Codex pricing page, not an old screenshot.
+Prices and limits can change. A paid plan does not promise that every full study will fit within one allowance period. Use the live Codex pricing page, not an old screenshot.
 
 ### Step 4. Download the desktop app
 
@@ -406,8 +406,6 @@ You can edit a field on the page. If several parts need work, write one clear no
 
 Do not approve a plan that you do not understand. Ask Codex to explain any part in plain language.
 
-![The plan review lets you edit the study before you approve it.](assets/09-plan-review.png)
-
 ### Step 24. Approve and start the study
 
 For this practice study, check that the plan says it will:
@@ -432,16 +430,16 @@ After approval, the same page becomes a live study map.
 3. Read the stage label:
    - **Not started** means the stage has not begun.
    - **Working now** means Codex is doing that part of the study.
-   - **Needs your input** means the study is waiting for you.
+   - **Repairing automatically** means Scientist1 is preserving the issue and rerunning the affected work.
    - **Checked** means the required work for that stage passed its checks.
-4. Return to the Codex chat if the study asks a question or the permission reviewer needs your decision.
+4. Return to the Codex chat if the platform permission reviewer needs your decision.
 5. Keep the app open and the computer awake while local work is running.
 
 The setup page on the right becomes the live map. The main AI tracks the run and calls specialist AI agents and AI teams to do the work shown in each stage. Select a stage to see what it is doing. The study moves through planning, reading, method work, selection, testing, writing, claim checks, audit, and delivery. A small practice may still take time because the checks are part of the lesson.
 
 ### Step 26. Handle questions and tool requests
 
-Scientist1 handles ordinary research and repair decisions on its own. It may ask only when the approved study lacks information or authority that the system cannot safely supply. The permission reviewer may also send a request to you when it cannot safely decide on its own.
+Scientist1 handles ordinary research and repair decisions on its own and does not ask you to reapprove the study. The permission reviewer may still send a platform access request when it cannot safely decide on its own. That request does not convert the run into a finished study; the same run continues after access is available.
 
 For each request:
 
@@ -459,13 +457,13 @@ A red stage or a **needs repair** message does not always mean the whole study i
 
 1. Open the failed stage.
 2. Read the plain-language error and evidence.
-3. Let Scientist1 make the bounded in-scope repair and re-run the affected checks.
+3. Let Scientist1 make the smallest in-scope repair and re-run the affected checks as many times as needed.
 4. Do not provide another approval for an ordinary repair. The original study approval already covers it.
-5. Respond only if Codex needs new information, a new permission, or a change to the approved question or test.
+5. Do not change the approved question or test to rescue a result. A genuinely different question belongs to a separately requested future study, not an exit from this run.
 
 ### Step 28. Open the completed results
 
-When the study says it is complete, look for the **Study record verified** badge. If the page says the record **needs repair**, let Scientist1 continue its bounded repair path. Do not treat the study as complete yet.
+When the study says it is complete, look for the **Study record verified** badge. If the page says the record **needs repair**, Scientist1 must continue repairing the same run. Do not treat the study as complete yet.
 
 After the record is verified:
 
@@ -490,12 +488,12 @@ Open the `Scientist1 Practice` folder in Finder or File Explorer. Open `scientis
 
 Open these files first:
 
-1. `deliverables/paper.pdf`, if it exists. If there is no PDF, open `deliverables/paper.tex`.
+1. `deliverables/paper.tex`, the required canonical paper source. Also open `deliverables/paper.pdf` when the approved plan required a PDF.
 2. `selection/canonical-evaluation.json` for the main saved measurement.
 3. `deliverables/audit-report.md` for the final checks.
 4. `deliverables/provenance.jsonl` for links from claims to evidence.
 
-The exact names may vary by study. A complete run can include:
+The exact names may vary by study. A complete research run includes:
 
 - the request you sent;
 - the plan you approved;
@@ -564,7 +562,7 @@ If a file is very large, tell Scientist1 its size and format before you add it.
 
 Tell Scientist1 what would count as a useful answer. This can be a score, a comparison, a test using data set aside for checking, a clear way to group interview answers, or another clear rule.
 
-Scientist1 will define and freeze the task-appropriate null interpretation before results are known. A negative result is a valid result, and the system will not change the test to rescue an observed result.
+Scientist1 will define and freeze the task-appropriate null interpretation before results are known. A negative or null result is valid paper content, and the system will not change the test to rescue an observed result or use the finding as a reason to omit the paper.
 
 ### Step 35. State limits in plain words
 
@@ -581,7 +579,7 @@ Useful limits can include:
 
 ### Step 36. Review, approve, then check in
 
-Read the full plan before you approve it. After approval, you do not need to watch every step. Keep Codex open. Check the main chat if the live map says **Needs your input**. Do not let a repair silently change the question or main test.
+Read the full plan before you approve it. After approval, you do not need to watch every step. Keep Codex open. Repairs repeat inside the same run and must not silently change the question or main test.
 
 At the end, read the limits and audit report before you share the paper.
 
@@ -632,7 +630,7 @@ If Scientist1 still looks out of date, open **Plugins** and select **Refresh**. 
 3. Wait for the shown reset time. If you consider credits or another plan, pause and confirm the price, billing period, and renewal terms before you pay.
 4. Return to the same project and ask Scientist1 to check the saved run before it resumes.
 
-Do not start a second run unless the saved run cannot be resumed.
+Return to the same run. An account-limit interruption is not a completed study and is not a reason to start a replacement run.
 
 ### The computer restarts or the app closes
 
@@ -648,7 +646,7 @@ Do not ask the AI team to rewrite the paper first. Ask it to check the evidence:
 
 > Trace the result I am worried about to the saved data, code, measurement, and audit. Tell me where the first mismatch appears.
 
-If the approved test was wrong, stop the run and start a new study with a new approved plan. Do not quietly replace the test after seeing the answer.
+Do not quietly replace an approved test after seeing the answer. Preserve the result and limitation in the required paper; if you later want a different test, request a separate follow-up study after this run delivers.
 
 ## Expected outcome
 

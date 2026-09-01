@@ -2,6 +2,29 @@
 
 This project follows Semantic Versioning.
 
+## 1.4.0 - 2026-08-31
+
+- Made one researcher approval a durable, one-way execution commitment through
+  a freshly verified paper package. A hash-bound approval record now gates every
+  specialist launch and remains attached to the run.
+- Replaced specialist-attempt, repair-wave, scheduler-drain, and operational
+  exit ceilings with an auditable repair-until-pass state machine. Every failed
+  launch, checkpoint, audit, or dependency path becomes anchored same-run repair
+  work and affected successors are invalidated before execution resumes.
+- Added a project-local completion hook that activates at approval, survives
+  repeated Stop events and task continuations, and releases only after the final
+  CoE verifier freshly validates the paper and delivery package.
+- Kept contract stabilization deliberately small: one closed essential
+  checklist, all observable blockers in the first pass, minimal-delta repair,
+  and no speculative hardening or expanding requirements on re-audit.
+- Added migration for preserved 1.3 diagnoses, idempotent approval binding for
+  already-started runs, repair-required scheduler state, and regression tests
+  covering third attempts, repeated repair cycles, approval-to-run gaps, and
+  nominal-but-unverifiable completion.
+- Hardened packaging and release documentation around the 1.4 liveness
+  invariant while preserving honest null findings and limitations inside the
+  required final paper.
+
 ## 1.3.2 - 2026-08-31
 
 - Separated pre-result contract stabilization from costly downstream and
@@ -14,9 +37,9 @@ This project follows Semantic Versioning.
   observable findings in the first pass, and limited re-audit to prior findings
   plus defects introduced by the exact repair delta. Optional hardening,
   alternative designs, and hypothetical edge cases no longer create work.
-- Preserved the one-wave ceiling for post-result contract changes and downstream
-  scientific gates, where repeated repair could invalidate evidence or tune a
-  contract after observing results.
+- Preserved evidence invalidation and anti-tuning controls for post-result
+  contract changes and downstream scientific gates. Version 1.4.0 supersedes
+  the former repair-count policy with repair-through-delivery execution.
 
 ## 1.3.1 - 2026-08-31
 
@@ -38,9 +61,8 @@ This project follows Semantic Versioning.
 - Added canonical task briefs and exact assignments with compact saved handoffs
   so every specialist receives the relevant upstream evidence and acceptance
   gate without inheriting chat history or rediscovering prior work.
-- Bounded accepted specialist launches at two and each gate to one automatic repair wave;
-  exhausted work now closes truthfully as terminal `INCOMPLETE` instead of
-  triggering an unbounded self-repair loop or manufacturing a scientific null.
+- Introduced accepted-specialist and automatic-repair accounting. Version 1.4.0
+  keeps those counters as audit history without using them as stopping budgets.
 - Made checkpoint the sole failure-atomic promotion gate, kept preflight as an
   optional diagnostic, preserved valid receipts across model-route changes, and
   added drained-queue/exhaustion visibility plus bounded least-constraining
@@ -51,14 +73,15 @@ This project follows Semantic Versioning.
 - Made I1 results enumerate every frozen canonical and audit run under closed,
   executable estimand semantics, preventing dropped reruns or free-text
   estimand substitution from passing verification.
-- Made invalidation, checkpointing, and terminalization failure-atomic, with an
-  exact repair-gate record and an archived affected chain before exhaustion.
+- Made invalidation and checkpointing failure-atomic, with an exact repair-gate
+  record and an archived affected chain before retry.
 - Kept genuine in-progress 1.2 runs resumable through a narrow compatibility
   controller plus the exact released 1.2 role and model-policy assets; new
   studies use only the leaner 1.3 control plane.
-- Removed the Stop-hook continuation loop, lowered reasoning effort for
-  mechanical roles, retained deep reasoning for scientific judgment, and added
-  YAGNI constraints against speculative frameworks and duplicate test systems.
+- Lowered reasoning effort for mechanical roles, retained deep reasoning for
+  scientific judgment, and added YAGNI constraints against speculative
+  frameworks and duplicate test systems. Version 1.4.0 adds a verifier-gated
+  completion hook with durable run scope.
 
 ## 1.2.0 - 2026-08-30
 
@@ -81,9 +104,12 @@ This project follows Semantic Versioning.
 ## 1.1.4 - 2026-08-29
 
 - Made **Approve and start study** the single durable approval for safe in-scope execution and same-run contract repair through verified delivery.
-- Added an outcome goal after approval and a session-scoped Stop hook that automatically continues incomplete, paused, failed, or not-finally-verified runs.
+- Added an outcome goal after approval and an early session-scoped continuation
+  hook; version 1.4.0 replaces it with durable verifier-gated enforcement.
 - Removed post-approval reapproval and attention branches from the lead, contract-auditor, intake, protocol, verifier, and monitor instructions; unavailable paths now become safe fallbacks and documented limitations.
-- Added approval-authority metadata, explicit browser copy, regression tests for the observed evaluator-repair failure, and lifecycle-hook tests through verified completion or explicit cancellation.
+- Added approval-authority metadata, explicit browser copy, regression tests
+  for the observed evaluator-repair failure, and lifecycle-hook tests through
+  verified completion.
 
 ## 1.1.3 - 2026-08-27
 

@@ -1,6 +1,6 @@
 {
   "name": "scientist1",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "Turn a research question into a checked study with sources, code, results, and evidence links.",
   "author": {
     "name": "Adam H. Awad",
@@ -15,7 +15,7 @@
   "interface": {
     "displayName": "Scientist1",
     "shortDescription": "Turn a question into a checked research study",
-    "longDescription": "Scientist1 helps you turn a research question into a full study in Codex. You explain what you want to find out and approve the plan once. Specialist AI agents then move the study autonomously through nine stages: planning, literature review, method development, selection, component testing, writing, claim checking, integrity audit, and delivery. The number of agents adapts to the approved study. Before the work can finish, Scientist1 checks that the numbers in the paper match the saved test results. It also checks that each important claim points to a source or saved result that supports it. Initial contract review uses a closed checklist and minimal result-blind corrections without an arbitrary repair count; later result-aware and downstream repairs remain bounded and return a truthful INCOMPLETE record if exhausted. You receive the paper with its sources, code, results, and check reports, so you can see how it reached its conclusions.",
+    "longDescription": "Scientist1 helps you turn a research question into a full study in Codex. You explain what you want to find out and approve the plan once. Specialist AI agents then move the study autonomously through nine stages: planning, literature review, method development, selection, component testing, writing, claim checking, integrity audit, and delivery. The number of agents adapts to the approved study. Before the work can finish, Scientist1 checks that the numbers in the paper match the saved test results and that each important claim points to a source or saved result that supports it. Initial contract review uses a closed checklist and minimal result-blind corrections. Later failures and result-aware repairs preserve their evidence, invalidate affected successors, and continue in the same run. Only fresh verification of the complete paper package can finish an approved study. You receive the paper with its sources, code, results, and check reports, so you can see how it reached its conclusions.",
     "developerName": "Adam H. Awad",
     "category": "Scientific Research",
     "capabilities": ["Read", "Write"],

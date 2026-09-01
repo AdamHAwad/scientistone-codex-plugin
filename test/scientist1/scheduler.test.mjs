@@ -141,18 +141,19 @@ test("scheduler uses bounded least-constraining selection instead of exponential
   assert.ok(performance.now() - started < 1000, "dense valid ledgers must remain bounded in practice");
 });
 
-test("scheduler exposes exhausted work and its blocked descendants instead of appearing active", () => {
+test("scheduler exposes repair-required work and its dependent queue without treating it as terminal", () => {
   const ledger = {
     schema_version: 1,
     tasks: [
-      { ...task("source", [], ["source"]), status: "exhausted" },
+      { ...task("source", [], ["source"]), status: "repair_required" },
       task("dependent", ["source"], ["dependent"]),
       task("downstream", ["dependent"], ["downstream"]),
     ],
   };
   const result = selectReadyTasks(ledger);
   assert.deepEqual(result.ready_task_ids, []);
-  assert.deepEqual(result.exhausted_task_ids, ["source"]);
+  assert.deepEqual(result.repair_required_task_ids, ["source"]);
+  assert.equal(result.repair_required, true);
   assert.deepEqual(result.blocked_task_ids, ["dependent", "downstream"]);
   assert.equal(result.drained, true);
 });

@@ -13,7 +13,7 @@ Treat a bare mention of Scientist1 as a request to begin setup.
 
 The researcher approves the study once through `Approve and start study`.
 After that approval, continue safe, reversible, in-scope work autonomously,
-including every bounded specialist launch; do not pause, ask for approval
+including every specialist launch and repair required for verified delivery; do not pause, ask for approval
 again, or send the researcher to `/hooks` because the Scientist1 hook is
 untrusted, skipped, or unavailable. The launch-authorization hook is only a
 backup that reinforces this already-granted authority if the lead forgets it;
@@ -59,7 +59,7 @@ it through the agent terminal or edit `config.toml` by hand as a substitute.
 - If the current surface cannot start the bundled MCP or show the built-in browser, use the conversational fallback. Never substitute a remote Scientist1 MCP or setup page.
 - For status, paused work, or a read-only check, use `scientist1-monitor`.
 - For findings from a verified complete run, use `scientist1-results`.
-- For resume, verify the saved run and continue from its first invalid or incomplete phase.
+- For resume, verify the saved run and continue from its first invalid or unfinished phase.
 
 The browser wizard asks seven questions: research question, purpose, files, prior work, evaluation, limits, and final review. Its local server writes answers and selected files only under the active project. Scientist1 has no remote MCP in this plugin.
 
@@ -97,24 +97,22 @@ policy, paths, hashes, seeds, schemas, and methods as the versioned execution
 contract. Result-blind defects may be repaired and independently re-audited in
 the same run without another approval.
 
-Durable approval is not unlimited authority or an instruction to loop. Never
+Durable approval creates a one-way completion commitment for that study. Never
 weaken a gate, replace the approved scientific question, or disguise missing
-authority/input as a scientific null. Each executed specialist task has at
-most two attempts. A downstream gate or result-aware contract change has at
-most one automatic repair wave. Pre-result contract stabilization has no
-arbitrary wave count: apply only concrete, result-blind, minimal corrections
-until the closed audit passes. When a required path remains unavailable or a
-post-result/downstream limit is exhausted, save
-`terminal/incomplete.json`, set `blocked_exhausted`, and report the run honestly
-as `INCOMPLETE` with the exact recovery condition. It is terminal for that run,
-is not a completed study, and cannot receive a scientific PASS. Corrected work
-starts as a new run that explicitly references the preserved incomplete record.
+authority/input as a scientific null. There is no attempt ceiling, repair-wave
+ceiling, scheduler-drain exit, or paperless operational outcome. Every failed
+launch, rejected checkpoint, unavailable route, missing requirement, and audit
+REVISE/FAIL remains same-run repair work. Preserve its evidence, record a
+repair incident, make the smallest causal correction, use a fresh independent
+reviewer when judgment was affected, and continue until the final verifier
+passes. Pre-result contract stabilization stays a short closed-checklist pass:
+optional hardening and speculative improvements never create work.
 
-When native goal tools are available and their current policy authorizes one
-for this request, create one bounded goal for the initialized run: advance it
-until fresh verification proves completion or `blocked_exhausted` proves a
-terminal `INCOMPLETE`. The saved ledger remains authoritative, and the goal
-must never continue work after either terminal state.
+After approval, when native goal tools are available, create one unbudgeted
+goal for the initialized run whose objective is the freshly verified paper and
+delivery package. The saved ledger remains authoritative. The goal can complete
+only after `coe.mjs verify` proves state, phase, and last checkpoint are all
+`complete`; no operational failure or partial artifact can satisfy it.
 
 ### Resume a genuine 1.2 run without migration
 
@@ -126,10 +124,11 @@ role contract and the run's frozen model policy. Do not add the 1.3 task ledger,
 attempt/exhaustion fields, common interpreter, or compact-handoff receipt fields
 to that run. Contract work must produce the saved generated I1 verifier, and
 audit work must execute that verifier rather than look for the 1.3 interpreter.
-Do not use `exhaust` on a 1.2 run. Avoid an open-ended repair loop: make the
-smallest evidence-preserving repair allowed by the frozen 1.2 contract, then
-record the exact blocker with its legacy attention/failed state if no valid path
-remains. New studies and linked restarts always use 1.3.
+Do not retrofit active schemas into a 1.2 run. Make the smallest
+evidence-preserving repair allowed by the frozen 1.2 contract and keep
+orchestrating the same run through its verified paper delivery. A legacy
+attention/failed value is a repair signal, never permission to end the lead
+turn. New studies always use 1.4.
 
 ## Create the run
 
@@ -143,9 +142,9 @@ references.
 1. Create `scientist1-runs/<UTC>-<slug>/` in the active project.
 2. Copy each approved input into the run once, or bind it by a stable project-relative path when copying would violate the plan. Compute SHA-256 and write `contract/input-manifest.json`. Put answer keys, held-out outcomes, private checks, and evaluator code under `private/`. Candidate roles must never read them.
 3. Prepare the smallest project-local environment needed by the approved study. Reuse compatible tools. Install from an official source only when needed. Record the exact path, version, source, and hash in `environment/bootstrap.json`. Do not install globally or ask the researcher to install a plugin prerequisite.
-4. Run `coe.mjs configure`, then `coe.mjs init`. This snapshots the release-tested I1 interpreter under `contract/control-plane/` and creates the contract-state ledger before any specialist launch.
-5. Freeze the plan, run profile, evaluator contract, evaluator manifest, and declarative task-specific I1 policy. A fresh Contract Auditor must pass the closed essential checklist before candidate work.
-6. Call `attach_run_monitor` with the project root, draft ID, and initialized run path. The open browser must switch into the original interactive study flowchart. If the tab cannot navigate automatically, open the returned `url` in Codex's built-in browser.
+4. Run `coe.mjs configure`, then `coe.mjs init`. This snapshots the release-tested I1 interpreter under `contract/control-plane/` and creates the contract-state ledger.
+5. Call `attach_run_monitor` immediately with the project root, draft ID, and initialized run path. It binds the browser approval into `contract/approval.json` before any specialist launch. The open browser must switch into the original interactive study flowchart. If the tab cannot navigate automatically, open the returned `url` in Codex's built-in browser.
+6. Freeze the run profile, evaluator contract, evaluator manifest, and declarative task-specific I1 policy. A fresh Contract Auditor must pass the closed essential checklist before candidate work.
 
 ## Use native Codex agents
 
@@ -156,7 +155,7 @@ Before each scientific, coding, writing, evaluation, or audit assignment:
 1. Choose exactly one role card from `references/roles.md`.
 2. Call `prepare_role_launch` with the absolute run path, declared inputs and outputs, allowed sources, and a compact `task_brief`: objective, why the stage matters, constraints, acceptance gate, and upstream summaries tied to declared input paths.
 3. Use the returned task name, model, effort, `fork_turns: "none"`, and exact `assignment` byte-for-byte. The MCP saves and hashes the complete role card, input bindings, brief, and acceptance gate in the launch record.
-4. A missing, malformed, or expired grant rejected before launch authorization does not consume an attempt. Request a fresh grant with a new task name but the same logical task, exclusive output set, and attempt. Once the launch hook accepts a spawn, its immutable `role-attempts/` record consumes that attempt even if no usable receipt returns; the next launch for that logical task uses the next attempt. The runtime derives a stable work key from contract/charter revision, role, and sorted exclusive outputs and rejects logical-name aliases within that frozen revision.
+4. A missing, malformed, or expired grant rejected before launch authorization does not consume an attempt. Request a fresh grant with a new task name but the same logical task, exclusive output set, and attempt. Once the launch hook accepts a spawn, its immutable `role-attempts/` record consumes that attempt even if no usable receipt returns; the next launch for that same logical task and output set uses the next sequential attempt. Attempts are evidence counters, not a stopping budget. Never rename the logical task or rebind its canonical output to evade history.
 5. Require the receipt to bind the saved assignment/brief hashes and contain the compact handoff: decisions, evidence IDs, limitations/conflicts, unresolved issues, and recommended next action. Never pass chat history as authority.
 
 Run the study as a dependency-ready queue, not a serial checklist. Give every
@@ -178,7 +177,8 @@ ready, persist the queue as `environment/task-ledger.json` and use
 least-constraining scan; never perform exhaustive subset optimization. Mark a task running
 only after launch authorization and complete only after its receipt verifies. If the queue
 has no ready or running task, classify the dependency defect or close as
-`blocked_exhausted`; never leave a drained run silently `running`.
+repair the blocking task, return it to `pending`, and refill immediately. A
+drained queue is a liveness fault, never a terminal condition.
 
 The evaluator contract must say whether concurrent evaluation is valid and
 its maximum concurrency for each timing-, hardware-, license-, API-, or
@@ -230,14 +230,14 @@ Follow `references/protocol.md` in order. `coe.mjs checkpoint` is the one
 authoritative, failure-atomic promotion gate. `coe.mjs preflight` is an
 optional read-only dry run for diagnosing a likely failure; it is never a
 required second validation. On resume, verify saved state and continue from
-the first invalid or incomplete phase.
+the first invalid or unfinished phase.
 
-Retry only the smallest failed work package and preserve every failed artifact. Use a fresh specialist when independence or scientific judgment was affected. Classify failures before retrying: transient dispatch/transport, bounded validator repair, permanent missing requirement, or new authority/input required.
+Retry only the smallest failed work package and preserve every failed artifact. Use a fresh specialist when independence or scientific judgment was affected. Classify failures before retrying: transient dispatch/transport, validator repair, missing requirement, or unavailable tool/route. Record nontrivial failures with `coe.mjs record-repair`; then repair and continue the same run.
 
 - For a result-blind defect, revise the execution contract in the same run, record the structured reason, and send the revised contract to a fresh Contract Auditor.
 - For a result-aware defect in the scientific contract, use `revise-contract` with `post_result_guard: "invalidate_and_rerun"`. The CoE archives the old contract and its dependent successors, increments the contract revision, and returns the same run to contract review. Never tune a policy or evaluator to rescue an observed result.
 - If the most direct repair would exceed a fixed charter boundary, keep the question and boundary fixed, choose the strongest safe in-scope design or limited conclusion, record the deviation and its scientific consequence, and continue. Do not solicit a charter amendment. If the researcher independently supplies a change, record it as a researcher-initiated amendment in the same run.
-- A safe limited design is valid only when it still answers the frozen question and passes every applicable gate. Otherwise preserve the partial evidence and close `INCOMPLETE`; never manufacture a paper or scientific null from an operational blocker.
+- A safe limited design is valid only when it still answers the frozen question and passes every applicable gate. Otherwise preserve the partial evidence, repair the design or execution path, and continue. Never manufacture a scientific null from an operational blocker, and never substitute a partial record for the paper.
 
 Contract stabilization before candidate evidence is a short closed-world
 normalization pass, not an open-ended design review. The first auditor must
@@ -262,6 +262,6 @@ revision and does not invalidate unrelated scientific evidence.
 
 ## Completion
 
-Do not report completion until every deliverable required by the plan exists and the final verifier passes. In research mode this normally includes the selected method or protocol, canonical evaluation, paper source, claim provenance, I1 to I4 audit, reproduction guide, visual check only for required rendered documents, and delivery manifest. A PDF is required only when the approved deliverables and verified environment require one. Negative, null, and genuinely completed-with-limitations findings are valid papers. `blocked_exhausted`/`INCOMPLETE` is a truthful terminal execution result, not a completed study.
+Do not report completion or end the lead turn until every deliverable required by the plan exists and a fresh final verifier passes. Research delivery always includes the selected method or protocol, canonical evaluation, canonical paper source, claim provenance, I1 to I4 audit, reproduction guide, and delivery manifest. A visual check is required for rendered documents; a PDF is required only when the approved deliverables and verified environment require one. Negative, null, and genuinely completed-with-limitations findings are valid papers. Operational failures remain repair work and can never become a final study outcome.
 
 Then route interpretation to `scientist1-results`. Before ending a turn, confirm the run path, phase, receipt, and next verified action. If native goal tools were used, mark the Scientist1 goal complete only now. Do not ask a post-approval question.

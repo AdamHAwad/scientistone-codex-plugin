@@ -13,6 +13,9 @@
     "no_em_dash": true,
     "uses_approve_for_me": true,
     "does_not_teach_ask_for_approval": true,
+    "approved_run_requires_verified_paper": true,
+    "repairs_repeat_without_a_stopping_budget": true,
+    "does_not_teach_stopping_an_approved_run": true,
     "research_teams_are_named_ai_teams": true,
     "no_terminal_install_path": true,
     "no_public_directory_assumption": true
@@ -63,9 +66,9 @@
         1280,
         720
       ],
-      "09-plan-review.png": [
-        1308,
-        991
+      "10-study-flow.png": [
+        1536,
+        1024
       ]
     }
   }

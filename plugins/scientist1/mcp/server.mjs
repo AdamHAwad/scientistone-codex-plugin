@@ -24,7 +24,7 @@ const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const MONITOR_VERIFY_TTL_MS = 5 * 60 * 1000;
 const RESEARCHER_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
 const RESEARCHER_TIMEOUT_MESSAGE = "I see it's been an hour. I've saved everything—don't worry. When you're ready to get back into things, send me a message and I'll open it again.";
-const APPROVAL_AUTHORITY = "The researcher approved this study once and authorized autonomous safe in-scope execution through final verified deliverables. Stabilize the pre-result contract with only closed-checklist minimal repairs; do not treat that normalization as a downstream repair wave. Do not request another approval or exceed saved execution, result-aware, or downstream limits.";
+const APPROVAL_AUTHORITY = "The researcher approved this study once and authorized autonomous safe, reversible, in-scope execution through a freshly verified final paper and delivery package. Operational failures, rejected gates, unavailable routes, and repeated repairs remain active same-run work. The lead must keep orchestrating repairs and independent rechecks. Do not request another approval. The lead cannot stop before final verification succeeds.";
 const ACTIVE_DRAFT_STATES = new Set(["draft", "submitted", "review_ready", "changes_requested", "approved"]);
 const EDITABLE_REVIEW_FIELDS = ["question", "objective", "materials", "prior_work", "evaluation", "requirements", "deliverables", "study_plan_markdown"];
 const REQUIRED_REVIEW_FIELDS = new Set(["question", "objective", "evaluation", "deliverables", "study_plan_markdown"]);
@@ -272,7 +272,7 @@ function findLatestDraft(projectRootArg, mode) {
       const state = readDraft(projectRoot, entry.name);
       if (state.mode === mode && ACTIVE_DRAFT_STATES.has(state.status)) candidates.push(state);
     } catch {
-      // Ignore incomplete directories. The UI never trusts them as drafts.
+      // Ignore malformed directories. The UI never trusts them as drafts.
     }
   }
   return candidates.sort((a, b) => b.updated_at.localeCompare(a.updated_at))[0] ?? null;
@@ -1082,10 +1082,21 @@ async function callTool(name, args = {}, options = {}) {
   }
   if (name === "prepare_role_launch") return prepareRoleLaunch(args);
   if (name === "attach_run_monitor") {
+    const projectRoot = safeProjectRoot(args.project_root);
     const runPath = fs.realpathSync(args.run_path);
     if (!fs.statSync(runPath).isDirectory() || !fs.existsSync(path.join(runPath, "run.json"))) throw new Error("run_path must contain a Scientist1 run.json file.");
-    const state = await updateDraft(args.project_root, args.draft_id, (draft) => {
-      if (draft.status !== "approved") throw new Error("The researcher has not approved this intake.");
+    if (path.dirname(runPath) !== path.join(projectRoot, "scientist1-runs")) throw new Error("run_path must be a direct child of this project's scientist1-runs directory.");
+    const approved = readDraft(projectRoot, args.draft_id);
+    if (!new Set(["approved", "started"]).has(approved.status) || !approved.approved_at || approved.execution_authority !== APPROVAL_AUTHORITY) throw new Error("The researcher has not approved this intake with the current Scientist1 execution authority.");
+    if (approved.status === "started" && fs.realpathSync(approved.run_path) !== runPath) throw new Error("This approved intake is already bound to a different Scientist1 run.");
+    try {
+      await execFileAsync(process.execPath, [COE, "bind-approval", runPath, approved.id, approved.approved_at, approved.execution_authority], { timeout: 120_000, windowsHide: true });
+    } catch (error) {
+      throw new Error(`Scientist1 could not bind durable approval to the run: ${String(error.stderr || error.message).trim()}`);
+    }
+    const state = await updateDraft(projectRoot, args.draft_id, (draft) => {
+      if (!new Set(["approved", "started"]).has(draft.status)) throw new Error("The researcher has not approved this intake.");
+      if (draft.status === "started" && fs.realpathSync(draft.run_path) !== runPath) throw new Error("This approved intake is already bound to a different Scientist1 run.");
       draft.status = "started";
       draft.run_path = runPath;
     });

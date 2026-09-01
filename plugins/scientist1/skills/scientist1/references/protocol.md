@@ -11,8 +11,8 @@ identify distinct machine objects.
 
 ## 0. Contract
 
-Inputs are `request.md`, approved `study-plan.md`, frozen
-`environment/bootstrap.json`, `contract/run-config.json`, and
+Inputs are `request.md`, approved `study-plan.md`, durable
+`contract/approval.json`, frozen `environment/bootstrap.json`, `contract/run-config.json`, and
 `contract/input-manifest.json`. External-audit mode also requires
 `contract/source-bundle-manifest.json`.
 
@@ -23,19 +23,19 @@ target or a domain-specific justification; bibliography target or documented
 access limitation; brief-repair limit; `idea_ceiling`,
 `minimum_eligible_ideas`, `candidate_node_ceiling`,
 `minimum_evaluated_candidates`, `evaluation_ceiling_per_node`,
-`ablation_ceiling`, `minimum_valid_ablations`, exact audit panel size, two
-accepted launch attempts per logical task, and one automatic repair wave per
-downstream or result-aware gate. Pre-result contract stabilization is governed
-by the closed checklist and minimal-delta rule, not a numeric wave ceiling.
+`ablation_ceiling`, `minimum_valid_ablations`, and exact audit panel size.
+Attempts and repair cycles are recorded without a terminal ceiling. Pre-result
+contract stabilization is governed by the closed checklist and minimal-delta
+rule; result-aware repair always archives affected evidence before rerunning it.
 
 The plan lists estimated maximum evaluations and compute implications before
 approval. Valid phase stop reasons are evidence saturation under the stated
 rule, no additional eligible ideas, stable ranking under a plan-defined
-criterion, exhausted approved compute, or repeated operational failure. These
+criterion or exhausted approved compute. These
 stop only the affected search or experiment loop. A limited design may proceed
 only if every applicable gate can still pass and the final outcome is
-`completed_with_limitations`; otherwise close `blocked_exhausted` with an
-honest `INCOMPLETE` record. Do not pad a ceiling with duplicate work.
+`completed_with_limitations`; otherwise repair the design or execution path and
+continue the same run. Do not pad a ceiling with duplicate work.
 
 Retain the paper's pilot profile as the default so this release does not
 silently expand an approved study's compute or subscription usage. The plan
@@ -56,8 +56,9 @@ evaluator code and evaluator-only inputs; do not expose their contents.
 Evaluator source, held-out material, and private raw outputs live under
 `private/evaluator/`.
 
-Run `coe.mjs configure` and `coe.mjs init` before a contract specialist so the
-ledger and frozen common interpreter exist. Before candidate generation or any
+Run `coe.mjs configure` and `coe.mjs init`, then call `attach_run_monitor` to
+bind `contract/approval.json`, before a contract specialist so the ledger and
+frozen common interpreter exist. Before candidate generation or any
 candidate result exists, dispatch a fresh result-blind I1 policy author (compatibility
 role key `i1_verifier_builder`). It writes only
 `contract/i1-verification-policy.json` according to `i1-verification.md` and
@@ -81,8 +82,8 @@ contract. The charter is the approved question, named inputs, constraints,
 exclusions, data boundaries, and limits on interpretation. Outcome
 operationalizations, evaluators, I1 policies, schemas, paths, hashes, seeds,
 methods, and other generated details are a versioned execution contract.
-Approval grants durable authority for bounded in-scope repairs, not unlimited
-retrying or weaker acceptance criteria.
+Approval grants durable authority for every causal in-scope repair required for
+verified delivery. It never authorizes weaker acceptance criteria or speculative work.
 
 When generated contract work needs revision, write a structured reason file
 and use `revise-contract` from `artifacts.md`:
@@ -114,15 +115,16 @@ Do not promote a plan with a material finding. A PASS receipt means
 On REVISE before candidate evidence, preserve the rejected material, patch
 only the exact invented/contradictory field, missing executable definition, or
 deterministic schema/interpreter defect and its hash-bound dependents, then
-dispatch a fresh Contract Auditor. This stabilization may repeat without
-consuming a downstream repair wave, but its scope may never grow: re-audit the
+dispatch a fresh Contract Auditor. This stabilization may repeat, but its scope
+may never grow: re-audit the
 prior findings and repair delta against the same closed checklist, and add a
 new blocker only if the repair itself introduced it. Optional hardening,
 stronger alternative designs, and hypothetical edge cases never create work.
-Once candidate or downstream evidence exists, the one-wave result-aware budget
-applies. A limited contract is valid only when it still answers the frozen
-question and every applicable gate can pass. Otherwise preserve the genuine
-post-result or permanent blocker and close INCOMPLETE.
+Once candidate or downstream evidence exists, every repair archives and
+invalidates all affected successors before rerunning them. A limited contract
+is valid only when it still answers the frozen question and every applicable
+gate can pass. Otherwise preserve the blocker, repair its cause, and continue
+the same run.
 
 Before dispatching any specialist, the lead writes a supervisor-generated
 `role-launches/<agent-task>.json` from native task metadata. It records the
@@ -131,7 +133,7 @@ unique task ID, stable logical task name, positive attempt number, role,
 `declared_inputs`, allowed external sources, declared outputs, and start time.
 The runtime also hashes contract/charter revision, role, and sorted exclusive
 outputs as the immutable work identity, so renaming a logical task cannot reset
-its attempt budget while a genuine versioned contract repair remains new work.
+or hide its attempt history while a genuine versioned contract repair remains new work.
 The specialist receipt references the launch-record hash and adds completion
 time, actual outputs, limitations, accidental access, `execution_status`, and
 `gate_verdict`, including an `environment_changes` array. If native metadata is unavailable, describe model and
@@ -191,12 +193,12 @@ preserve the failed environment record and create an isolated role environment;
 do not mutate a working evaluator or another candidate's environment. Try the
 official distribution, an existing compatible tool, and a safe isolated
 alternative when available. Mark an individual specialist receipt BLOCKED only
-when its declared work package cannot proceed. The lead may repair or replace
-that work package only within the frozen two-attempt/one-wave limits. Exhaustion
-creates `terminal/incomplete.json` and state `blocked_exhausted`; it never
-becomes a hidden loop, a scientific PASS, or a fabricated null result.
+when its declared work package cannot proceed. The lead records the incident,
+repairs or replaces that work package within the frozen charter, dispatches the
+next sequential attempt, and continues. An operational blocker never becomes a
+scientific PASS, a fabricated null result, or permission to stop the study.
 
-Gate: exact request, approved plan, environment bootstrap, input manifest,
+Gate: durable approval, exact request, approved plan, environment bootstrap, input manifest,
 evaluator contract and manifest, declarative I1 policy, hash-bound common
 interpreter at `contract/control-plane/i1-interpreter.mjs`, and independent
 Contract Auditor PASS are frozen and checkpointed.
@@ -589,7 +591,7 @@ The manifest is non-empty and each item has `supplied_path`, `frozen_path`,
 `missing_reason` (null when available). Derive required audit inputs from the
 manifest rather than assuming research-mode filenames. Mark a check
 `NOT_ASSESSED` only when a required item has `available: false` and a concrete
-reason. If no check is assessable, complete only as `audit_incomplete` with
+reason. If no check is assessable, deliver the audit paper as `audit_failed` with
 `insufficient_evidence`; never report an integrity PASS.
 
 For I1, prefer a supplied policy demonstrably frozen before the external
@@ -605,7 +607,7 @@ predeclaration recorded.
 Run the Contract Auditor in `external_audit` mode, then every I1-I4 and
 claim-provenance check supported by the frozen bundle. Copy the manifest into
 `deliverables/`. External outcomes describe the audit itself:
-`audit_passed`, `audit_failed`, or `audit_incomplete`. Never force an external
+`audit_passed` or `audit_failed`. Never force an external
 audit into `completed_with_limitations`.
 
 ## 9. Delivery
@@ -626,10 +628,10 @@ outcome. Checkpoint `complete` only after manifest verification passes, then
 run `verify` once more.
 
 Research outcomes are `positive`, `scientific_null`, or
-`completed_with_limitations`. After approval, operational failures remain
-`running` or `repairing` only while a bounded recovery path exists; exhausted
-work becomes `blocked_exhausted`/`INCOMPLETE`. External-audit outcomes use the
-values in Section 8.
+`completed_with_limitations`. After approval, every operational failure remains
+`running` or `repairing` work until the canonical paper, required evidence,
+audits, reproduction guide, and delivery manifest pass fresh verification.
+External-audit outcomes use the values in Section 8.
 
 ## Canonical terminology
 

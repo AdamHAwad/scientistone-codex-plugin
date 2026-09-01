@@ -22,9 +22,10 @@ function catalog(strong = "gpt-6-astra", efficient = "gpt-6-luna", offset = 0) {
 function runRoot(t, name = "routing") {
   const run = fs.mkdtempSync(path.join(os.tmpdir(), `scientist1-${name}-`));
   t.after(() => fs.rmSync(run, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify({ state: "running", contract_revision: 1, charter_revision: 1, last_checkpoint: null, checkpoints: {} })}\n`);
+  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify({ state: "running", contract_revision: 1, charter_revision: 1, last_checkpoint: null, checkpoints: {}, approval_sha256: "a".repeat(64) })}\n`);
   fs.mkdirSync(path.join(run, "contract"), { recursive: true });
-  fs.writeFileSync(path.join(run, "contract", "run-config.json"), `${JSON.stringify({ schema_version: 2, orchestration: { max_task_attempts: 2, max_repair_waves_per_gate: 1 } })}\n`);
+  fs.writeFileSync(path.join(run, "contract", "run-config.json"), `${JSON.stringify({ schema_version: 3, orchestration: { task_attempt_policy: "repair_until_pass", repair_gate_policy: "invalidate_and_continue", completion_condition: "fresh_verified_delivery" } })}\n`);
+  fs.writeFileSync(path.join(run, "contract", "approval.json"), `${JSON.stringify({ schema_version: 1 })}\n`);
   fs.writeFileSync(path.join(run, "study-plan.md"), "# Test plan\n");
   fs.mkdirSync(path.join(run, "selection", "selected"), { recursive: true });
   fs.writeFileSync(path.join(run, "selection", "selected", "method.txt"), "test\n");
@@ -280,7 +281,7 @@ test("expired grants have a stable recovery code and a fresh grant can reuse the
   assert.throws(() => consumeLaunchToken(second.task_name, { stateHome: STATE_HOME }), (error) => error.code === "S1_LAUNCH_GRANT_NOT_FOUND");
 });
 
-test("invalid spawn text does not burn a valid grant and accepted launch attempts are capped", async (t) => {
+test("invalid spawn text does not burn a grant and accepted repairs can continue until PASS", async (t) => {
   const run = runRoot(t, "bounded-attempts");
   const prepared = await prepareRoleLaunch({
     run_path: run,
@@ -338,7 +339,8 @@ test("invalid spawn text does not burn a valid grant and accepted launch attempt
     task_brief: brief(),
   }, { catalog: catalog(), stateHome: STATE_HOME }), (error) => error.code === "S1_LOGICAL_TASK_ALIAS");
 
-  await assert.rejects(prepareRoleLaunch({
+  assert.equal(consumeLaunchToken(retry.task_name, { stateHome: STATE_HOME }).attempt, 2);
+  const third = await prepareRoleLaunch({
     run_path: run,
     task_name: "contract_a3",
     logical_task_name: "contract",
@@ -348,9 +350,10 @@ test("invalid spawn text does not burn a valid grant and accepted launch attempt
     declared_outputs: ["contract/audit.md"],
     allowed_external_sources: [],
     task_brief: brief(),
-  }, { catalog: catalog(), stateHome: STATE_HOME }), (error) => error.code === "S1_TASK_ATTEMPTS_EXHAUSTED");
+  }, { catalog: catalog(), stateHome: STATE_HOME });
+  assert.equal(third.attempt, 3);
+  assert.equal(consumeLaunchToken(third.task_name, { stateHome: STATE_HOME }).attempt, 3);
 
-  assert.equal(consumeLaunchToken(retry.task_name, { stateHome: STATE_HOME }).attempt, 2);
   const originalRecord = JSON.parse(fs.readFileSync(path.join(run, "run.json"), "utf8"));
   const forgedRevision = structuredClone(originalRecord);
   forgedRevision.contract_revision = 2;
@@ -380,7 +383,7 @@ test("invalid spawn text does not burn a valid grant and accepted launch attempt
     task_brief: brief(),
   }, { catalog: catalog(), stateHome: STATE_HOME });
   const terminalRecord = structuredClone(originalRecord);
-  terminalRecord.state = "blocked_exhausted";
+  terminalRecord.state = "complete";
   fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify(terminalRecord)}\n`);
   assert.throws(() => consumeLaunchToken(pending.task_name, { stateHome: STATE_HOME }), (error) => error.code === "S1_RUN_TERMINAL_OR_INACTIVE");
   await assert.rejects(prepareRoleLaunch({

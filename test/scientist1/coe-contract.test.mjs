@@ -23,6 +23,7 @@ function read(root, relative) { return JSON.parse(fs.readFileSync(path.join(root
 function copy(root, source, destination) { const target = path.join(root, destination); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.copyFileSync(path.join(root, source), target); }
 function hash(root, relative) { const result = run("hash", root, relative); assert.equal(result.status, 0, result.stderr); return result.stdout.trim(); }
 function fileHash(file) { return createHash("sha256").update(fs.readFileSync(file)).digest("hex"); }
+function approve(root) { const result = run("bind-approval", root, "test-draft", "2026-08-31T00:00:00Z", "Synthetic researcher approval for the regression fixture."); assert.equal(result.status, 0, result.stderr); }
 function canonical(value) { if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`; return JSON.stringify(value); }
 function workKey(role, outputs, contractRevision, charterRevision) { return createHash("sha256").update(canonical({ contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...outputs].sort() })).digest("hex"); }
 function bootstrap(root, mode, source = "existing") {
@@ -71,13 +72,13 @@ function role(root, { role: name, task = name, logical_task_name = task, attempt
 }
 function checkpointResult(root, phase, outputs, roles = [], childEnv = null) {
   const flags = ["--input", "study-plan.md"];
-  if (phase === "contract") { for (const item of ["request.md", "environment/bootstrap.json", "contract/run-config.json", "contract/input-manifest.json"]) flags.push("--input", item); if (fs.existsSync(path.join(root, "contract/source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json"); else for (const item of ["contract/evaluator-contract.md", "contract/evaluator-manifest.json"]) flags.push("--input", item); for (const item of ["contract/i1-verification-policy.json", "contract/control-plane/i1-interpreter.mjs"]) if (fs.existsSync(path.join(root, item))) flags.push("--input", item); }
+  if (phase === "contract") { for (const item of ["request.md", "environment/bootstrap.json", "contract/approval.json", "contract/run-config.json", "contract/input-manifest.json"]) flags.push("--input", item); if (fs.existsSync(path.join(root, "contract/source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json"); else for (const item of ["contract/evaluator-contract.md", "contract/evaluator-manifest.json"]) flags.push("--input", item); for (const item of ["contract/i1-verification-policy.json", "contract/control-plane/i1-interpreter.mjs"]) if (fs.existsSync(path.join(root, item))) flags.push("--input", item); }
   for (const output of [...outputs, ...roles.map((item) => role(root, item))]) flags.push("--output", output);
   const checked = run("preflight", root, phase, ...flags);
   return checked.status === 0 ? childEnv ? runWithEnv(childEnv, "checkpoint", root, phase, ...flags) : run("checkpoint", root, phase, ...flags) : checked;
 }
 function checkpoint(root, phase, outputs, roles = [], childEnv = null) { const result = checkpointResult(root, phase, outputs, roles, childEnv); assert.equal(result.status, 0, result.stderr); }
-function newRun(t, mode = "research", environmentSource = "existing") { const root = fs.mkdtempSync(path.join(os.tmpdir(), `scientist1-${mode}-`)); t.after(() => fs.rmSync(root, { recursive: true, force: true })); put(root, "request.md", "Approved request.\n"); put(root, "study-plan.md", "# Approved plan\n"); bootstrap(root, mode, environmentSource); json(root, "contract/custom-profile.json", BUDGETS); assert.equal(run("configure", root, "custom", mode, "contract/custom-profile.json").status, 0); assert.equal(run("init", root).status, 0); installTestRouting(root); return root; }
+function newRun(t, mode = "research", environmentSource = "existing") { const root = fs.mkdtempSync(path.join(os.tmpdir(), `scientist1-${mode}-`)); t.after(() => fs.rmSync(root, { recursive: true, force: true })); put(root, "request.md", "Approved request.\n"); put(root, "study-plan.md", "# Approved plan\n"); bootstrap(root, mode, environmentSource); json(root, "contract/custom-profile.json", BUDGETS); assert.equal(run("configure", root, "custom", mode, "contract/custom-profile.json").status, 0); assert.equal(run("init", root).status, 0); approve(root); installTestRouting(root); return root; }
 
 function writeContractArtifacts(root, evaluatorText = "Metric score; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n", childEnv = null) {
   const contractRevision = read(root, "run.json").contract_revision;
@@ -193,6 +194,7 @@ test("checkpoint retries recover journal-only and journal-plus-receipt interrupt
       "--input", "study-plan.md",
       "--input", "request.md",
       "--input", "environment/bootstrap.json",
+      "--input", "contract/approval.json",
       "--input", "contract/run-config.json",
       "--input", "contract/input-manifest.json",
       "--input", "contract/evaluator-contract.md",
@@ -462,33 +464,30 @@ test("invalidation preserves evidence and detects every archived-tree mutation c
   }
 });
 
-test("repair exhaustion archives the exact affected chain before terminal INCOMPLETE", (t) => {
+test("repeated downstream repair archives every affected chain and continues the same run", (t) => {
   const root = through(t, "investigation");
   put(root, "repairs/investigation-r1.md", "The first investigation gate defect requires one bounded repair.\n");
   const repaired = run("invalidate", root, "investigation", "repairs/investigation-r1.md");
   assert.equal(repaired.status, 0, repaired.stderr);
   investigate(root, 2);
   put(root, "repairs/investigation-limit.md", "The investigation gate remains invalid.\n");
-  const exhausted = run("invalidate", root, "investigation", "repairs/investigation-limit.md");
-  assert.notEqual(exhausted.status, 0);
-  const terminalRecord = read(root, "run.json");
-  const terminal = read(root, "terminal/incomplete.json");
-  assert.equal(terminalRecord.state, "blocked_exhausted");
-  assert.equal(terminalRecord.phase, "investigation");
-  assert.equal(terminalRecord.last_checkpoint, "contract");
+  const secondRepair = run("invalidate", root, "investigation", "repairs/investigation-limit.md");
+  assert.equal(secondRepair.status, 0, secondRepair.stderr);
+  const repairingRecord = read(root, "run.json");
+  assert.equal(repairingRecord.state, "repairing");
+  assert.equal(repairingRecord.phase, "investigation");
+  assert.equal(repairingRecord.last_checkpoint, "contract");
+  assert.equal(repairingRecord.repair_waves.investigation, 2);
+  assert.equal(repairingRecord.invalidation_roots.length, 2);
   assert.equal(fs.existsSync(path.join(root, "receipts/investigation.json")), false);
-  assert.equal(terminal.repair_gate, "investigation");
-  const terminalVerified = run("verify", root);
-  assert.equal(terminalVerified.status, 0, terminalVerified.stderr);
-  terminal.repair_gate = "contract";
-  json(root, "terminal/incomplete.json", terminal);
-  const tamperedRecord = read(root, "run.json");
-  tamperedRecord.terminal_anchor.sha256 = hash(root, "terminal");
-  json(root, "run.json", tamperedRecord);
-  assert.match(run("verify", root).stderr, /Terminal repair exhaustion/);
+  assert.equal(fs.existsSync(path.join(root, "terminal")), false);
+  assert.equal(run("verify", root).status, 0);
+  investigate(root, 3);
+  assert.equal(read(root, "run.json").phase, "discovery");
+  assert.equal(run("verify", root).status, 0);
 });
 
-test("a completed delivery is immutable and cannot be reopened as exhaustion", (t) => {
+test("a completed delivery is immutable and cannot be reopened as repair", (t) => {
   const root = through(t, "complete");
   put(root, "repairs/final-limit.md", "The final delivery gate requires a correction beyond its frozen repair budget.\n");
   const exhausted = run("invalidate", root, "complete", "repairs/final-limit.md");
@@ -655,7 +654,7 @@ test("a result-aware evaluator repair archives every successor and reruns from c
   assert.equal(run("verify", root).status, 0);
 });
 
-test("post-result contract revisions retain the frozen repair-wave ceiling", (t) => {
+test("post-result contract revisions preserve every repair cycle without a terminal ceiling", (t) => {
   const root = through(t, "selection");
   json(root, "repairs/result-aware-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "The frozen policy mishandles one supported result shape.", repair: "Correct that result shape without changing the approved metric, then rerun affected work.", researcher_approval: null });
   const first = run("revise-contract", root, "repairs/result-aware-r1.json");
@@ -664,13 +663,14 @@ test("post-result contract revisions retain the frozen repair-wave ceiling", (t)
 
   put(root, "contract/evaluator-contract.md", "A second result-aware contract defect remains.\n");
   json(root, "repairs/result-aware-r2.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "A second result-aware policy defect remains.", repair: "Correct the remaining defect and rerun affected work.", researcher_approval: null });
-  const exhausted = run("revise-contract", root, "repairs/result-aware-r2.json");
-  assert.notEqual(exhausted.status, 0);
-  assert.match(exhausted.stderr, /Post-result repair budget exhausted for contract/);
+  const second = run("revise-contract", root, "repairs/result-aware-r2.json");
+  assert.equal(second.status, 0, second.stderr);
   const record = read(root, "run.json");
-  assert.equal(record.state, "blocked_exhausted");
+  assert.equal(record.state, "repairing");
   assert.equal(record.phase, "contract");
-  assert.equal(read(root, "terminal/incomplete.json").repair_gate, "contract");
+  assert.equal(record.contract_revision, 3);
+  assert.equal(record.repair_waves.contract, 2);
+  assert.equal(fs.existsSync(path.join(root, "terminal")), false);
   assert.equal(run("verify", root).status, 0);
 });
 
@@ -704,6 +704,7 @@ test("partial uncheckpointed candidate work cannot survive a contract revision",
 
 test("an explicit researcher approval can amend the charter without losing the original", (t) => {
   const root = contract(t);
+  const originalApproval = read(root, "contract/approval.json");
   put(root, "repairs/researcher-approval.md", "Approved in the Scientist1 study review.\n");
   put(root, "repairs/amended-study-plan.md", "# Approved amended plan\n\nThe same question uses a researcher-approved primary outcome.\n");
   json(root, "repairs/approved-amendment.json", { schema_version: 1, classification: "RESEARCHER_APPROVED_AMENDMENT", charter_changed: true, result_aware: false, post_result_guard: null, finding: "The researcher approved a clearer primary outcome before results.", repair: "Replace the active plan and rebuild the generated contract.", researcher_approval: { path: "repairs/researcher-approval.md", sha256: hash(root, "repairs/researcher-approval.md") } });
@@ -715,5 +716,7 @@ test("an explicit researcher approval can amend the charter without losing the o
   assert.match(fs.readFileSync(path.join(root, "study-plan.md"), "utf8"), /Approved amended plan/);
   const archive = path.join(root, record.invalidation_roots.at(-1).path);
   assert.equal(fs.readFileSync(path.join(archive, "artifacts/study-plan.md"), "utf8"), "# Approved plan\n");
+  assert.deepEqual(read(archive, "artifacts/contract/approval.json"), originalApproval);
+  assert.equal(read(root, "contract/approval.json").study_plan_sha256, record.study_plan_sha256);
   assert.equal(run("verify", root).status, 0);
 });

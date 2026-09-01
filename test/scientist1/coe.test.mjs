@@ -21,6 +21,11 @@ function run(...args) {
   return spawnSync(process.execPath, [COE, ...args], { encoding: "utf8" });
 }
 
+function approve(root) {
+  const result = run("bind-approval", root, "test-draft", "2026-08-31T00:00:00Z", "Synthetic researcher approval for the regression fixture.");
+  assert.equal(result.status, 0, result.stderr);
+}
+
 test("1.3 continues a genuine 1.2 specialist under the frozen 1.2 contracts", async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-legacy-"));
   const stateHome = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-legacy-state-"));
@@ -170,7 +175,7 @@ test("runs retain the paper-compatible pilot profile by default", (t) => {
 
 function checkpoint(root, phase, outputs, roles) {
   if (phase !== "complete") {
-    const contractInputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/run-config.json", "contract/input-manifest.json"];
+    const contractInputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/approval.json", "contract/run-config.json", "contract/input-manifest.json"];
     if (fs.existsSync(path.join(root, "contract", "source-bundle-manifest.json"))) contractInputs.push("contract/source-bundle-manifest.json");
     const mode = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8")).mode;
     if (mode === "research") {
@@ -224,7 +229,7 @@ function checkpoint(root, phase, outputs, roles) {
   }
   const flags = ["--input", "study-plan.md"];
   if (phase === "contract") {
-    flags.push("--input", "request.md", "--input", "environment/bootstrap.json", "--input", "contract/run-config.json", "--input", "contract/input-manifest.json");
+    flags.push("--input", "request.md", "--input", "environment/bootstrap.json", "--input", "contract/approval.json", "--input", "contract/run-config.json", "--input", "contract/input-manifest.json");
     if (fs.existsSync(path.join(root, "contract", "source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json");
     else flags.push("--input", "contract/evaluator-contract.md", "--input", "contract/evaluator-manifest.json");
     flags.push("--input", "contract/i1-verification-policy.json", "--input", "contract/control-plane/i1-interpreter.mjs");
@@ -262,6 +267,7 @@ test("the CoE ledger verifies a complete chain and catches evidence drift", (t) 
   bootstrap(root);
   assert.equal(run("configure", root, "standard", "research").status, 0);
   assert.equal(run("init", root).status, 0);
+  approve(root);
   installTestRouting(root);
 
   put(root, "inputs/shared/observations.csv", "value\n1\n");
@@ -454,6 +460,7 @@ test("invalidation preserves receipts and resumes from the earliest affected pha
   bootstrap(root);
   assert.equal(run("configure", root, "standard", "research").status, 0);
   assert.equal(run("init", root).status, 0);
+  approve(root);
   installTestRouting(root);
   put(root, "contract/input-manifest.json", '{"schema_version":1,"files":[]}\n');
   put(root, "contract/audit.md", "Overall verdict: PASS\n");
@@ -511,6 +518,7 @@ test("required descendants and symlinked ancestors cannot be promoted", (t) => {
     bootstrap(target);
     assert.equal(run("configure", target, "standard", "research").status, 0);
     assert.equal(run("init", target).status, 0);
+    approve(target);
     installTestRouting(target);
   }
   put(root, "contract/input-manifest.json", '{"schema_version":1,"files":[]}\n');
@@ -537,25 +545,26 @@ test("built-in profile budgets cannot be relabelled", (t) => {
   assert.match(run("init", root).stderr, /budgets do not match the built-in profile/);
 });
 
-test("1.3 freezes executed-task and downstream repair limits", (t) => {
+test("1.4 freezes repair-through-delivery orchestration semantics", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-orchestration-limits-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   put(root, "request.md");
   put(root, "study-plan.md");
   assert.equal(run("configure", root, "pilot", "research").status, 0);
   const config = JSON.parse(fs.readFileSync(path.join(root, "contract/run-config.json"), "utf8"));
-  config.orchestration = { max_task_attempts: 3, max_repair_waves_per_gate: 2 };
+  config.orchestration.completion_condition = "best_effort";
   put(root, "contract/run-config.json", `${JSON.stringify(config)}\n`);
-  assert.match(run("init", root).stderr, /requires exactly 2/);
+  assert.match(run("init", root).stderr, /Invalid orchestration policy/);
 });
 
-test("attempt exhaustion requires immutable accepted attempts and becomes a terminal INCOMPLETE state", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-exhausted-"));
+test("repeated specialist failures become anchored repair work and never terminalize the run", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-repair-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   put(root, "request.md", "Approved request.\n");
   put(root, "study-plan.md", "Approved plan.\n");
   assert.equal(run("configure", root, "pilot", "research").status, 0);
   assert.equal(run("init", root).status, 0);
+  approve(root);
   const runRecord = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8"));
   const key = workKey("candidate_developer", ["search/candidates/a/method"], runRecord.contract_revision, runRecord.charter_revision);
   for (const attempt of [1, 2]) {
@@ -564,47 +573,41 @@ test("attempt exhaustion requires immutable accepted attempts and becomes a term
     put(root, `role-attempts/candidate_a/${key}/attempt-${attempt}.json`, `${JSON.stringify({ schema_version: 2, logical_task_name: "candidate_a", work_key_sha256: key, attempt, launch_record: launch, launch_record_sha256: run("hash", root, launch).stdout.trim(), accepted_at: `2026-08-17T00:00:0${attempt}.500Z` })}\n`);
   }
   put(root, "failures/task-a2.txt", "Second accepted attempt failed deterministically.\n");
-  put(root, "failures/exhaustion.json", `${JSON.stringify({ schema_version: 1, failure_class: "task_attempts_exhausted", logical_task_name: "candidate_a", last_failure: "Second accepted attempt failed deterministically.", exhausted_counter: 2, exhausted_limit: 2, evidence_paths: ["failures/task-a2.txt"], remaining_work: ["Correct the candidate implementation without weakening the study contract."], resume_requirement: "Start a new linked run only after the demonstrated implementation defect is corrected." })}\n`);
-  put(root, "terminal/incomplete.json", `${JSON.stringify({ stale: true })}\n`);
-  const result = run("exhaust", root, "failures/exhaustion.json");
+  put(root, "failures/repair.json", `${JSON.stringify({ schema_version: 1, failure_class: "specialist_failure", logical_task_name: "candidate_a", summary: "Second accepted attempt failed deterministically.", evidence_paths: ["failures/task-a2.txt"], required_action: "Repair the demonstrated implementation defect and dispatch the next accepted attempt." })}\n`);
+  const result = run("record-repair", root, "failures/repair.json");
   assert.equal(result.status, 0, result.stderr);
   const record = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8"));
-  assert.equal(record.state, "blocked_exhausted");
-  assert.equal(record.outcome, "incomplete");
-  const terminal = JSON.parse(fs.readFileSync(path.join(root, "terminal/incomplete.json"), "utf8"));
-  assert.equal(terminal.disposition, "INCOMPLETE");
-  assert.equal(terminal.logical_task_name, "candidate_a");
-  assert.equal(terminal.repair_gate, null);
-  assert.equal(fs.readdirSync(path.join(root, "terminal/superseded")).length, 1, "a crash-left stale terminal record is preserved and replaced atomically");
+  assert.equal(record.state, "repairing");
+  assert.equal(record.outcome, null);
+  assert.equal(record.repair_incidents.length, 1);
+  assert.equal(fs.existsSync(path.join(root, record.repair_incidents[0].path)), true);
+  assert.equal(fs.existsSync(path.join(root, "terminal")), false);
   assert.equal(run("verify", root).status, 0);
-  assert.notEqual(run("set-state", root, "running").status, 0);
-  assert.equal(fs.existsSync(path.join(root, "terminal/incomplete.json")), true);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8")).outcome, "incomplete");
-  assert.equal(run("verify", root).status, 0);
-  const originalTerminalBytes = fs.readFileSync(path.join(root, "terminal/incomplete.json"));
-  terminal.last_failure = "tampered narrative";
-  put(root, "terminal/incomplete.json", `${JSON.stringify(terminal)}\n`);
-  assert.match(run("verify", root).stderr, /terminal evidence differs/i);
-  fs.writeFileSync(path.join(root, "terminal/incomplete.json"), originalTerminalBytes);
-  assert.equal(run("verify", root).status, 0);
-  const reopened = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8"));
-  reopened.state = "running";
-  reopened.outcome = null;
-  reopened.terminal_anchor = null;
-  put(root, "run.json", `${JSON.stringify(reopened)}\n`);
-  assert.match(run("verify", root).stderr, /Terminal evidence and outcome incomplete are reserved for blocked_exhausted runs/i);
-  put(root, "run.json", `${JSON.stringify(record)}\n`);
-  assert.equal(run("verify", root).status, 0);
+  fs.appendFileSync(path.join(root, record.repair_incidents[0].path), "tampered\n");
+  assert.match(run("verify", root).stderr, /Invalid repair incident anchor/);
 });
 
-test("claimed exhaustion without immutable accepted attempts is rejected", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-false-exhaustion-"));
+test("a preserved 1.3 terminal diagnosis resumes as same-run repair evidence", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-resume-repair-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   put(root, "request.md", "Approved request.\n");
   put(root, "study-plan.md", "Approved plan.\n");
   assert.equal(run("configure", root, "pilot", "research").status, 0);
   assert.equal(run("init", root).status, 0);
-  put(root, "failures/task.txt", "Claimed failure.\n");
-  put(root, "failures/exhaustion.json", `${JSON.stringify({ schema_version: 1, failure_class: "task_attempts_exhausted", logical_task_name: "candidate_a", last_failure: "Claimed failure.", exhausted_counter: 2, exhausted_limit: 2, evidence_paths: ["failures/task.txt"], remaining_work: ["Do the task."], resume_requirement: "Start a new run after correcting the cause." })}\n`);
-  assert.match(run("exhaust", root, "failures/exhaustion.json").stderr, /must match exactly 2 immutable accepted attempts/);
+  approve(root);
+  const record = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8"));
+  record.state = ["blocked", "exhausted"].join("_");
+  record.outcome = ["in", "complete"].join("");
+  record.terminal_anchor = { path: "terminal", sha256: "a".repeat(64) };
+  put(root, "run.json", `${JSON.stringify(record)}\n`);
+  put(root, `terminal/${["in", "complete"].join("")}.json`, `${JSON.stringify({ logical_task_name: "candidate_a", last_failure: "The old controller stopped after two reviews.", remaining_work: ["Run the repaired independent review and continue."] })}\n`);
+  const resumed = run("resume-repair", root);
+  assert.equal(resumed.status, 0, resumed.stderr);
+  const repaired = JSON.parse(fs.readFileSync(path.join(root, "run.json"), "utf8"));
+  assert.equal(repaired.state, "repairing");
+  assert.equal(repaired.outcome, null);
+  assert.equal(repaired.terminal_anchor, null);
+  assert.equal(repaired.repair_incidents.length, 1);
+  assert.equal(fs.existsSync(path.join(root, "terminal")), false);
+  assert.equal(run("verify", root).status, 0);
 });

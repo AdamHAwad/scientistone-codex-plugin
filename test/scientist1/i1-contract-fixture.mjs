@@ -21,7 +21,7 @@ function workKey(role, outputs, contractRevision, charterRevision) {
 }
 
 function i1BuilderInputs(mode) {
-  const inputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/run-config.json", "contract/input-manifest.json", INTERPRETER_PATH];
+  const inputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/approval.json", "contract/run-config.json", "contract/input-manifest.json", INTERPRETER_PATH];
   inputs.push(mode === "research" ? "contract/evaluator-contract.md" : "contract/source-bundle-manifest.json");
   if (mode === "research") inputs.push("contract/evaluator-manifest.json");
   return inputs;

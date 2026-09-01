@@ -32,7 +32,7 @@ The lead agent coordinates the study. Each specialist gets declared inputs, outp
 
 This matters most for score verification. No single formula can cover a near-zero metric, a paired trial, a hardware benchmark, and a study with several outcomes. A fresh result-blind agent writes a declarative policy for the approved task. Scientist1 binds that policy to a release-tested common interpreter, the evaluator interface, inputs, and fixed tolerances before any candidate result exists. A separate auditor later reruns the evaluator and applies that exact frozen policy.
 
-The agents can adapt the policy to the science. They cannot adapt a test to rescue a result they have already seen. If the frozen policy omitted a valid supported result type, Scientist1 preserves the old work, makes the smallest versioned correction, re-audits it, and reruns every affected stage within the fixed repair budget. Unsupported semantics close honestly as incomplete instead of being approximated.
+The agents can adapt the policy to the science. They cannot adapt a test to rescue a result they have already seen. If the frozen policy omitted a valid supported result type, Scientist1 preserves the old work, makes the smallest versioned correction, re-audits it, and reruns every affected stage. Unsupported semantics remain repair work and are never approximated.
 
 ![Nine research stages move an approved question toward a checked study](docs/images/from-question-to-completed-study.png)
 
@@ -116,15 +116,15 @@ does not remove any research stage, repetition, evidence check, or audit; it
 only limits how much independent work can run at once. Higher concurrency may
 consume the user's Codex allowance faster while a study is active.
 
-Scientist1 opens a full-page setup guide in Codex's built-in browser. Explain what you want to study, add any files the study needs, choose the limits, and review the plan. **Approve and start study** is the study's one approval checkpoint. After it, the same page becomes a live flowchart and Scientist1 advances through contract stabilization, research, writing, verification, audit, and delivery. It does not ask you to approve in-scope generated evaluator, I1-policy, method, or environment repairs again. Before candidate results, contract review is a closed, minimal pass: all concrete blockers are reported together, optional hardening creates no work, and faithful result-blind corrections do not exhaust the run. Frozen repair limits still protect result-aware and downstream scientific work; if one of those paths is exhausted, Scientist1 saves a terminal `INCOMPLETE` result instead of looping.
+Scientist1 opens a full-page setup guide in Codex's built-in browser. Explain what you want to study, add any files the study needs, choose the limits, and review the plan. **Approve and start study** is the study's one approval checkpoint. After it, the same page becomes a live flowchart and Scientist1 advances through contract stabilization, research, writing, verification, audit, and delivery. It does not ask you to approve in-scope generated evaluator, I1-policy, method, or environment repairs again. Before candidate results, contract review is a closed, minimal pass: all concrete blockers are reported together and optional hardening creates no work. Later failures remain same-run repair work, with affected evidence archived and rerun. Only fresh verification of the complete paper package can finish an approved study.
 
 A study may later need a project-specific tool, such as a Python library required by the approved method. Scientist1 first uses existing or reversible project-local tools covered by the approved plan. When a capability would exceed the plan or Codex's enforced safety boundary, Scientist1 keeps that boundary, uses a safe in-scope alternative, and records the limitation instead of pausing to request a broader study approval. That tool belongs to the study, not to Scientist1 itself.
 
 ## What a study saves
 
-A completed study may include the exact request, approved plan, source records, search logs, candidate code, experiment records, the selected method, a canonical evaluation, a paper, claim provenance, an I1 to I4 integrity audit, and a reproduction guide.
+A completed study includes the exact request, approved plan, selected method or protocol, canonical evaluation, paper source, claim provenance, I1 to I4 integrity audit, reproduction guide, and delivery manifest. It also preserves the relevant source records, search logs, candidate work, experiments, and failed repairs.
 
-The exact files depend on the approved task and available tools. A PDF needs a compatible TeX compiler. A hardware claim needs the declared hardware. Scientist1 does not promise a positive result, a complete literature record, or the performance reported in the original paper. It records null results and limits instead of hiding them.
+Supplementary formats depend on the approved task and available tools. A PDF needs a compatible TeX compiler. A hardware claim needs the declared hardware. The canonical paper source is unconditional for research. Scientist1 does not promise a positive result, an exhaustive literature record, or the performance reported in the original paper. It records null results and limits instead of hiding them.
 
 ## Security boundary
 

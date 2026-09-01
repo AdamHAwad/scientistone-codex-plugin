@@ -17,6 +17,7 @@ const files = [
   "assets/logo.png",
   "assets/logo.svg",
   "hooks/enforce-role-launch.mjs",
+  "hooks/enforce-study-completion.mjs",
   "hooks/hooks.json",
   "licenses/NEWSREADER-LICENSE",
   "licenses/PHOSPHOR-LICENSE",

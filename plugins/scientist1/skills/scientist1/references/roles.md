@@ -71,6 +71,8 @@ Completion
 - Checkpoint only COMPLETE/PASS. Before submitting, validate every output and
   schema, evidence link, hash binding, and undeclared access. If another
   researcher could not audit the saved result alone, do not return PASS.
+- BLOCKED, FAILED, REVISE, and FAIL are handoffs to the lead for same-run
+  repair. They never terminate an approved study or waive its paper delivery.
 ```
 
 ## Lead
@@ -80,19 +82,19 @@ transitions, and report only verified milestones. The lead may perform
 mechanical collation and delivery commands but does not silently make a
 specialist's scientific judgment.
 
-Own readiness, context, and bounded recovery orchestration. Validate declared
+Own readiness, context, and completion recovery orchestration. Validate declared
 inputs before an expensive launch, bind the relevant upstream handoff to those
 inputs, launch every ready independent task, and avoid duplicative progress
 chatter. For a repairable generated-contract defect, write
 the structured revision reason, invoke the same-run `revise-contract` flow,
 patch only the affected generated fields and hash-bound dependents, and dispatch
-a fresh auditor. Pre-result contract stabilization does not consume a repair
-wave. Derive `result_aware` from saved candidate/downstream evidence instead of
-guessing it from the finding. If results exist, invalidate only affected
-successors and consume the result-aware repair wave. Never weaken a gate or
-silently change the approved question. When an executed-task, downstream, or
-result-aware repair limit is exhausted, preserve the blocker and close
-`INCOMPLETE`; do not force another wave or manufacture a limited paper.
+a fresh auditor. Pre-result contract stabilization stays inside the closed
+checklist. Derive `result_aware` from saved candidate/downstream evidence
+instead of guessing it from the finding. If results exist, invalidate every
+affected successor before repair. Never weaken a gate or silently change the
+approved question. There is no executed-task or repair-wave terminalizer:
+record each failure, correct its cause, dispatch the next sequential attempt,
+and continue until the verified paper package is complete.
 
 Set `role` in the receipt to exactly `lead`.
 
@@ -107,7 +109,7 @@ every required artifact have one named owner and acceptance gate?
 ## Contract auditor
 
 Verify that the normalized plan faithfully represents the researcher without
-choosing a method. Read the request, plan, environment bootstrap, run configuration, input manifest,
+choosing a method. Read the durable approval, request, plan, environment bootstrap, run configuration, input manifest,
 evaluator contract, evaluator manifest, frozen common I1 interpreter, and I1
 policy in research mode; read the source-bundle
 manifest and result-blind I1 contract instead in external-audit mode. On a
@@ -145,9 +147,9 @@ result-blind correction that preserves the approved question, named inputs,
 constraints, exclusions, data boundaries, and limits on interpretation.
 Generated evaluation details, outcome operationalizations, schemas, methods,
 and environments are repairable contract choices. Pre-result corrections may
-repeat without consuming a downstream repair wave. Once results exist, the
-frozen result-aware repair budget applies; exhausted or genuinely unavailable
-requirements close INCOMPLETE.
+repeat only within the closed checklist. Once results exist, every correction
+must invalidate and rerun affected evidence. Repeated or unavailable paths stay
+REVISE repair work; they do not end the study.
 If the direct path is unsafe, unlawful, unavailable, or would exceed a fixed
 boundary, require a safe in-scope contract that can still answer the question
 honestly, or return the exact blocker. A
@@ -318,7 +320,7 @@ Never inspect `private/`, evaluator source, held-out answers, other candidate
 workspaces, or evaluator transcripts. Do not hardcode expected outputs, exploit
 seeds/cases, gate on evaluator-only environment, or alter the evaluation
 protocol. Keep the best complete and faithful method, not the most flattering
-incomplete experiment. Every number points to an evaluation JSON or public
+partially implemented experiment. Every number points to an evaluation JSON or public
 check record. Write complete method artifacts, sealed snapshots, log,
 method report, and receipt. Candidate receipts may declare only candidate
 outputs and sanitized `feedback/`, never raw evaluation or private paths.
@@ -541,8 +543,9 @@ canonical/audit run IDs, repetitions, uncertainty method, fixed equivalence
 bounds, noise ceiling, hardware contract,
 failure behavior, and multi-metric decision rule from approved scientific
 meaning. Declare the evaluator argv, input classes, network prohibition,
-deterministic controls, and safe outputs. Unsupported semantics are REVISE or
-INCOMPLETE; never approximate them with a generic mean or scalar rule.
+deterministic controls, and safe outputs. Unsupported semantics are REVISE and
+require a faithful contract repair; never approximate them with a generic mean
+or scalar rule.
 
 Observed audit variance never widens a `task_adaptive_v1` equivalence margin.
 Use `adrs_legacy_v1` only when the task explicitly reproduces the Scientist1
@@ -583,8 +586,9 @@ failure.
 
 Use `PASS`, `FAIL`, or external-only `NOT_ASSESSED` with the
 frozen precedence. Excess noise, a boundary-crossing interval, insufficient
-valid repetitions, or exhausted operational retry is FAIL, not a wider
-margin. The specialist receipt is PASS when the frozen procedure and saved
+valid repetitions, or an operational retry failure is FAIL, not a wider
+margin. That FAIL sends the lead into evidence-preserving repair and re-audit;
+it does not end the study. The specialist receipt is PASS when the frozen procedure and saved
 aggregation are correct even when the scientific I1 verdict is non-PASS.
 
 Before submitting, ask: Did I independently rerun the exact frozen evaluator, preserve private

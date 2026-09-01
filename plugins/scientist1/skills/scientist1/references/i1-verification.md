@@ -46,11 +46,11 @@ essential checklist. Only a PASS contract may begin candidate work.
 Suggestions are nonblocking. Unsupported semantics must be revised before
 results through minimal result-blind stabilization; there is no arbitrary
 pre-result repair-wave ceiling. A re-audit checks the prior finding and repair
-delta without expanding the checklist. Once results exist, the frozen
-result-aware repair budget applies and exhaustion closes INCOMPLETE. Never
-approximate unsupported semantics with a mean, scalar, or favorable post-hoc
-rule. If results exist, invalidate and rerun only evidence that depends on the
-changed scientific contract.
+delta without expanding the checklist. Once results exist, every repair
+archives and invalidates the evidence that depends on the changed contract
+before rerunning it. Never approximate unsupported semantics with a mean,
+scalar, or favorable post-hoc rule. Repeat this repair-and-audit cycle until
+the policy and dependent evidence pass.
 
 ## Required structured policy
 
@@ -235,7 +235,8 @@ Apply this precedence without discretion:
 4. `PASS` only when lineage, reproducibility, and claim semantics all pass for
    every metric required by the multi-metric decision rule.
 
-`FAIL` and `NOT_ASSESSED` both block a research run.
+`FAIL` and `NOT_ASSESSED` both block promotion in a research run and require
+same-run repair and re-audit; neither ends the study.
 `NOT_ASSESSED` is never valid merely because a check is difficult or the
 frozen policy omitted support for an input already known at contract time.
 

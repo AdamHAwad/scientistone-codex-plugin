@@ -18,6 +18,7 @@ scientist1-runs/<UTC>-<slug>/
     bootstrap.json                 verified shared tools and platform
     tools/                         portable shared tools when needed
   contract/
+    approval.json                  hash-bound researcher approval and execution authority
     run-config.json
     input-manifest.json
     custom-profile.json             only for custom profiles
@@ -32,6 +33,7 @@ scientist1-runs/<UTC>-<slug>/
   source-bundle/                   frozen external-audit supplied files
   role-launches/<agent-task>.json   supervisor-generated dispatch record
   role-attempts/<logical-task>/<work-key>/ immutable accepted launch attempts
+  repairs/incidents/               immutable operational repair diagnoses
   inputs/shared/                    frozen candidate-visible inputs
   evidence/
     sources.jsonl                  one Source Record per scholarly/web source
@@ -202,8 +204,9 @@ The ledger utility creates this record:
     "canonical_repetitions": 3,
     "audit_panel_size": 3
   },
-  "orchestration": {"max_task_attempts": 2, "max_repair_waves_per_gate": 1},
+  "orchestration": {"task_attempt_policy": "repair_until_pass", "repair_gate_policy": "invalidate_and_continue", "completion_condition": "fresh_verified_delivery"},
   "repair_waves": {},
+  "repair_incidents": [],
   "created_at": "2026-08-17T15:30:00.000Z",
   "updated_at": "2026-08-17T15:30:00.000Z",
   "state": "running",
@@ -212,6 +215,7 @@ The ledger utility creates this record:
   "request_sha256": "<sha256>",
   "study_plan_sha256": "<sha256>",
   "contract_parameters_sha256": "<sha256>",
+  "approval_sha256": "<sha256>",
   "contract_revision": 1,
   "charter_revision": 1,
   "last_checkpoint": null,
@@ -224,30 +228,26 @@ The ledger utility creates this record:
 }
 ```
 
-Allowed states for a 1.3 run are `running`, `repairing`, `complete`, and
-`blocked_exhausted`. Research phases are `contract`, `investigation`, `discovery`,
+Allowed states for a 1.4 run are `running`, `repairing`, and `complete`.
+Research phases are `contract`, `investigation`, `discovery`,
 `selection`, `ablation`, `writing`, `verification`, `audit`, `complete`.
 External-audit mode uses `contract`, `audit`, `complete`.
 
 Research outcomes are `positive`, `scientific_null`, and
 `completed_with_limitations`; external-audit outcomes are `audit_passed`,
-`audit_failed`, and `audit_incomplete`. After approval, operationally
-incomplete work remains `running` or `repairing` only while an accepted path
-remains inside the frozen limits. Exhaustion sets `blocked_exhausted`, outcome
-`incomplete`, and `terminal/incomplete.json`; this is terminal and is not a
-completed scientific result. Corrected work starts in a new run that explicitly
-references the preserved terminal diagnosis; the exhausted run never resets its
-attempt or repair counters.
+and `audit_failed`. After approval, operational work remains
+`running` or `repairing` until fresh final verification proves the complete
+delivery. Attempts, repair cycles, failures, and superseded artifacts remain
+immutable evidence; none is a stopping budget or scientific outcome.
 
-`max_repair_waves_per_gate` applies to downstream gates and result-aware
-contract changes. Result-blind contract stabilization before candidate evidence
-does not increment `repair_waves.contract`; each revision remains archived and
-hash-bound, but there is no arbitrary count that can terminalize an otherwise
-repairable initial contract.
+`repair_waves` counts downstream and result-aware invalidation cycles for audit
+history. Result-blind contract stabilization before candidate evidence does not
+increment `repair_waves.contract`; each revision remains archived and hash-bound.
+No count can terminate an approved study.
 
-There is no post-approval pause/attention state in a 1.3 run. Select a safe
-in-scope fallback when one exists within the frozen limits; otherwise use the
-`exhaust` command and preserve the exact restart requirement. Checkpoint is the
+There is no post-approval pause/attention state in a 1.4 run. Use
+`record-repair` to anchor a nontrivial operational failure and its required next
+action, then continue the same run. Checkpoint is the
 only command that advances a verified phase or marks completion. A temporary
 `pending_checkpoint` journal makes an interrupted promotion retryable; retry the
 same checkpoint command and the utility removes the unanchored candidate before
@@ -259,10 +259,24 @@ checkpoint anchors, ID, mode, profile, creation time, schema, request hash, or
 study-plan hash. Monitoring reads this file; receipt verification, not the
 status label, determines scientific validity.
 
+The approval record is bound exactly once before any specialist launch:
+
+```sh
+<resolved-node-path> <scientist1-skill-root>/scripts/coe.mjs bind-approval <run> <draft-id> <approved-at> <execution-authority>
+```
+
+The browser MCP calls this command from `attach_run_monitor`. A repair incident
+uses schema 1 fields `failure_class`, `logical_task_name`, `summary`,
+`evidence_paths`, and `required_action`:
+
+```sh
+<resolved-node-path> <scientist1-skill-root>/scripts/coe.mjs record-repair <run> <repair-incident.json>
+```
+
 The supported outcome and feedback operations are:
 
 ```sh
-<resolved-node-path> <scientist1-skill-root>/scripts/coe.mjs set-outcome <run> <positive|scientific_null|completed_with_limitations|audit_passed|audit_failed|audit_incomplete>
+<resolved-node-path> <scientist1-skill-root>/scripts/coe.mjs set-outcome <run> <positive|scientific_null|completed_with_limitations|audit_passed|audit_failed>
 <resolved-node-path> <scientist1-skill-root>/scripts/coe.mjs sanitize-feedback <run> <private-evaluation-json> <feedback-json>
 ```
 
@@ -362,11 +376,11 @@ positive `max_concurrency`; false always means a limit of one.
 }
 ```
 
-Valid statuses are `pending`, `running`, `complete`, `failed`, `blocked`, and
-`exhausted`. Attempt accounting is deliberately absent: immutable
-`role-attempts/` records and the CoE run limits are the sole attempt authority.
-The ready result exposes `blocked_task_ids`, `exhausted_task_ids`, and `drained`
-so an empty ready set cannot masquerade as active progress.
+Valid statuses are `pending`, `running`, `complete`, and `repair_required`.
+Attempt accounting is deliberately absent: immutable `role-attempts/` records
+are the sole attempt authority. The ready result exposes `blocked_task_ids`,
+`repair_required_task_ids`, `repair_required`, and `drained` so an empty ready
+set cannot masquerade as active progress or authorize stopping.
 Before dispatch and after first completion, invoke:
 
 ```sh
@@ -681,7 +695,7 @@ launch path, and launch hash. Changing the caller-selected logical name cannot
 reset the same role/output work. Rejected or expired grants write
 no record. The CoE requires the matching record before a role receipt can be
 promoted and automatically binds it into the phase receipt, so deleting a
-failed specialist receipt cannot reset the attempt budget.
+failed specialist receipt cannot erase or reset the attempt history.
 
 The receipt names this launch record and its SHA-256. The exact assignment is
 the common role envelope, one role card, and this task brief; the spawn message
@@ -791,8 +805,8 @@ counts, margins, uncertainty rules, hardware rules, and failure outcomes. It
 does not generate code, fixtures, manifests, or a second test framework. The
 Contract Auditor validates policy/interpreter compatibility before candidates;
 the I1 Score Auditor later runs the frozen evaluator and applies the same
-interpreter. Unsupported semantics fail closed as `INCOMPLETE` rather than
-triggering an open-ended software project.
+interpreter. Unsupported semantics produce REVISE, a minimal faithful policy
+repair, and a fresh audit; they are never approximated with easier semantics.
 
 ## External source-bundle manifest
 

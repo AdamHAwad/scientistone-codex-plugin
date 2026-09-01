@@ -637,6 +637,7 @@ async function prepareRoleLaunch(args, options = {}) {
   const runRecord = readJson(path.join(run, "run.json"));
   const legacy = legacyRun(run);
   if (!["running", "repairing"].includes(runRecord.state)) throw Object.assign(new Error(`Scientist1 specialists can launch only while the run is running or repairing; received ${runRecord.state}.`), { code: "S1_RUN_TERMINAL_OR_INACTIVE" });
+  if (!legacy && (typeof runRecord.approval_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(runRecord.approval_sha256) || !fs.existsSync(path.join(run, "contract", "approval.json")))) throw Object.assign(new Error("Scientist1 cannot launch research work before durable approval is bound to the run."), { code: "S1_APPROVAL_NOT_BOUND" });
   if (runRecord.pending_checkpoint) throw Object.assign(new Error(`Scientist1 cannot launch a specialist while the ${runRecord.pending_checkpoint.phase} checkpoint is pending recovery.`), { code: "S1_CHECKPOINT_PENDING" });
   if (runRecord.pending_invalidation) throw Object.assign(new Error("Scientist1 cannot launch a specialist while an invalidation is pending recovery."), { code: "S1_INVALIDATION_PENDING" });
   if (typeof args.task_name !== "string" || !/^[a-z0-9_]{1,120}$/.test(args.task_name)) throw new Error("task_name must use 1-120 lowercase letters, digits, or underscores.");
@@ -654,10 +655,7 @@ async function prepareRoleLaunch(args, options = {}) {
   const workKey = legacy ? null : taskWorkKey(args.role, declaredOutputs, runBinding.contract_revision, runBinding.charter_revision);
   if (!legacy) bindWorkIdentity(run, logicalTaskName, workKey, args.role, declaredOutputs, runBinding.contract_revision, runBinding.charter_revision);
   const allowedExternalSources = stringArray(args.allowed_external_sources ?? [], "allowed_external_sources");
-  const config = readJson(path.join(run, "contract", "run-config.json"));
   if (!legacy) {
-    const maxAttempts = config.orchestration.max_task_attempts;
-    if (attempt > maxAttempts) throw Object.assign(new Error(`Specialist work attempt ${attempt} exceeds the frozen limit ${maxAttempts} for ${logicalTaskName}. Preserve the failures and close the run as INCOMPLETE if no accepted path remains.`), { code: "S1_TASK_ATTEMPTS_EXHAUSTED" });
     const taskState = executedLogicalTaskState(run, workKey, logicalTaskName);
     if (taskState.logicalTaskNames.size && !taskState.logicalTaskNames.has(logicalTaskName)) throw Object.assign(new Error(`Logical task name ${logicalTaskName} is an alias for existing role/output work ${[...taskState.logicalTaskNames].sort().join(", ")}; reuse its stable logical name.`), { code: "S1_LOGICAL_TASK_ALIAS" });
     if (taskState.complete) throw Object.assign(new Error(`Logical task ${logicalTaskName} already has a COMPLETE/PASS receipt and cannot be executed again.`), { code: "S1_LOGICAL_TASK_COMPLETE" });
@@ -756,6 +754,7 @@ function consumeLaunchToken(marker, options = {}) {
     const runRecord = readJson(path.join(run, "run.json"));
     const legacy = grant.legacy === true && legacyRun(run);
     if (!["running", "repairing"].includes(runRecord.state)) throw new LaunchAuthorizationError("S1_RUN_TERMINAL_OR_INACTIVE", `Scientist1 specialists can launch only while the run is running or repairing; received ${runRecord.state}.`);
+    if (!legacy && (typeof runRecord.approval_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(runRecord.approval_sha256) || !fs.existsSync(path.join(run, "contract", "approval.json")))) throw new LaunchAuthorizationError("S1_APPROVAL_NOT_BOUND", "Scientist1 cannot consume a launch before durable approval is bound to the run.");
     if (runRecord.pending_checkpoint) throw new LaunchAuthorizationError("S1_CHECKPOINT_PENDING", `Scientist1 cannot consume a launch while the ${runRecord.pending_checkpoint.phase} checkpoint is pending recovery.`);
     if (runRecord.pending_invalidation) throw new LaunchAuthorizationError("S1_INVALIDATION_PENDING", "Scientist1 cannot consume a launch while an invalidation is pending recovery.");
     const runtimeRecord = readRunRouting(run);

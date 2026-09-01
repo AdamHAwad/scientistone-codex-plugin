@@ -16,30 +16,27 @@ remembered choice contains no study content, and a successful change remains
 restart-required until a new Codex desktop instance is detected.
 
 After **Approve and start study**, the lead advances the saved run through
-dependency-ready work. When native goal tooling is both available and
-authorized for the request, one bounded goal may track progress only until
-freshly verified completion or terminal `blocked_exhausted`; the run ledger
-remains the authority.
-Each logical specialist task has at most two accepted launch attempts.
-Downstream gates and result-aware contract changes have at most one automatic
-repair wave. Pre-result contract stabilization instead uses a closed checklist,
-all-findings-at-once review, and minimal repair deltas without an arbitrary wave
-count. A drained run with no accepted path closes
-with a terminal `INCOMPLETE` record instead of spawning continuation work
-indefinitely. Completion still requires fresh final CoE verification.
+dependency-ready work. One unbudgeted native goal tracks the freshly verified
+paper and delivery package; the run ledger remains the authority. Specialist
+attempts and repair cycles are immutable evidence counters, not stopping
+budgets. Pre-result contract stabilization uses a closed checklist,
+all-findings-at-once review, and minimal repair deltas. Later repairs archive
+and invalidate affected successors before rerunning them. A drained queue
+becomes explicit repair-required work. Only fresh final CoE verification can
+complete the run or release the lead turn.
 
 Accepted-attempt identity is derived from the frozen contract and charter
 revisions, role, and exclusive output set. Changing a caller-selected task name
-or deleting a receipt therefore cannot replenish the budget. A genuine
-contract revision creates a new work identity. Launch authorization checks the
-run state both before and when consuming its one-use grant, so terminal runs
-cannot start more specialists.
+or deleting a receipt therefore cannot erase history. A genuine contract
+revision creates a new work identity. Launch authorization checks durable
+approval and the active run state both before and when consuming its one-use
+grant; verified complete runs cannot start more specialists.
 
 ## Bundled Codex MCP and browser
 
 Codex starts the bundled MCP automatically from `.mcp.json` with the Node.js runtime included with Codex. The launcher checks Codex-provided runtime paths before falling back to a compatible `node` already on `PATH`; the user does not install Node or another package. The server speaks MCP over stdio and opens an HTTP server on a random `127.0.0.1` port.
 
-The browser provides the complete seven-step intake, direct project-local file upload, editable study-plan review, and interactive study flowchart. Drafts live under `.scientist1/intake/` in the active project. The monitor reads `run.json`, receipts, role launches, and delivery files from the selected run. A random token protects its local API, and paths are canonicalized and constrained to the active project or selected run.
+The browser provides the complete seven-step intake, direct project-local file upload, editable study-plan review, and interactive study flowchart. Drafts live under `.scientist1/intake/` in the active project. Attaching an approved run writes a hash-bound `contract/approval.json`. The monitor reads `run.json`, receipts, role launches, repair incidents, and delivery files from the selected run. A random token protects its local API, and paths are canonicalized and constrained to the active project or selected run.
 
 The publisher operates no remote Scientist1 service. Any Codex surface that cannot start the bundled MCP or show the built-in browser uses the text intake. There is no application database, object store, queue, telemetry service, update service, or plugin-owned model API.
 
@@ -74,11 +71,10 @@ cannot widen the tolerance. A policy repair creates a new contract revision in
 the same run. Before results, the auditor must enumerate all blockers in one
 pass and a re-audit may only check those findings plus defects introduced by
 the repair itself; optional hardening cannot create work and no downstream
-repair wave is consumed. If results already exist, Scientist1 archives and
-reruns every affected successor under the repaired contract and consumes the
-frozen result-aware repair wave. Unsupported semantics close `INCOMPLETE` only
-when no faithful executable contract exists or the post-result repair path is
-exhausted; they are never approximated with an easier generic rule.
+repair count is consumed. If results already exist, Scientist1 archives and
+reruns every affected successor under the repaired contract. Unsupported
+semantics remain REVISE work until a faithful executable contract passes; they
+are never approximated with an easier generic rule.
 
 ## Role separation
 
@@ -106,17 +102,16 @@ read-only preflight can diagnose a phase; the failure-atomic checkpoint command
 is the sole authority that promotes it.
 
 Checkpoint revalidates the candidate receipt and every bound input/output
-immediately before atomically advancing `run.json`. Invalidation first archives
-the entire affected chain. If a downstream or result-aware gate has exhausted
-the frozen repair budget,
-the same transaction records the exact gate and a verifiable terminal
-`INCOMPLETE` state rather than attempting another repair.
+immediately before atomically advancing `run.json`. A rejected checkpoint saves
+a repair incident. Invalidation archives the entire affected chain and returns
+the run to `repairing`; every subsequent repair cycle does the same without a
+terminal counter path.
 
 An existing run created by 1.2 remains bound to its saved 1.2 contracts and is
 verified by one narrow compatibility controller derived from the released 1.2
 verifier, alongside the exact released role and model-policy assets. It is not
-migrated or silently reinterpreted. New runs never enter that path and use only
-1.3.
+migrated or silently reinterpreted. Its legacy failure values remain repair
+signals to the lead. New runs never enter that path and use only 1.4.
 
 Codex model catalogs can change between sessions. If the active semantic route
 disappears, Scientist1 preserves the original record and activates a currently

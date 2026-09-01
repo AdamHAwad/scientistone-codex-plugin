@@ -57,7 +57,7 @@ Research mode uses:
 · Delivery
 ```
 
-External-audit mode uses only `Contract -> Integrity audit -> Delivery`; never show skipped research phases as incomplete.
+External-audit mode uses only `Contract -> Integrity audit -> Delivery`; never show research phases that do not apply as unfinished work.
 
 Use `✓` only for a verified receipt, `→` for the current phase, `!` for attention, and `·` for not started.
 
@@ -79,12 +79,12 @@ Example:
 
 ## Triage
 
-- `running` plus valid contiguous receipts: healthy even if current outputs are incomplete.
+- `running` plus valid contiguous receipts: healthy while current outputs are still being produced.
 - `repairing`: report the exact phase and preserved failure; no researcher action unless `attention` is set.
 - `paused`: treat this as legacy or stale state after approval; report the recorded item, explain that execution should resume autonomously under the current policy, and do not request a second approval.
-- `failed`: distinguish operational failure from completed null evidence. Explain that the execution task should resume with a safe in-scope fallback; do not ask for repair authority.
-- `blocked_exhausted`: report `INCOMPLETE`, the exhausted task or gate, saved evidence, remaining work, and exact restart requirement from `terminal/incomplete.json`. This run is terminal. Corrected work requires a new run that explicitly references the preserved incomplete record.
-- `complete`: require `verify` to pass; state, phase, receipts, required outputs, visual inspection, and manifest verification must agree. Otherwise report "delivery verification is incomplete," not complete.
+- `failed`: distinguish operational failure from completed null evidence. Explain that the execution task must resume with the smallest safe in-scope repair; do not ask for repair authority.
+- A legacy 1.3 terminal state: report the preserved diagnosis and that the execution task must convert it with `coe.mjs resume-repair`, then continue the same run. Never present it as a final study result.
+- `complete`: require `verify` to pass; state, phase, receipts, required outputs, visual inspection, and manifest verification must agree. Otherwise report "delivery verification has not passed," not complete.
 - Hash mismatch: identify the first invalid receipt; downstream outputs are stale until rebuilt.
 
 Do not modify, resume, stop, invalidate, or repair a run during a status-only request.
@@ -93,13 +93,13 @@ Do not modify, resume, stop, invalidate, or repair a run during a status-only re
 
 Create an automation only when the researcher explicitly asks to keep monitoring, check back, or notify them. First discover whether Codex exposes its native automation-update tool. If it does not, provide the one-time status and explain that recurring monitoring is unavailable; do not invent shell scheduling or imply that a monitor was created. When available, use the native tool. Default cadence: every 15 minutes, attached to the owning Scientist1 task, with this instruction:
 
-> Use the scientist1-monitor skill on `<absolute run path>`. Report only a changed verified phase, a new attention item, an invalid evidence receipt, or terminal completion. On terminal completion or cancellation, stop this automation.
+> Use the scientist1-monitor skill on `<absolute run path>`. Report only a changed verified phase, a new repair incident, an invalid evidence receipt, or verified completion. Stop this automation only after fresh final verification succeeds.
 
-Do not create a second monitor when the main long-running task is already reporting and the researcher did not ask for one. Stop recurring monitoring when the run becomes complete, cancelled, or `blocked_exhausted`. Treat `failed` or `paused` as a nonterminal legacy state only while an accepted bounded recovery path remains.
+Do not create a second monitor when the main long-running task is already reporting and the researcher did not ask for one. Stop recurring monitoring only when the run becomes freshly verified complete. Treat `failed`, `paused`, or a legacy terminal value as nonterminal repair signals.
 
 ## Resume handoff
 
-When the researcher asks to resume an interrupted nonterminal run, hand off to `scientist1` with the same absolute run path. Verify the receipt chain first, preserve failed or partial artifacts, clear stale attention, and continue from the first invalid or incomplete phase only when the saved condition is met. Evaluator, policy, schema, path, hash, seed, outcome-operationalization, environment, or method-detail repairs stay in the same versioned run while frozen attempt/repair budgets remain. A `blocked_exhausted` run never resumes; corrected work requires a new explicitly linked run.
+When the researcher asks to resume an interrupted run, hand off to `scientist1` with the same absolute run path. Verify the receipt chain first, preserve failed or partial artifacts, clear stale attention, convert a preserved 1.3 terminal diagnosis with `resume-repair`, and continue from the first invalid phase. Evaluator, policy, schema, path, hash, seed, outcome-operationalization, environment, and method-detail repairs stay in the same versioned run until verified delivery.
 
 ## Before ending a turn
 

@@ -425,6 +425,9 @@ test("intake files persist, approval attaches a verified run, and discard remove
 
   const attached = await callTool("attach_run_monitor", { project_root: project, draft_id: context.draft, run_path: run });
   assert.equal(attached.status, "started");
+  const reattached = await callTool("attach_run_monitor", { project_root: project, draft_id: context.draft, run_path: run });
+  assert.equal(reattached.status, "started");
+  assert.equal(reattached.run_path, fs.realpathSync(run));
   const openedMonitor = await callTool("open_run_monitor", { run_path: run });
   assert.equal(openedMonitor.verified_status.integrity.ok, true);
   assert.equal(openedMonitor.verified_status.current_phase, "contract");

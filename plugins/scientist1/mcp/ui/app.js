@@ -442,7 +442,7 @@ function renderReview() {
       </section>
       <aside class="review-actions" aria-labelledby="approval-title">
         <h2 id="approval-title">Is this the study you want?</h2>
-        <p>Approve once to start the study. After approval, S1 will execute the approved plan and verify each promoted phase. Initial contract review is a short closed-checklist pass: concrete defects are corrected minimally, optional improvements do not create work, and pre-result corrections do not exhaust the study. Result-aware and downstream repairs retain frozen attempt and wave limits. If one of those required paths is exhausted, S1 will preserve the evidence and report the run as incomplete instead of weakening the study. To revise several sections before it starts, describe the changes below.</p>
+        <p>Approve once to start the study. After approval, S1 will execute the approved plan through a freshly verified paper package. Initial contract review is a short closed-checklist pass: concrete defects are corrected minimally and optional improvements do not create work. Later failures preserve their evidence, invalidate affected successors when necessary, and remain same-run repair work. Attempt counts, repair cycles, and unavailable routes cannot finish the study or release the lead. To revise several sections before it starts, describe the changes below.</p>
         <button class="button button-primary" id="approve" type="button">Approve and start study</button>
         <div class="change-form">
           <label for="change-note">Other changes</label>
@@ -555,12 +555,12 @@ function persistOpenDraft() {
 addEventListener("pagehide", persistOpenDraft);
 
 function monitorStatusText(status) {
-  return { complete: "Checked", current: "Working now", attention: "Needs your input", upcoming: "Not started" }[status] || status;
+  return { complete: "Checked", current: "Working now", attention: "Repairing automatically", upcoming: "Not started" }[status] || status;
 }
 
 function monitorTitle(data) {
   if (data.state === "complete") return "The study is complete";
-  if (data.attention) return "The study needs your input";
+  if (data.attention) return "The study is repairing a legacy interruption";
   return {
     contract: "The study plan is being checked",
     investigation: "Prior work review is in progress",
@@ -1132,5 +1132,5 @@ if (!token) {
 } else if (view === "run" && runPath) {
   loadMonitor();
 } else {
-  renderFatal(new Error("This Scientist1 link is incomplete. Reopen the study from Codex."), () => location.reload());
+  renderFatal(new Error("This Scientist1 link is malformed. Reopen the study from Codex."), () => location.reload());
 }

@@ -6,7 +6,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 
 const MAX_CAPACITY = 16;
-const STATUSES = new Set(["pending", "running", "complete", "failed", "blocked", "exhausted"]);
+const STATUSES = new Set(["pending", "running", "complete", "repair_required"]);
 const STABLE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 function stableCompare(left, right) {
@@ -99,7 +99,7 @@ function selectReadyTasks(input) {
   for (const [id, used] of resourceUse) if (used > ledger.resources.get(id).limit) fail(`Running tasks exceed resource ${id}`);
 
   const complete = new Set([...ledger.tasks.values()].filter((task) => task.status === "complete").map((task) => task.id));
-  const terminalBlockers = new Set([...ledger.tasks.values()].filter((task) => ["failed", "blocked", "exhausted"].includes(task.status)).map((task) => task.id));
+  const repairRequired = new Set([...ledger.tasks.values()].filter((task) => task.status === "repair_required").map((task) => task.id));
   const availableSlots = ledger.capacity - active.length;
   const pending = [...ledger.tasks.values()].filter((task) => task.status === "pending").sort((a, b) => stableCompare(a.id, b.id));
   const candidates = pending.filter((task) => task.predecessors.every((id) => complete.has(id)) && task.resource_ids.every((resourceId) => resourceUse.get(resourceId) < ledger.resources.get(resourceId).limit));
@@ -133,21 +133,21 @@ function selectReadyTasks(input) {
     changed = false;
     for (const task of ledger.tasks.values()) {
       if (task.status !== "pending" || dependencyBlocked.has(task.id)) continue;
-      if (task.predecessors.some((id) => terminalBlockers.has(id) || dependencyBlocked.has(id))) {
+      if (task.predecessors.some((id) => repairRequired.has(id) || dependencyBlocked.has(id))) {
         dependencyBlocked.add(task.id);
         changed = true;
       }
     }
   }
   const blocked = [...dependencyBlocked].sort(stableCompare);
-  const exhausted = [...ledger.tasks.values()].filter((task) => task.status === "exhausted").map((task) => task.id).sort(stableCompare);
   return {
     schema_version: 1,
     capacity: ledger.capacity,
     active_task_ids: active.map((task) => task.id),
     ready_task_ids: ready,
     blocked_task_ids: blocked,
-    exhausted_task_ids: exhausted,
+    repair_required_task_ids: [...repairRequired].sort(stableCompare),
+    repair_required: repairRequired.size > 0 || blocked.length > 0,
     drained: active.length === 0 && ready.length === 0 && [...ledger.tasks.values()].some((task) => task.status !== "complete"),
     remaining_slots: availableSlots - ready.length,
   };
@@ -170,7 +170,7 @@ function simulateSchedule(input, durations) {
       ledger.tasks.find((task) => task.id === id).status = "running";
       running.set(id, { start_ms: now, end_ms: now + duration });
     }
-    if (running.size === 0) fail("No runnable task remains; failed or blocked work must be resolved before scheduling can continue");
+    if (running.size === 0) fail("No runnable task remains; open a repair cycle, repair the blocked work, and refill the queue");
     const next = Math.min(...[...running.values()].map((item) => item.end_ms));
     now = next;
     for (const [id, item] of [...running]) {

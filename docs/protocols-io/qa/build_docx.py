@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from pathlib import Path
 
 from PIL import Image
@@ -207,36 +208,10 @@ def new_numbering_id(document: Document) -> int:
     num_ids = [int(node.get(qn("w:numId"))) for node in numbering.findall(qn("w:num"))]
     abstract_id = max(abstract_ids, default=0) + 1
     num_id = max(num_ids, default=0) + 1
-
-    abstract = OxmlElement("w:abstractNum")
+    base = next(node for node in numbering.findall(qn("w:abstractNum")) if node.get(qn("w:abstractNumId")) == "7")
+    abstract = deepcopy(base)
     abstract.set(qn("w:abstractNumId"), str(abstract_id))
-    multi = OxmlElement("w:multiLevelType")
-    multi.set(qn("w:val"), "singleLevel")
-    abstract.append(multi)
-    level = OxmlElement("w:lvl")
-    level.set(qn("w:ilvl"), "0")
-    start = OxmlElement("w:start")
-    start.set(qn("w:val"), "1")
-    number_format = OxmlElement("w:numFmt")
-    number_format.set(qn("w:val"), "decimal")
-    level_text = OxmlElement("w:lvlText")
-    level_text.set(qn("w:val"), "%1.")
-    justification = OxmlElement("w:lvlJc")
-    justification.set(qn("w:val"), "left")
-    paragraph_properties = OxmlElement("w:pPr")
-    tabs = OxmlElement("w:tabs")
-    tab = OxmlElement("w:tab")
-    tab.set(qn("w:val"), "num")
-    tab.set(qn("w:pos"), "540")
-    tabs.append(tab)
-    indent = OxmlElement("w:ind")
-    indent.set(qn("w:left"), "540")
-    indent.set(qn("w:hanging"), "270")
-    paragraph_properties.extend([tabs, indent])
-    level.extend([start, number_format, level_text, justification, paragraph_properties])
-    abstract.append(level)
     numbering.append(abstract)
-
     number = OxmlElement("w:num")
     number.set(qn("w:numId"), str(num_id))
     abstract_ref = OxmlElement("w:abstractNumId")
@@ -248,46 +223,12 @@ def new_numbering_id(document: Document) -> int:
 
 def new_bullet_numbering_id(document: Document) -> int:
     numbering = document.part.numbering_part.element
-    abstract_ids = [int(node.get(qn("w:abstractNumId"))) for node in numbering.findall(qn("w:abstractNum"))]
     num_ids = [int(node.get(qn("w:numId"))) for node in numbering.findall(qn("w:num"))]
-    abstract_id = max(abstract_ids, default=0) + 1
     num_id = max(num_ids, default=0) + 1
-
-    abstract = OxmlElement("w:abstractNum")
-    abstract.set(qn("w:abstractNumId"), str(abstract_id))
-    multi = OxmlElement("w:multiLevelType")
-    multi.set(qn("w:val"), "singleLevel")
-    abstract.append(multi)
-    level = OxmlElement("w:lvl")
-    level.set(qn("w:ilvl"), "0")
-    start = OxmlElement("w:start")
-    start.set(qn("w:val"), "1")
-    number_format = OxmlElement("w:numFmt")
-    number_format.set(qn("w:val"), "bullet")
-    level_text = OxmlElement("w:lvlText")
-    level_text.set(qn("w:val"), "•")
-    suffix = OxmlElement("w:suff")
-    suffix.set(qn("w:val"), "tab")
-    justification = OxmlElement("w:lvlJc")
-    justification.set(qn("w:val"), "left")
-    paragraph_properties = OxmlElement("w:pPr")
-    tabs = OxmlElement("w:tabs")
-    tab = OxmlElement("w:tab")
-    tab.set(qn("w:val"), "num")
-    tab.set(qn("w:pos"), "540")
-    tabs.append(tab)
-    indent = OxmlElement("w:ind")
-    indent.set(qn("w:left"), "540")
-    indent.set(qn("w:hanging"), "270")
-    paragraph_properties.extend([tabs, indent])
-    level.extend([start, number_format, level_text, suffix, justification, paragraph_properties])
-    abstract.append(level)
-    numbering.append(abstract)
-
     number = OxmlElement("w:num")
     number.set(qn("w:numId"), str(num_id))
     abstract_ref = OxmlElement("w:abstractNumId")
-    abstract_ref.set(qn("w:val"), str(abstract_id))
+    abstract_ref.set(qn("w:val"), "8")
     number.append(abstract_ref)
     numbering.append(number)
     return num_id
@@ -306,6 +247,14 @@ def set_numbering(paragraph, num_id: int):
     num_pr.extend([ilvl, num])
 
 
+def format_list_paragraph(paragraph):
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(4)
+    paragraph.paragraph_format.line_spacing = 1.25
+    paragraph.paragraph_format.keep_with_next = False
+    paragraph.paragraph_format.keep_together = False
+
+
 def configure_styles(document: Document):
     styles = document.styles
     normal = styles["Normal"]
@@ -316,6 +265,9 @@ def configure_styles(document: Document):
     normal.paragraph_format.space_before = Pt(0)
     normal.paragraph_format.space_after = Pt(6)
     normal.paragraph_format.line_spacing = 1.25
+    normal.paragraph_format.keep_with_next = False
+    normal.paragraph_format.keep_together = False
+    normal.paragraph_format.widow_control = True
 
     settings = {
         "Heading 1": (16, BLUE, 18, 10),
@@ -344,6 +296,9 @@ def configure_styles(document: Document):
         style.paragraph_format.first_line_indent = Inches(-0.188)
         style.paragraph_format.space_after = Pt(4)
         style.paragraph_format.line_spacing = 1.25
+        style.paragraph_format.keep_with_next = False
+        style.paragraph_format.keep_together = False
+        style.paragraph_format.widow_control = True
 
     caption = styles["Caption"]
     caption.font.name = "Calibri"
@@ -416,7 +371,7 @@ def add_cover(document: Document):
 
     note_table = add_callout(
         document,
-        "No coding experience is needed. You will review the plan and any decision that reaches you.",
+        "No coding experience is needed. You approve the plan once; Scientist1 continues the checked run through its paper.",
         GREEN_PALE,
         TEAL,
         center=True,
@@ -430,7 +385,7 @@ def add_cover(document: Document):
     meta.alignment = WD_ALIGN_PARAGRAPH.CENTER
     meta.paragraph_format.space_before = Pt(6)
     meta.paragraph_format.space_after = Pt(0)
-    set_font(meta.add_run("Version 1.0  |  Checked August 27, 2026"), size=10, color=GRAY)
+    set_font(meta.add_run("Version 1.1  |  Checked August 31, 2026"), size=10, color=GRAY)
     document.add_page_break()
 
 
@@ -447,6 +402,8 @@ def add_image(document: Document, alt: str, relative: str):
     paragraph.paragraph_format.space_before = Pt(6)
     paragraph.paragraph_format.space_after = Pt(0)
     paragraph.paragraph_format.keep_together = True
+    if relative.endswith("08-waiting.png"):
+        paragraph.paragraph_format.page_break_before = True
     if relative.endswith("02-purpose.png"):
         paragraph.paragraph_format.page_break_before = True
     shape = paragraph.add_run().add_picture(str(path), width=Inches(width))
@@ -486,6 +443,7 @@ def build():
     first_h1_seen = False
     current_number_id = None
     bullet_number_id = new_bullet_numbering_id(document)
+    previous_was_image = False
 
     for raw in lines:
         line = raw.rstrip()
@@ -506,6 +464,7 @@ def build():
         image = re.fullmatch(r"!\[([^]]+)\]\(([^)]+)\)", line)
         if image:
             add_image(document, image.group(1), image.group(2))
+            previous_was_image = True
             continue
 
         if line.startswith("# "):
@@ -518,22 +477,34 @@ def build():
         if line.startswith("## "):
             title = line[3:]
             paragraph = document.add_paragraph(style="Heading 1")
+            if previous_was_image:
+                paragraph.paragraph_format.page_break_before = True
             add_inline(paragraph, title)
+            previous_was_image = False
             continue
         if line.startswith("### "):
             paragraph = document.add_paragraph(style="Heading 2")
+            if previous_was_image:
+                paragraph.paragraph_format.page_break_before = True
             add_inline(paragraph, line[4:])
+            previous_was_image = False
             continue
         if line.startswith("#### "):
             paragraph = document.add_paragraph(style="Heading 3")
+            if previous_was_image:
+                paragraph.paragraph_format.page_break_before = True
             add_inline(paragraph, line[5:])
+            previous_was_image = False
             continue
         if line.lstrip().startswith("> "):
             add_callout(document, line.lstrip()[2:], SAND, TEAL)
+            previous_was_image = False
             continue
         if re.match(r"^\s*-\s+", line):
             paragraph = add_paragraph(document, re.sub(r"^\s*-\s+", "", line), style="List Bullet")
             set_numbering(paragraph, bullet_number_id)
+            format_list_paragraph(paragraph)
+            previous_was_image = False
             continue
         number_match = re.match(r"^\s*(\d+)\.\s+", line)
         if number_match:
@@ -541,8 +512,11 @@ def build():
                 current_number_id = new_numbering_id(document)
             paragraph = add_paragraph(document, re.sub(r"^\s*\d+\.\s+", "", line), style="List Number")
             set_numbering(paragraph, current_number_id)
+            format_list_paragraph(paragraph)
+            previous_was_image = False
             continue
         add_paragraph(document, line.strip())
+        previous_was_image = False
 
     document.core_properties.title = "Run a checked research study with Scientist1 in Codex"
     document.core_properties.subject = "Beginner Protocols.io guide for Scientist1"

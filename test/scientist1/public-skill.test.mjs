@@ -10,7 +10,7 @@ async function text(relative) {
 
 test("public manifest ships one complete local Codex experience", async () => {
   const manifest = JSON.parse(await text(".codex-plugin/plugin.json"));
-  assert.equal(manifest.version, "1.3.2");
+  assert.equal(manifest.version, "1.4.0");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -87,7 +87,7 @@ test("Codex skills route setup, review, and monitoring through the bundled MCP",
   assert.match(skill, /close the same built-in browser tab/i);
   assert.match(skill, /resume_latest: true/);
   assert.match(skill, /approves the study once through `Approve and start study`/i);
-  assert.match(skill, /including every bounded specialist launch/i);
+  assert.match(skill, /including every specialist launch and repair required for verified delivery/i);
   assert.match(skill, /do not pause, ask for approval\s+again, or send the researcher to `\/hooks`/i);
   assert.match(skill, /hook is only a\s+backup/i);
   assert.match(skill, /not the source of researcher authorization/i);
@@ -143,15 +143,15 @@ test("sparse intake and generated-contract defects use minimal staged recovery",
   assert.match(intake, /Blank purpose, prior-work, evaluation, limit, or deliverable fields are valid intake/i);
   assert.match(skill, /result-blind defect[\s\S]+same run/i);
   assert.match(skill, /result-aware defect[\s\S]+invalidate_and_rerun/i);
-  assert.match(skill, /Pre-result contract stabilization has no\s+arbitrary wave count/i);
+  assert.match(skill, /Pre-result contract stabilization stays a short closed-checklist pass/i);
   assert.match(skill, /first auditor must\s+report every blocking defect it can observe in one pass/i);
   assert.match(skill, /re-audit[\s\S]+do not introduce a new requirement unless the repair itself\s+created/i);
   assert.match(intake, /optional hardening, alternative designs, additional precision, and possible future edge cases are nonblocking/i);
-  assert.match(protocol, /without\s+consuming a downstream repair wave/i);
+  assert.match(protocol, /every repair archives and\s+invalidates all affected successors/i);
   assert.match(roles, /A blocker must be one of:/i);
   assert.match(roles, /On the first audit, enumerate every observable blocker in one pass/i);
   assert.match(roles, /Stop reviewing as soon as the closed checklist passes/i);
-  assert.match(skill, /blocked_exhausted[\s\S]+INCOMPLETE/i);
+  assert.match(skill, /There is no attempt ceiling, repair-wave\s+ceiling, scheduler-drain exit, or paperless operational outcome/i);
   assert.match(protocol, /RESEARCHER_APPROVED_AMENDMENT/);
   assert.match(roles, /Do not treat a repairable\s+contract defect as BLOCKED/i);
 });
@@ -214,19 +214,22 @@ test("the compressed common role prefix retains every safety and evidence obliga
   ]) assert.match(envelope, pattern);
 });
 
-test("one approval grants bounded execution through verified delivery", async () => {
+test("one approval enforces same-run repair through freshly verified delivery", async () => {
   const skill = await text("skills/scientist1/SKILL.md");
   const intake = await text("skills/scientist1/references/intake.md");
   const protocol = await text("skills/scientist1/references/protocol.md");
   const roles = await text("skills/scientist1/references/roles.md");
   const hooks = JSON.parse(await text("hooks/hooks.json"));
   assert.match(skill, /Approve and start study[\s\S]+authorizes\s+safe, reversible, in-scope execution/i);
-  assert.match(skill, /Durable approval is not unlimited authority or an instruction to loop/i);
-  assert.match(skill, /one bounded goal[\s\S]+fresh verification proves completion or `blocked_exhausted`/i);
-  assert.match(skill, /goal[\s\S]+must never continue work after either terminal state/i);
-  assert.match(skill, /Do not report completion until every deliverable required by the plan exists and the final verifier passes/i);
+  assert.match(skill, /Durable approval creates a one-way completion commitment/i);
+  assert.match(skill, /one unbudgeted\s+goal[\s\S]+freshly verified paper and\s+delivery package/i);
+  assert.match(skill, /goal can complete\s+only after `coe\.mjs verify` proves state, phase, and last checkpoint are all\s+`complete`/i);
+  assert.match(skill, /Do not report completion or end the lead turn until every deliverable required by the plan exists and a fresh final verifier passes/i);
+  assert.match(skill, /Attempts are evidence counters, not a stopping budget/i);
+  assert.match(skill, /record-repair/);
   assert.match(intake, /only approval checkpoint/i);
-  assert.match(protocol, /Approval grants durable authority for bounded in-scope repairs/i);
+  assert.match(protocol, /Approval grants durable authority for every causal in-scope repair required for\s+verified delivery/i);
   assert.match(roles, /closed essential checklist/i);
-  assert.equal("Stop" in hooks.hooks, false);
+  assert.equal("Stop" in hooks.hooks, true);
+  assert.match(hooks.hooks.PreToolUse[1].matcher, /wait_for_researcher/);
 });

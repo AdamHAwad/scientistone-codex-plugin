@@ -10,9 +10,9 @@ import { aggregateVerdicts, evaluateReproducibilityMetric, executionId as comput
 
 const RESEARCH_PHASES = ["contract", "investigation", "discovery", "selection", "ablation", "writing", "verification", "audit", "complete"];
 const EXTERNAL_AUDIT_PHASES = ["contract", "audit", "complete"];
-const STATES = new Set(["running", "repairing", "complete", "blocked_exhausted"]);
+const STATES = new Set(["running", "repairing", "complete"]);
 const RESEARCH_OUTCOMES = new Set(["positive", "scientific_null", "completed_with_limitations"]);
-const AUDIT_OUTCOMES = new Set(["audit_passed", "audit_failed", "audit_incomplete"]);
+const AUDIT_OUTCOMES = new Set(["audit_passed", "audit_failed"]);
 const PROFILES = new Set(["standard", "pilot", "custom"]);
 const MODES = new Set(["research", "external_audit"]);
 const PLATFORM_OS = new Set(["darwin", "linux", "win32"]);
@@ -21,7 +21,12 @@ const PROFILE_BUDGETS = {
   standard: { idea_ceiling: 18, minimum_eligible_ideas: 5, candidate_node_ceiling: 25, minimum_evaluated_candidates: 5, evaluation_ceiling_per_node: 4, ablation_ceiling: 4, minimum_valid_ablations: 1, canonical_repetitions: 5, audit_panel_size: 5 },
   pilot: { idea_ceiling: 4, minimum_eligible_ideas: 2, candidate_node_ceiling: 4, minimum_evaluated_candidates: 2, evaluation_ceiling_per_node: 2, ablation_ceiling: 2, minimum_valid_ablations: 1, canonical_repetitions: 3, audit_panel_size: 3 },
 };
-const DEFAULT_ORCHESTRATION_LIMITS = { max_task_attempts: 2, max_repair_waves_per_gate: 1 };
+const ORCHESTRATION_POLICY = {
+  task_attempt_policy: "repair_until_pass",
+  repair_gate_policy: "invalidate_and_continue",
+  completion_condition: "fresh_verified_delivery",
+};
+const LEGACY_1_3_ORCHESTRATION = { max_task_attempts: 2, max_repair_waves_per_gate: 1 };
 const BUDGET_KEYS = Object.keys(PROFILE_BUDGETS.standard);
 const AUDIT_CHECKS = ["I1", "I2", "I3", "I4", "claim_provenance"];
 const I1_VERDICTS = ["PASS", "FAIL", "NOT_ASSESSED"];
@@ -29,7 +34,7 @@ const I1_COMPONENTS = ["lineage", "reproducibility", "claim-semantics"];
 const I1_AUDIT_FILES = ["tex-extraction.json", "pdf-extraction.json", "input-manifest.json", "evidence-manifest.json", "execution-receipt.json", ...I1_COMPONENTS.map((name) => `${name}.json`)];
 const STOP_REASONS = new Set(["evidence_saturation", "no_additional_eligible_ideas", "stable_ranking", "exhausted_approved_compute"]);
 const CONTRACT_REPAIR_CLASSES = new Set(["AUTOMATIC_REPAIR", "RESEARCHER_APPROVED_AMENDMENT"]);
-const PERMANENT_BLOCKER_CLASSES = new Set(["required_input_unavailable", "required_authority_unavailable"]);
+const REPAIR_CLASSES = new Set(["specialist_failure", "checkpoint_rejected", "required_input_unavailable", "required_authority_unavailable", "tool_or_route_unavailable", "scheduler_drained"]);
 const I1_INTERPRETER_PATH = "contract/control-plane/i1-interpreter.mjs";
 const BUNDLED_I1_INTERPRETER = new URL("./i1-interpreter.mjs", import.meta.url);
 const ROLE_CONTRACT_FILE = new URL("../references/roles.md", import.meta.url);
@@ -41,7 +46,7 @@ const RESULT_AWARE_ROOTS = ["discovery", "selection", "ablation", "paper", "audi
 const RESULT_AWARE_PRIVATE_ROOTS = ["private/evaluator/raw", "private/evaluator/i1-runs"];
 const PRIVATE_ROLES = new Set(["evaluator", "i1_verifier_builder", "i1_score_auditor", "i2_judge"]);
 const REQUIRED_OUTPUTS = {
-  contract: ["contract/run-config.json", "contract/input-manifest.json", I1_INTERPRETER_PATH, "contract/i1-verification-policy.json", "contract/audit.md"],
+  contract: ["contract/approval.json", "contract/run-config.json", "contract/input-manifest.json", I1_INTERPRETER_PATH, "contract/i1-verification-policy.json", "contract/audit.md"],
   investigation: ["evidence/search-log.jsonl", "evidence/sources.jsonl", "investigation/notes", "investigation/directions", "investigation/protocol-audit.md", "investigation/brief.md", "investigation/references.bib", "investigation/critic.md"],
   discovery: ["discovery/ideas.jsonl", "discovery/idea-critique.jsonl", "discovery/index.json", "discovery/nodes"],
   selection: ["selection/selection.md", "selection/selection-audit.md", "selection/lineage.json", "selection/selected/manifest.json", "selection/canonical-evaluation.json"],
@@ -122,53 +127,42 @@ function appendEvent(run, event) {
   fs.appendFileSync(path.join(run, "events.jsonl"), `${JSON.stringify({ at: new Date().toISOString(), ...event })}\n`);
 }
 
-function markIncomplete(run, record, details) {
-  const file = path.join(run, "terminal", "incomplete.json");
-  const terminal = {
+function nextIncidentPath(run, incident) {
+  const digest = createHash("sha256").update(canonicalJson(incident)).digest("hex").slice(0, 16);
+  const stamp = incident.at.replaceAll(/[-:.]/g, "");
+  let relative = `repairs/incidents/${stamp}-${digest}.json`;
+  for (let collision = 2; fs.existsSync(path.join(run, relative)); collision += 1) relative = `repairs/incidents/${stamp}-${digest}-${collision}.json`;
+  return relative;
+}
+
+function saveRepairIncident(run, record, details) {
+  const evidence = (details.evidence_paths ?? []).map((relative) => entry(run, relative));
+  const incident = {
     schema_version: 1,
-    disposition: "INCOMPLETE",
     at: new Date().toISOString(),
     phase: record.phase,
     failure_class: details.failure_class,
-    exhausted_counter: details.exhausted_counter,
-    exhausted_limit: details.exhausted_limit,
     logical_task_name: details.logical_task_name ?? null,
-    repair_gate: details.repair_gate ?? null,
-    last_failure: details.last_failure,
-    evidence_paths: details.evidence_paths ?? [],
-    remaining_work: details.remaining_work ?? [],
-    resume_requirement: details.resume_requirement,
+    summary: details.summary,
+    evidence,
+    required_action: details.required_action,
   };
-  if (fs.existsSync(file)) {
-    const existing = readJson(file);
-    const reconciled = { ...terminal, at: existing.at };
-    if (canonicalJson(existing) !== canonicalJson(reconciled) || !Number.isFinite(Date.parse(existing.at))) {
-      const stamp = new Date().toISOString().replaceAll(/[-:.]/g, "");
-      writeJson(path.join(run, "terminal", "superseded", `${stamp}-incomplete.json`), existing);
-      writeJson(file, terminal);
-    }
-  } else {
-    writeJson(file, terminal);
-  }
-  if (record.pending_checkpoint) {
-    const pendingReceipt = receiptFile(run, record.pending_checkpoint.phase);
-    if (!record.checkpoints[record.pending_checkpoint.phase] && fs.existsSync(pendingReceipt)) fs.unlinkSync(pendingReceipt);
-    record.pending_checkpoint = null;
-  }
-  record.state = "blocked_exhausted";
-  record.outcome = "incomplete";
-  record.terminal_anchor = { path: "terminal", sha256: hashArtifact(run, "terminal") };
+  const relative = nextIncidentPath(run, incident);
+  writeJson(path.join(run, relative), incident);
+  const anchor = { path: relative, sha256: hashArtifact(run, relative) };
+  record.repair_incidents ??= [];
+  record.repair_incidents.push(anchor);
+  record.state = "repairing";
+  record.outcome = null;
   record.updated_at = new Date().toISOString();
   writeJson(path.join(run, "run.json"), record);
-  appendEvent(run, { event: "run_blocked_exhausted", phase: record.phase, failure_class: details.failure_class, terminal: "terminal/incomplete.json" });
+  appendEvent(run, { event: "repair_required", phase: record.phase, failure_class: incident.failure_class, incident: relative });
+  return relative;
 }
 
-function consumeRepairWave(run, record, gate, reason) {
-  const current = record.repair_waves[gate] ?? 0;
-  const limit = record.orchestration.max_repair_waves_per_gate;
-  if (current >= limit) return false;
-  record.repair_waves[gate] = current + 1;
-  return true;
+function consumeRepairCycle(record, gate) {
+  record.repair_waves[gate] = (record.repair_waves[gate] ?? 0) + 1;
+  return record.repair_waves[gate];
 }
 
 function relativePath(value) {
@@ -345,15 +339,16 @@ function validateBudgets(budgets) {
   return budgets;
 }
 
-function validateOrchestrationLimits(value) {
-  if (!value || Object.keys(value).sort().join() !== Object.keys(DEFAULT_ORCHESTRATION_LIMITS).sort().join()) fail(`Run orchestration limits must contain exactly ${Object.keys(DEFAULT_ORCHESTRATION_LIMITS).join(", ")}`);
-  for (const [key, expected] of Object.entries(DEFAULT_ORCHESTRATION_LIMITS)) {
-    if (value[key] !== expected) fail(`Invalid orchestration limit at contract/run-config.json#/orchestration/${key}; Scientist1 1.3 requires exactly ${expected}, received ${JSON.stringify(value[key])}`);
+function validateOrchestrationPolicy(value, schemaVersion) {
+  const expected = schemaVersion === 2 ? LEGACY_1_3_ORCHESTRATION : ORCHESTRATION_POLICY;
+  if (!value || Object.keys(value).sort().join() !== Object.keys(expected).sort().join()) fail(`Run orchestration policy must contain exactly ${Object.keys(expected).join(", ")}`);
+  for (const [key, required] of Object.entries(expected)) {
+    if (value[key] !== required) fail(`Invalid orchestration policy at contract/run-config.json#/orchestration/${key}; expected ${JSON.stringify(required)}, received ${JSON.stringify(value[key])}`);
   }
   return value;
 }
 
-function verifyRunRecord(run, { allowReceiptDrift = false, allowUnanchoredTerminal = false } = {}) {
+function verifyRunRecord(run, { allowReceiptDrift = false } = {}) {
   const file = path.join(run, "run.json");
   let record = readJson(file);
   if (record.pending_invalidation) {
@@ -378,32 +373,28 @@ function verifyRunRecord(run, { allowReceiptDrift = false, allowUnanchoredTermin
   record.charter_revision ??= 1;
   if (!Number.isInteger(record.charter_revision) || record.charter_revision < 1) fail(`Invalid charter revision at ${file}#/charter_revision`);
   const config = readJson(path.join(run, "contract", "run-config.json"));
-  if (config.schema_version !== 2) fail(`Scientist1 1.3 runs require contract/run-config.json schema_version 2`);
+  if (![2, 3].includes(config.schema_version)) fail("Active Scientist1 runs require contract/run-config.json schema_version 2 or 3");
   validateBudgets(config.budgets);
   const orchestration = config.orchestration;
-  validateOrchestrationLimits(orchestration);
-  if (!record.orchestration || !record.repair_waves) fail("Scientist1 1.3 run state lacks frozen orchestration or repair counters");
+  validateOrchestrationPolicy(orchestration, config.schema_version);
+  if (!record.orchestration || !record.repair_waves) fail("Scientist1 run state lacks its frozen orchestration policy or repair history");
   if (config.search_profile !== "custom" && JSON.stringify(config.budgets) !== JSON.stringify(PROFILE_BUDGETS[config.search_profile])) fail(`${config.search_profile} budgets do not match the built-in profile`);
   const configHash = hashArtifact(run, "contract/run-config.json");
   if (record.contract_parameters_sha256 !== configHash || config.mode !== record.mode || config.search_profile !== record.search_profile || config.budgets.audit_panel_size !== record.audit_panel_size || JSON.stringify(config.budgets) !== JSON.stringify(record.budgets) || JSON.stringify(orchestration) !== JSON.stringify(record.orchestration)) fail(`Run mode/profile or orchestration limits do not match contract/run-config.json`);
   if (!record.repair_waves || Array.isArray(record.repair_waves) || typeof record.repair_waves !== "object" || Object.values(record.repair_waves).some((count) => !Number.isInteger(count) || count < 0)) fail("Run repair counters are malformed");
-  const terminalPath = path.join(run, "terminal", "incomplete.json");
-  if (record.state === "blocked_exhausted") {
-    if (record.outcome !== "incomplete" || !fs.existsSync(terminalPath)) fail("blocked_exhausted requires outcome incomplete and terminal/incomplete.json");
-    if (record.terminal_anchor?.path !== "terminal" || !validSha256(record.terminal_anchor?.sha256) || hashArtifact(run, "terminal") !== record.terminal_anchor.sha256) fail("blocked_exhausted terminal evidence differs from its immutable anchor");
-    const terminal = readJson(terminalPath);
-    exactKeys(terminal, ["schema_version", "disposition", "at", "phase", "failure_class", "exhausted_counter", "exhausted_limit", "logical_task_name", "repair_gate", "last_failure", "evidence_paths", "remaining_work", "resume_requirement"], "terminal/incomplete.json");
-    if (terminal.schema_version !== 1 || terminal.disposition !== "INCOMPLETE" || terminal.phase !== record.phase || !Number.isFinite(Date.parse(terminal.at)) || !["task_attempts_exhausted", "repair_budget_exhausted", ...PERMANENT_BLOCKER_CLASSES].includes(terminal.failure_class) || !Number.isInteger(terminal.exhausted_counter) || !Number.isInteger(terminal.exhausted_limit) || terminal.exhausted_counter !== terminal.exhausted_limit || !nonemptyString(terminal.last_failure) || !Array.isArray(terminal.evidence_paths) || !terminal.evidence_paths.length || terminal.evidence_paths.some((item) => !nonemptyString(item)) || !Array.isArray(terminal.remaining_work) || !terminal.remaining_work.length || terminal.remaining_work.some((item) => !nonemptyString(item)) || !nonemptyString(terminal.resume_requirement)) fail("Malformed terminal incomplete record");
-    for (const evidence of terminal.evidence_paths) hashArtifact(run, evidence);
-    if (terminal.failure_class === "task_attempts_exhausted") {
-      if (terminal.repair_gate !== null || !nonemptyString(terminal.logical_task_name) || terminal.exhausted_limit !== record.orchestration.max_task_attempts || acceptedAttemptCount(run, terminal.logical_task_name, record) !== terminal.exhausted_limit) fail("Terminal task-attempt exhaustion does not match immutable accepted attempts");
-    } else if (terminal.failure_class === "repair_budget_exhausted" && (terminal.logical_task_name !== null || !nonemptyString(terminal.repair_gate) || terminal.phase !== terminal.repair_gate || terminal.exhausted_limit !== record.orchestration.max_repair_waves_per_gate || record.repair_waves[terminal.repair_gate] !== terminal.exhausted_limit)) {
-      fail("Terminal repair exhaustion does not match the frozen repair budget");
-    } else if (PERMANENT_BLOCKER_CLASSES.has(terminal.failure_class) && (terminal.logical_task_name !== null || terminal.repair_gate !== null || terminal.exhausted_counter !== 0 || terminal.exhausted_limit !== 0)) {
-      fail("Terminal permanent blocker must be pre-attempt and unrelated to a repair gate");
-    }
-  } else if (record.outcome === "incomplete" || record.terminal_anchor !== null || (!allowUnanchoredTerminal && fs.existsSync(terminalPath))) {
-    fail("Terminal evidence and outcome incomplete are reserved for blocked_exhausted runs");
+  if (record.terminal_anchor !== null || fs.existsSync(path.join(run, "terminal"))) fail("A legacy terminal record must be converted into active repair evidence before this run can continue");
+  record.repair_incidents ??= [];
+  if (!Array.isArray(record.repair_incidents)) fail("Run repair incident anchors are malformed");
+  const incidentRoot = path.join(run, "repairs", "incidents");
+  const actualIncidents = fs.existsSync(incidentRoot) ? fs.readdirSync(incidentRoot).filter((name) => name.endsWith(".json")).sort().map((name) => `repairs/incidents/${name}`) : [];
+  const anchoredIncidents = record.repair_incidents.map((item) => item.path).sort();
+  if (canonicalJson(actualIncidents) !== canonicalJson(anchoredIncidents)) fail("Repair incident files do not match run anchors");
+  for (const anchor of record.repair_incidents) {
+    if (!anchor || !nonemptyString(anchor.path) || !validSha256(anchor.sha256) || hashArtifact(run, anchor.path) !== anchor.sha256) fail(`Invalid repair incident anchor: ${anchor?.path ?? "unknown"}`);
+    const incident = readJson(path.join(run, anchor.path));
+    exactKeys(incident, ["schema_version", "at", "phase", "failure_class", "logical_task_name", "summary", "evidence", "required_action"], anchor.path);
+    if (incident.schema_version !== 1 || !Number.isFinite(Date.parse(incident.at)) || !phasesFor(record).includes(incident.phase) || !REPAIR_CLASSES.has(incident.failure_class) || (incident.logical_task_name !== null && !nonemptyString(incident.logical_task_name)) || !nonemptyString(incident.summary) || !nonemptyString(incident.required_action) || !Array.isArray(incident.evidence)) fail(`Malformed repair incident: ${anchor.path}`);
+    for (const evidence of incident.evidence) if (!evidence || !nonemptyString(evidence.path) || !validSha256(evidence.sha256) || hashArtifact(run, evidence.path) !== evidence.sha256) fail(`Repair incident evidence drifted: ${anchor.path}`);
   }
   if (!record.checkpoints || Array.isArray(record.checkpoints) || typeof record.checkpoints !== "object") fail("Run checkpoint anchors are malformed");
   if (record.pending_checkpoint !== null && (!record.pending_checkpoint || !phasesFor(record).includes(record.pending_checkpoint.phase) || !Number.isFinite(Date.parse(record.pending_checkpoint.started_at)) || record.pending_checkpoint.phase !== record.phase || record.checkpoints[record.pending_checkpoint.phase])) fail("Run pending checkpoint journal is malformed");
@@ -446,6 +437,10 @@ function verifyRunRecord(run, { allowReceiptDrift = false, allowUnanchoredTermin
   if (record.request_sha256 !== requestHash) fail("request.md no longer matches the frozen verbatim request");
   const studyHash = hashArtifact(run, "study-plan.md");
   if (record.study_plan_sha256 !== studyHash) fail("study-plan.md no longer matches the frozen run contract");
+  if (!validSha256(record.approval_sha256) || record.approval_sha256 !== hashArtifact(run, "contract/approval.json")) fail("The approved run is not bound to its durable approval record");
+  const approval = readJson(path.join(run, "contract", "approval.json"));
+  exactKeys(approval, ["schema_version", "draft_id", "approved_at", "execution_authority", "request_sha256", "study_plan_sha256"], "contract/approval.json");
+  if (approval.schema_version !== 1 || !nonemptyString(approval.draft_id) || !Number.isFinite(Date.parse(approval.approved_at)) || !nonemptyString(approval.execution_authority) || approval.request_sha256 !== record.request_sha256 || approval.study_plan_sha256 !== record.study_plan_sha256) fail("Durable approval does not match the approved request and study plan");
   if (record.attention !== null) fail(`Scientist1 1.3 runs cannot pause for post-approval attention at ${file}#/attention`);
   return record;
 }
@@ -705,8 +700,7 @@ function routingForLaunch(run, routingSha256) {
 
 function verifyAttemptRecord(run, launchRelative, launch) {
   if (!nonemptyString(launch.logical_task_name) || !Number.isInteger(launch.attempt) || launch.attempt < 1) fail(`Launch ${launchRelative} lacks a valid logical task and accepted-attempt number`);
-  const limit = readJson(path.join(run, "run.json")).orchestration?.max_task_attempts;
-  if (!Number.isInteger(limit) || launch.attempt > limit) fail(`Launch ${launchRelative} exceeds the frozen accepted-attempt limit`);
+  if (!Number.isInteger(launch.attempt) || launch.attempt < 1) fail(`Launch ${launchRelative} has an invalid accepted-attempt number`);
   if (!nonemptyString(launch.role) || !Array.isArray(launch.declared_outputs) || !launch.declared_outputs.length) fail(`Launch ${launchRelative} lacks a stable role/output work identity`);
   const workKey = createHash("sha256").update(canonicalJson({ contract_revision: launch.contract_revision ?? 1, charter_revision: launch.charter_revision ?? 1, role: launch.role, declared_outputs: [...launch.declared_outputs].sort() })).digest("hex");
   if (launch.work_key_sha256 !== workKey) fail(`Launch ${launchRelative} has an invalid role/output work identity`);
@@ -819,7 +813,7 @@ function requireEvaluatorRawOwnership(run, roleRecords, evaluationPath) {
 }
 
 function i1BuilderInputs(record) {
-  const inputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/run-config.json", "contract/input-manifest.json", I1_INTERPRETER_PATH];
+  const inputs = ["request.md", "study-plan.md", "environment/bootstrap.json", "contract/approval.json", "contract/run-config.json", "contract/input-manifest.json", I1_INTERPRETER_PATH];
   if (record.mode === "external_audit") inputs.push("contract/source-bundle-manifest.json");
   else inputs.push("contract/evaluator-contract.md", "contract/evaluator-manifest.json");
   return inputs;
@@ -1847,7 +1841,7 @@ function configure(runArg, profile = "pilot", mode = "research", customProfilePa
   const budgets = profile === "custom"
     ? validateBudgets(readJson(artifactPath(run, customProfilePath || "contract/custom-profile.json").target))
     : PROFILE_BUDGETS[profile];
-  writeJson(path.join(run, "contract", "run-config.json"), { schema_version: 2, mode, search_profile: profile, budgets, orchestration: DEFAULT_ORCHESTRATION_LIMITS });
+  writeJson(path.join(run, "contract", "run-config.json"), { schema_version: 3, mode, search_profile: profile, budgets, orchestration: ORCHESTRATION_POLICY });
   const interpreterTarget = path.join(run, I1_INTERPRETER_PATH);
   fs.mkdirSync(path.dirname(interpreterTarget), { recursive: true });
   fs.copyFileSync(BUNDLED_I1_INTERPRETER, interpreterTarget, fs.constants.COPYFILE_EXCL);
@@ -1859,9 +1853,9 @@ function init(runArg) {
   if (!runArg || !fs.existsSync(run) || !fs.statSync(run).isDirectory()) fail("init requires an existing run directory");
   if (fs.existsSync(path.join(run, "run.json"))) fail("run.json already exists; refusing to reinitialize evidence");
   const config = readJson(path.join(run, "contract", "run-config.json"));
-  if (config.schema_version !== 2 || !PROFILES.has(config.search_profile) || !MODES.has(config.mode)) fail("Invalid frozen run configuration");
+  if (config.schema_version !== 3 || !PROFILES.has(config.search_profile) || !MODES.has(config.mode)) fail("Invalid frozen run configuration");
   validateBudgets(config.budgets);
-  validateOrchestrationLimits(config.orchestration);
+  validateOrchestrationPolicy(config.orchestration, config.schema_version);
   hashArtifact(run, I1_INTERPRETER_PATH);
   if (config.search_profile !== "custom" && JSON.stringify(config.budgets) !== JSON.stringify(PROFILE_BUDGETS[config.search_profile])) fail(`${config.search_profile} budgets do not match the built-in profile`);
   for (const required of ["request.md", "study-plan.md"]) hashArtifact(run, required);
@@ -1884,9 +1878,11 @@ function init(runArg) {
     request_sha256: hashArtifact(run, "request.md"),
     study_plan_sha256: hashArtifact(run, "study-plan.md"),
     contract_parameters_sha256: hashArtifact(run, "contract/run-config.json"),
+    approval_sha256: null,
     contract_revision: 1,
     charter_revision: 1,
     repair_waves: {},
+    repair_incidents: [],
     last_checkpoint: null,
     invalidation_roots: [],
     checkpoints: {},
@@ -1897,6 +1893,53 @@ function init(runArg) {
   });
   appendEvent(run, { event: "run_initialized", phase: "contract" });
   process.stdout.write(`${run}\n`);
+}
+
+function bindApproval(runArg, draftId, approvedAt, executionAuthority) {
+  const run = path.resolve(runArg || "");
+  if (!runArg || !fs.existsSync(path.join(run, "run.json"))) fail("bind-approval requires an initialized Scientist1 run");
+  const record = readJson(path.join(run, "run.json"));
+  if (!nonemptyString(draftId) || !Number.isFinite(Date.parse(approvedAt)) || !nonemptyString(executionAuthority)) fail("bind-approval requires a draft id, approval timestamp, and execution authority");
+  const approval = {
+    schema_version: 1,
+    draft_id: draftId,
+    approved_at: approvedAt,
+    execution_authority: executionAuthority,
+    request_sha256: record.request_sha256,
+    study_plan_sha256: record.study_plan_sha256,
+  };
+  const relative = "contract/approval.json";
+  const target = path.join(run, relative);
+  if (fs.existsSync(target)) {
+    if (canonicalJson(readJson(target)) !== canonicalJson(approval) || record.approval_sha256 !== hashArtifact(run, relative)) fail("Existing durable approval differs from the approved request");
+    process.stdout.write(`${target}\n`);
+    return;
+  }
+  if (!["running", "repairing"].includes(record.state) || record.approval_sha256 !== null) fail("Durable approval can be bound only to an active Scientist1 run without an existing approval binding");
+  writeJson(target, approval);
+  record.approval_sha256 = hashArtifact(run, relative);
+  record.updated_at = new Date().toISOString();
+  writeJson(path.join(run, "run.json"), record);
+  appendEvent(run, { event: "approval_bound", draft_id: draftId, approval: relative });
+  process.stdout.write(`${target}\n`);
+}
+
+function preserveCheckpointRejection(runArg, phase, message) {
+  try {
+    const run = path.resolve(runArg || "");
+    const record = readJson(path.join(run, "run.json"));
+    if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint || !phasesFor(record).includes(phase) || !validSha256(record.approval_sha256)) return;
+    saveRepairIncident(run, record, {
+      failure_class: "checkpoint_rejected",
+      logical_task_name: null,
+      summary: String(message || "Checkpoint validation failed.").split("\n")[0].slice(0, 1000),
+      evidence_paths: [],
+      required_action: `Repair only the failed ${phase} gate, preserve prior evidence, and retry the same checkpoint.`,
+    });
+  } catch {
+    // The original validator failure remains authoritative when incident
+    // preservation itself cannot safely update the ledger.
+  }
 }
 
 function validatePhasePromotion(runArg, phase, args) {
@@ -1912,7 +1955,7 @@ function validatePhasePromotion(runArg, phase, args) {
   if (phase === "complete" && !allowedOutcomes.has(record.outcome)) fail(`Set a valid ${record.mode} outcome before checkpointing complete; expected ${[...allowedOutcomes].join("|")}, received ${JSON.stringify(record.outcome)}`);
   if (phase === "complete" && hasEvidenceLimitedStop(run, record) && record.outcome !== "completed_with_limitations") fail("A run that used an evidence-limited stop reason must finish as completed_with_limitations, never positive or scientific_null");
   if (phase === "complete" && record.mode === "external_audit") {
-    const expectedOutcome = { PASS: "audit_passed", FAIL: "audit_failed", NOT_ASSESSED: "audit_incomplete" }[auditOverallVerdict(run)];
+    const expectedOutcome = auditOverallVerdict(run) === "PASS" ? "audit_passed" : "audit_failed";
     if (record.outcome !== expectedOutcome) fail(`External audit outcome contradicts audit/report.md; expected ${expectedOutcome}, received ${record.outcome}`);
   }
   const last = verifyReceipts(run, record);
@@ -2242,9 +2285,15 @@ function finishPendingInvalidation(run, record) {
   if (journal.amended_plan_path) {
     const source = artifactPath(run, journal.amended_plan_path).target;
     if (!fs.existsSync(source)) fail("Interrupted contract amendment lost its archived successor plan");
+    const priorApprovalPath = path.join(archive, "artifacts", "contract", "approval.json");
+    if (!fs.existsSync(priorApprovalPath)) fail("Interrupted contract amendment lost its original durable approval");
+    const approval = readJson(priorApprovalPath);
     fs.copyFileSync(source, path.join(run, "study-plan.md"));
     record.charter_revision = journal.charter_revision_after;
     record.study_plan_sha256 = hashArtifact(run, "study-plan.md");
+    approval.study_plan_sha256 = record.study_plan_sha256;
+    writeJson(path.join(run, "contract", "approval.json"), approval);
+    record.approval_sha256 = hashArtifact(run, "contract/approval.json");
   }
   const anchored = { path: journal.archive_path, sha256: hashArtifact(run, journal.archive_path) };
   const existing = record.invalidation_roots.find((item) => item.path === anchored.path);
@@ -2257,15 +2306,12 @@ function finishPendingInvalidation(run, record) {
   record.attention = null;
   record.pending_invalidation = null;
   record.updated_at = new Date().toISOString();
-  if (journal.terminal) markIncomplete(run, record, journal.terminal);
-  else {
-    record.state = "repairing";
-    writeJson(path.join(run, "run.json"), record);
-  }
+  record.state = "repairing";
+  writeJson(path.join(run, "run.json"), record);
   const transactionRoot = path.join(run, ".transactions");
   if (fs.existsSync(transactionRoot) && !fs.readdirSync(transactionRoot).length) fs.rmdirSync(transactionRoot);
-  appendEvent(run, { event: "receipt_chain_invalidated", phase: journal.phase, reason: journal.reason_path, archive: journal.archive_path, terminal: Boolean(journal.terminal), recovered: true });
-  return { archive, terminal: Boolean(journal.terminal), kind: journal.kind };
+  appendEvent(run, { event: "receipt_chain_invalidated", phase: journal.phase, reason: journal.reason_path, archive: journal.archive_path, repair_cycle: record.repair_waves[journal.phase] ?? 0, recovered: true });
+  return { archive, kind: journal.kind };
 }
 
 function recoverPendingInvalidation(run) {
@@ -2279,7 +2325,6 @@ function invalidate(runArg, phase, reasonArg) {
   const run = path.resolve(runArg || "");
   const recovered = recoverPendingInvalidation(run);
   if (recovered) {
-    if (recovered.terminal) fail(`Recovered an exhausted ${recovered.kind}; the run is blocked_exhausted.`);
     process.stdout.write(`${recovered.archive}\n`);
     return;
   }
@@ -2293,26 +2338,15 @@ function invalidate(runArg, phase, reasonArg) {
   const reasonSource = artifactPath(run, reason.path).target;
   if (!fs.lstatSync(reasonSource).isFile()) fail("Invalidation reason must be a regular file");
   if (!record.checkpoints[phase]) fail(`No ${phase} checkpoint exists to invalidate`);
-  const repairAllowed = consumeRepairWave(run, record, phase, reason);
-  const prepared = prepareInvalidation(run, record, phase, reason, { repairWaveConsumed: repairAllowed });
+  consumeRepairCycle(record, phase);
+  const prepared = prepareInvalidation(run, record, phase, reason, { repairWaveConsumed: true });
   const { archive, transaction, invalidatedPhases } = prepared;
   const archivePath = path.relative(run, archive).replaceAll(path.sep, "/");
-  const terminal = repairAllowed ? null : {
-      failure_class: "repair_budget_exhausted",
-      repair_gate: phase,
-      exhausted_counter: record.repair_waves[phase] ?? 0,
-      exhausted_limit: record.orchestration.max_repair_waves_per_gate,
-      last_failure: `Repair budget exhausted for ${phase}: ${reason.path}`,
-      evidence_paths: [archivePath],
-      remaining_work: [`Resolve the blocking ${phase} gate without weakening its acceptance criteria.`],
-      resume_requirement: "Start a new run that references this INCOMPLETE record after correcting the blocking evidence or supplying genuinely required authority/input.",
-    };
-  record.pending_invalidation = { schema_version: 1, kind: "invalidate", transaction_path: path.relative(run, transaction).replaceAll(path.sep, "/"), archive_path: archivePath, reason_path: reason.path, phase, invalidated_phases: invalidatedPhases, cleanup_paths: prepared.cleanupPaths, contract_cleanup_paths: [], contract_revision_after: record.contract_revision, charter_revision_after: record.charter_revision, last_checkpoint: index ? phases[index - 1] : null, amended_plan_path: null, terminal };
+  record.pending_invalidation = { schema_version: 1, kind: "invalidate", transaction_path: path.relative(run, transaction).replaceAll(path.sep, "/"), archive_path: archivePath, reason_path: reason.path, phase, invalidated_phases: invalidatedPhases, cleanup_paths: prepared.cleanupPaths, contract_cleanup_paths: [], contract_revision_after: record.contract_revision, charter_revision_after: record.charter_revision, last_checkpoint: index ? phases[index - 1] : null, amended_plan_path: null };
   record.updated_at = new Date().toISOString();
   writeJson(path.join(run, "run.json"), record);
   if (process.env.SCIENTIST1_TEST_INTERRUPT_INVALIDATION === "after_journal") fail("Injected invalidation interruption after journal");
   const finished = finishPendingInvalidation(run, record);
-  if (!repairAllowed) fail(`Repair budget exhausted for ${phase}; the affected chain was superseded and the run is blocked_exhausted.`);
   process.stdout.write(`${finished.archive}\n`);
 }
 
@@ -2320,7 +2354,6 @@ function reviseContract(runArg, reasonArg, amendedPlanArg) {
   const run = path.resolve(runArg || "");
   const recovered = recoverPendingInvalidation(run);
   if (recovered) {
-    if (recovered.terminal) fail(`Recovered an exhausted ${recovered.kind}; the run is blocked_exhausted.`);
     process.stdout.write(`${recovered.archive}\n`);
     return;
   }
@@ -2335,11 +2368,7 @@ function reviseContract(runArg, reasonArg, amendedPlanArg) {
     const expected = resultAwareRepair ? "true because candidate or downstream evidence exists" : "false because no candidate or downstream evidence exists";
     fail(`Contract repair reason must declare result_aware ${expected} at ${reason.path}`);
   }
-  // Pre-result contract stabilization is bounded by the closed audit scope, not
-  // by an arbitrary retry count. The repair-wave budget starts only after a
-  // candidate or downstream result exists, when another revision would
-  // invalidate evidence.
-  const repairAllowed = !resultAwareRepair || consumeRepairWave(run, record, "contract", reason);
+  if (resultAwareRepair) consumeRepairCycle(record, "contract");
   additionalPaths.push(...successorPaths);
   let amendedPlan = null;
   if (value.classification === "RESEARCHER_APPROVED_AMENDMENT") {
@@ -2347,29 +2376,18 @@ function reviseContract(runArg, reasonArg, amendedPlanArg) {
     if (amendedPlan === "study-plan.md") fail("The amended plan must be staged at a separate run-relative path");
     const amendedSource = artifactPath(run, amendedPlan).target;
     if (!fs.lstatSync(amendedSource).isFile() || !fs.readFileSync(amendedSource, "utf8").trim()) fail("The researcher-approved amended plan must be a non-empty regular file");
-    additionalPaths.push("study-plan.md");
+    additionalPaths.push("study-plan.md", "contract/approval.json", relativePath(value.researcher_approval.path));
   } else if (amendedPlanArg) {
     fail("Automatic contract repair cannot replace study-plan.md");
   }
-  const prepared = prepareInvalidation(run, record, "contract", reason, { repairWaveConsumed: resultAwareRepair && repairAllowed, contractRevision: repairAllowed, additionalPaths, amendedPlan: repairAllowed ? amendedPlan : null });
+  const prepared = prepareInvalidation(run, record, "contract", reason, { repairWaveConsumed: resultAwareRepair, contractRevision: true, additionalPaths, amendedPlan });
   const { archive, transaction, invalidatedPhases, revisionAfter } = prepared;
   const archivePath = path.relative(run, archive).replaceAll(path.sep, "/");
-  const terminal = repairAllowed ? null : {
-      failure_class: "repair_budget_exhausted",
-      repair_gate: "contract",
-      exhausted_counter: record.repair_waves.contract ?? 0,
-      exhausted_limit: record.orchestration.max_repair_waves_per_gate,
-      last_failure: `Post-result repair budget exhausted for contract: ${reason.path}`,
-      evidence_paths: [archivePath],
-      remaining_work: ["Resolve the blocking contract gate without weakening its acceptance criteria."],
-      resume_requirement: "Start a new run that references this INCOMPLETE record after correcting the blocking evidence or supplying genuinely required authority/input.",
-    };
-  record.pending_invalidation = { schema_version: 1, kind: "revise_contract", transaction_path: path.relative(run, transaction).replaceAll(path.sep, "/"), archive_path: archivePath, reason_path: reason.path, phase: "contract", invalidated_phases: invalidatedPhases, cleanup_paths: prepared.cleanupPaths, contract_cleanup_paths: prepared.contractCleanupPaths, contract_revision_after: repairAllowed ? revisionAfter : record.contract_revision, charter_revision_after: record.charter_revision + (repairAllowed && amendedPlan ? 1 : 0), last_checkpoint: null, amended_plan_path: repairAllowed && amendedPlan ? `${archivePath}/successor/study-plan.md` : null, terminal };
+  record.pending_invalidation = { schema_version: 1, kind: "revise_contract", transaction_path: path.relative(run, transaction).replaceAll(path.sep, "/"), archive_path: archivePath, reason_path: reason.path, phase: "contract", invalidated_phases: invalidatedPhases, cleanup_paths: prepared.cleanupPaths, contract_cleanup_paths: prepared.contractCleanupPaths, contract_revision_after: revisionAfter, charter_revision_after: record.charter_revision + (amendedPlan ? 1 : 0), last_checkpoint: null, amended_plan_path: amendedPlan ? `${archivePath}/successor/study-plan.md` : null };
   record.updated_at = new Date().toISOString();
   writeJson(path.join(run, "run.json"), record);
   if (process.env.SCIENTIST1_TEST_INTERRUPT_INVALIDATION === "after_journal") fail("Injected invalidation interruption after journal");
   const finished = finishPendingInvalidation(run, record);
-  if (!repairAllowed) fail("Post-result repair budget exhausted for contract; the affected chain was superseded and the run is blocked_exhausted.");
   appendEvent(run, { event: "contract_revision_started", revision: revisionAfter, charter_revision: record.charter_revision, classification: value.classification, result_aware: value.result_aware, repair_wave_consumed: resultAwareRepair, amended_plan: amendedPlan, reason: reason.path, archive: archivePath });
   process.stdout.write(`${finished.archive}\n`);
 }
@@ -2434,24 +2452,47 @@ function acceptedAttemptCount(run, logicalTaskName, record) {
   return attempts.size;
 }
 
-function exhaust(runArg, failureArg) {
+function recordRepair(runArg, failureArg) {
   const run = path.resolve(runArg || "");
-  const record = verifyRunRecord(run, { allowUnanchoredTerminal: true });
-  if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Run state ${record.state} or a pending checkpoint cannot be marked INCOMPLETE`);
+  const record = verifyRunRecord(run);
+  if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Run state ${record.state} or a pending checkpoint cannot accept a repair incident`);
   const relative = relativePath(failureArg || "");
   const value = readJson(artifactPath(run, relative).target);
-  exactKeys(value, ["schema_version", "failure_class", "logical_task_name", "last_failure", "exhausted_counter", "exhausted_limit", "evidence_paths", "remaining_work", "resume_requirement"], relative);
-  if (value.schema_version !== 1 || !["task_attempts_exhausted", ...PERMANENT_BLOCKER_CLASSES].includes(value.failure_class) || !nonemptyString(value.last_failure) || !Number.isInteger(value.exhausted_counter) || !Number.isInteger(value.exhausted_limit) || !Array.isArray(value.evidence_paths) || !value.evidence_paths.length || value.evidence_paths.some((item) => !nonemptyString(item)) || !Array.isArray(value.remaining_work) || !value.remaining_work.length || value.remaining_work.some((item) => !nonemptyString(item)) || !nonemptyString(value.resume_requirement)) fail(`Invalid terminal blocker record at ${relative}`);
-  if (value.failure_class === "task_attempts_exhausted") {
-    const limit = record.orchestration.max_task_attempts;
-    const accepted = acceptedAttemptCount(run, value.logical_task_name, record);
-    if (!nonemptyString(value.logical_task_name) || value.exhausted_limit !== limit || value.exhausted_counter !== limit || accepted !== limit) fail(`Task-attempt exhaustion at ${relative} must match exactly ${limit} immutable accepted attempts for ${value.logical_task_name}; found ${accepted}`);
-  } else if (value.logical_task_name !== null || value.exhausted_counter !== 0 || value.exhausted_limit !== 0) {
-    fail(`Permanent blocker at ${relative} must use logical_task_name null and zero counters`);
-  }
+  exactKeys(value, ["schema_version", "failure_class", "logical_task_name", "summary", "evidence_paths", "required_action"], relative);
+  if (value.schema_version !== 1 || !REPAIR_CLASSES.has(value.failure_class) || (value.logical_task_name !== null && !nonemptyString(value.logical_task_name)) || !nonemptyString(value.summary) || !Array.isArray(value.evidence_paths) || value.evidence_paths.some((item) => !nonemptyString(item)) || !nonemptyString(value.required_action)) fail(`Invalid repair incident at ${relative}`);
   for (const evidence of value.evidence_paths) hashArtifact(run, evidence);
-  markIncomplete(run, record, value);
-  process.stdout.write(`${path.join(run, "terminal", "incomplete.json")}\n`);
+  const incident = saveRepairIncident(run, record, value);
+  process.stdout.write(`${path.join(run, incident)}\n`);
+}
+
+function resumeLegacyRepair(runArg) {
+  const run = path.resolve(runArg || "");
+  const recordFile = path.join(run, "run.json");
+  const record = readJson(recordFile);
+  const legacyState = ["blocked", "exhausted"].join("_");
+  const legacyOutcome = ["in", "complete"].join("");
+  const terminalRelative = `terminal/${legacyOutcome}.json`;
+  const terminalFile = path.join(run, terminalRelative);
+  if (record.state !== legacyState || record.outcome !== legacyOutcome || !fs.existsSync(terminalFile)) fail("resume-repair is only for a preserved Scientist1 1.3 terminal run");
+  const terminal = readJson(terminalFile);
+  const legacyArchive = `repairs/legacy-terminal/${path.basename(run)}-${createHash("sha256").update(canonicalJson(terminal)).digest("hex").slice(0, 16)}.json`;
+  writeJson(path.join(run, legacyArchive), terminal);
+  fs.rmSync(path.join(run, "terminal"), { recursive: true, force: true });
+  record.state = "repairing";
+  record.outcome = null;
+  record.terminal_anchor = null;
+  record.repair_incidents ??= [];
+  const incident = {
+    schema_version: 1,
+    failure_class: "specialist_failure",
+    logical_task_name: terminal.logical_task_name ?? null,
+    summary: terminal.last_failure ?? "A prior controller stopped before verified delivery.",
+    evidence_paths: [legacyArchive],
+    required_action: Array.isArray(terminal.remaining_work) ? terminal.remaining_work.join(" ") : "Continue the same run through verified delivery.",
+  };
+  const incidentPath = saveRepairIncident(run, record, incident);
+  appendEvent(run, { event: "legacy_terminal_resumed", archived_terminal: legacyArchive, incident: incidentPath });
+  process.stdout.write(`${path.join(run, incidentPath)}\n`);
 }
 
 function setOutcome(runArg, outcome) {
@@ -2546,7 +2587,7 @@ function verify(runArg) {
     const allowed = record.mode === "external_audit" ? AUDIT_OUTCOMES : RESEARCH_OUTCOMES;
     if (!allowed.has(record.outcome)) fail(`Completed run has invalid outcome; expected ${[...allowed].join("|")}, received ${JSON.stringify(record.outcome)}`);
     if (record.mode === "external_audit") {
-      const expectedOutcome = { PASS: "audit_passed", FAIL: "audit_failed", NOT_ASSESSED: "audit_incomplete" }[auditOverallVerdict(run)];
+      const expectedOutcome = auditOverallVerdict(run) === "PASS" ? "audit_passed" : "audit_failed";
       if (record.outcome !== expectedOutcome) fail(`Completed external audit outcome mismatch; expected ${expectedOutcome}, received ${record.outcome}`);
     }
     verifyManifest(run, record);
@@ -2585,11 +2626,13 @@ function usage() {
   return `Usage:
   coe.mjs configure <run> <standard|pilot|custom> <research|external_audit> [custom-profile-json]
   coe.mjs init <run>
+  coe.mjs bind-approval <run> <draft-id> <approved-at> <execution-authority>
   coe.mjs preflight <run> <phase> --input <path>... --output <path>...
   coe.mjs checkpoint <run> <phase> --input <path>... --output <path>...
   coe.mjs invalidate <run> <phase> <reason-file>
   coe.mjs revise-contract <run> <contract-revision-reason.json> [researcher-approved-amended-plan.md]
-  coe.mjs exhaust <run> <exhaustion.json>
+  coe.mjs record-repair <run> <repair-incident.json>
+  coe.mjs resume-repair <legacy-1.3-run>
   coe.mjs set-outcome <run> <outcome>
   coe.mjs sanitize-feedback <run> <private-evaluation-json> <feedback-json>
   coe.mjs hash <run> <path>
@@ -2601,13 +2644,13 @@ function usage() {
 const [command, ...args] = process.argv.slice(2);
 const legacyCommands = new Set(["init", "preflight", "checkpoint", "invalidate", "revise-contract", "hash", "set-state", "set-attention", "clear-attention", "set-outcome", "sanitize-feedback", "manifest", "verify-role", "verify"]);
 let delegatedLegacy = false;
-if ((legacyCommands.has(command) || command === "exhaust") && args[0]) {
+if ((legacyCommands.has(command) || command === "record-repair" || command === "resume-repair") && args[0]) {
   const configPath = path.join(path.resolve(args[0]), "contract", "run-config.json");
   if (fs.existsSync(configPath)) {
     const config = readJson(configPath);
     if (config.schema_version === 1 && config.orchestration === undefined) {
-      if (command === "exhaust") {
-        process.stderr.write("Scientist1 1.2 runs retain their frozen state model and cannot be retrofitted with the 1.3 exhaustion ledger; use the 1.2 failed/attention state or start a linked 1.3 run.\n");
+      if (command === "record-repair" || command === "resume-repair") {
+        process.stderr.write("Scientist1 1.2 runs retain their frozen state model and cannot use the active repair ledger.\n");
         process.exitCode = 1;
       } else {
         const result = spawnSync(process.execPath, [LEGACY_COE_1_2, command, ...args], { stdio: "inherit" });
@@ -2624,11 +2667,13 @@ try {
   }
   else if (command === "configure") configure(args[0], args[1], args[2], args[3]);
   else if (command === "init") init(args[0]);
+  else if (command === "bind-approval") bindApproval(args[0], args[1], args[2], args[3]);
   else if (command === "preflight") { memoizeHashes = true; preflight(args[0], args[1], args.slice(2)); }
   else if (command === "checkpoint") { memoizeHashes = true; checkpoint(args[0], args[1], args.slice(2)); }
   else if (command === "invalidate") invalidate(args[0], args[1], args[2]);
   else if (command === "revise-contract") reviseContract(args[0], args[1], args[2]);
-  else if (command === "exhaust") exhaust(args[0], args[1]);
+  else if (command === "record-repair") recordRepair(args[0], args[1]);
+  else if (command === "resume-repair") resumeLegacyRepair(args[0]);
   else if (command === "set-outcome") setOutcome(args[0], args[1]);
   else if (command === "sanitize-feedback") sanitizeFeedback(args[0], args[1], args[2]);
   else if (command === "hash") hash(args[0], args[1]);
@@ -2646,6 +2691,7 @@ try {
     process.exitCode = 2;
   }
 } catch (error) {
+  if (!delegatedLegacy && command === "checkpoint") preserveCheckpointRejection(args[0], args[1], error.message);
   if (!process.exitCode) {
     process.stderr.write(`${error.stack ?? error}\n`);
     process.exitCode = 1;

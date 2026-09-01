@@ -20,7 +20,7 @@ Turn the researcher's setup into a study plan that states the question, inputs, 
 
 Keep the researcher's exact request beside the normalized plan. Only the research question is required in the browser. Blank purpose, prior-work, evaluation, limit, or deliverable fields are valid intake, not an error. Infer useful defaults from the question, approved files, and allowed project context, show those defaults in the editable plan, and let the researcher approve or change them before work begins.
 
-The approved question, named inputs, constraints, exclusions, data boundaries, and limits on interpretation form the researcher charter. The outcome operationalization, evaluator, declarative I1 policy, schemas, hashes, paths, seeds, method details, and other scientific implementation choices form a versioned execution contract. Selecting `Approve and start study` grants durable authorization for safe, reversible, in-scope execution, but not unbounded retries or speculative engineering. Each logical specialist task has at most two accepted launch attempts. Downstream gates and result-aware contract changes have at most one automatic repair wave. Before candidate evidence exists, contract stabilization may apply as many minimal result-blind corrections as the closed checklist actually requires; it does not consume that downstream repair budget. Exhaustion of a post-result or downstream path becomes a truthful, terminal `INCOMPLETE` record. Corrected work after exhaustion starts in a new run that references that record. If a direct repair would exceed a fixed charter boundary, preserve the boundary, choose the strongest safe in-scope fallback, and disclose the limitation in the paper. Record an amendment only when the researcher independently supplies one.
+The approved question, named inputs, constraints, exclusions, data boundaries, and limits on interpretation form the researcher charter. The outcome operationalization, evaluator, declarative I1 policy, schemas, hashes, paths, seeds, method details, and other scientific implementation choices form a versioned execution contract. Selecting `Approve and start study` grants durable authorization for safe, reversible, in-scope execution through a freshly verified paper package. Attempts and repair cycles are evidence history, not stopping budgets. Before candidate evidence exists, contract stabilization applies only minimal result-blind corrections from the closed checklist. After results exist, every material contract repair archives and invalidates affected successors before rerunning them. Rejected gates, unavailable paths, and scheduler drains remain same-run repair work. If a direct repair would exceed a fixed charter boundary, preserve the boundary, choose the strongest safe in-scope design that still answers the question, and disclose the limitation in the paper. Record an amendment only when the researcher independently supplies one.
 
 ## Minimum study contract
 
@@ -102,7 +102,7 @@ Publish this full plan to the browser review before creating the run. Use chat o
 - Reading stop:
 - Direction target:
 - Bibliography target:
-- Brief repair limit:
+- Brief repair rule:
 
 ## Search profile
 pilot | standard | custom: <ceilings, minimum valid work, and reason>
@@ -114,7 +114,8 @@ pilot | standard | custom: <ceilings, minimum valid work, and reason>
 - <scope and generalization limits>
 
 ## Deliverables
-- paper source and PDF when a compatible compiler is available and requested
+- canonical paper source
+- PDF when a compatible compiler is available and the approved delivery requires it
 - selected method, code, or protocol
 - evidence and integrity audit
 
@@ -128,7 +129,7 @@ Also preserve the exact request in `request.md`.
 
 The browser asks: `Is this the study you want?`
 
-Treat the browser's approved state as the study's only approval checkpoint. It authorizes bounded execution and evidence-backed repairs to evaluators, policies, methods, environments, and schemas within the approved boundaries. Treat edits and a submitted change note before approval as a request for one revised full plan. Do not create the run until the researcher approves the complete version. After approval, do not return to plan review for an implementation detail; if a required path is exhausted, record `INCOMPLETE` with the exact restart condition instead of looping or inventing authority.
+Treat the browser's approved state as the study's only approval checkpoint. It authorizes execution and evidence-backed repairs to evaluators, policies, methods, environments, and schemas within the approved boundaries through verified delivery. Treat edits and a submitted change note before approval as a request for one revised full plan. Do not create the run until the researcher approves the complete version. After approval, bind that approval into `contract/approval.json`, do not return to plan review for an implementation detail, and do not stop on an operational blocker; record, repair, recheck, and continue the same run.
 
 After approval:
 
@@ -137,6 +138,6 @@ After approval:
 3. Verify copied bytes against SHA-256.
 4. Put shared files under `inputs/shared/` and evaluator-only files under `private/`.
 5. Record original path, frozen path, hash, access class, purpose, and data-export rule in `contract/input-manifest.json`.
-6. Send the contract to a fresh Contract Auditor.
+6. Bind the durable approval record, then send the contract to a fresh Contract Auditor.
 
-A Contract Auditor PASS confirms request fidelity and a usable evaluation. It does not prove the science. The auditor applies the closed essential checklist once and reports every observable blocker in that pass. Only an invented or contradictory commitment, a missing executable definition required by the approved evaluation, or a deterministic schema/interpreter failure is blocking. Optional hardening, alternative designs, additional precision, and possible future edge cases are nonblocking and create no work. If the contract fails before candidate evidence, preserve it, make the smallest faithful repair, and send only the repair delta plus the same closed checklist to one fresh auditor. A re-audit may add a blocker only when the repair itself introduced a directly evidenced contradiction or invalid machine contract. Repeat this minimal result-blind stabilization only as needed to pass; do not consume a downstream repair wave and do not expand the review toward perfection. Once results exist, the frozen result-aware repair limit applies and exhaustion records `INCOMPLETE`.
+A Contract Auditor PASS confirms request fidelity and a usable evaluation. It does not prove the science. The auditor applies the closed essential checklist once and reports every observable blocker in that pass. Only an invented or contradictory commitment, a missing executable definition required by the approved evaluation, or a deterministic schema/interpreter failure is blocking. Optional hardening, alternative designs, additional precision, and possible future edge cases are nonblocking and create no work. If the contract fails before candidate evidence, preserve it, make the smallest faithful repair, and send only the repair delta plus the same closed checklist to one fresh auditor. A re-audit may add a blocker only when the repair itself introduced a directly evidenced contradiction or invalid machine contract. Repeat this minimal result-blind stabilization only as needed to pass and do not expand the review toward perfection. Once results exist, archive every affected successor before each repair and rerun it; repeated repairs remain active work until the contract and final delivery verify.

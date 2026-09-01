@@ -9,8 +9,9 @@ trace, and result. Save a screen recording when visual behavior matters.
 1. Add the repository with `codex plugin marketplace add AdamHAwad/scientistone-codex-plugin --ref main`.
 2. Confirm that Codex discovers `scientist1@scientist1` at the expected version.
 3. Install it with `codex plugin add scientist1@scientist1`.
-4. Confirm Codex reports the plugin hook as untrusted, open `/hooks`, review
-   the exact Scientist1 launch-authorization hook, and trust it.
+4. Confirm Codex reports the plugin hooks as untrusted, open `/hooks`, review
+   the exact Scientist1 launch-authorization and completion-enforcement hooks,
+   and trust them.
 5. Confirm an authorized smoke-test specialist launch runs the hook and creates
    its immutable accepted-attempt record. Installation alone is not hook trust.
 6. Confirm that the installed copy comes from `plugins/scientist1/` and starts without a global Node.js installation or another Scientist1 service.
@@ -27,14 +28,15 @@ trace, and result. Save a screen recording when visual behavior matters.
 3. In Codex desktop, `Scientist1` starts the bundled MCP and opens the full-page setup guide in the built-in browser, with no inline form or remote page.
 4. Upload a file with the large drop field. Verify its bytes and SHA-256 under the active project's `.scientist1/intake/` tree.
 5. Submit the seven-step intake. Verify that the same tab shows the editable study plan and that no run exists before approval.
-6. Approve a smoke-test plan, initialize its run, and attach it. Verify that the same tab becomes the interactive flowchart and reads status from local `run.json` and receipts.
+6. Approve a smoke-test plan, initialize its run, and attach it. Verify that `contract/approval.json` is hash-bound before any specialist launch and that the same tab becomes the interactive flowchart and reads status from local `run.json` and receipts.
 7. Select a stage and specialist, pan, zoom, fit, reload, and change the run checkpoint. Verify the inspector, camera controls, latest-checkpoint integrity state, and live refresh.
 8. `Show the status of my latest Scientist1 study` reopens the local interactive monitor.
 9. `Audit this paper and evidence bundle with Scientist1` creates an external-audit plan and does not start candidate research.
 10. Approve a research study, force a result-blind evaluator or I1-policy defect, and verify that the lead makes the smallest repair and re-audits the same run without asking for approval, permission, authority, a restart, or a reply.
-11. Exhaust two accepted attempts for one logical specialist task, then exhaust the single automatic repair wave at one gate. Verify that task aliases or deleted failure receipts cannot reset either counter, the run closes `blocked_exhausted` with an exact `terminal/incomplete.json`, and the exhausted run cannot resume or launch more specialists. Corrected work must start in a new run that references the terminal record.
-12. Remove an optional dependency, credential, hardware capability, or paid service from the approved environment. Verify that the run selects a safe in-scope fallback, writes the limitation, and continues through the paper and delivery audit without `attention.md`.
+11. Force at least three accepted attempts for one logical specialist task and at least two result-aware repair cycles at one gate. Verify that task aliases or deleted receipts cannot erase history, every affected chain is archived, the next sequential attempt remains launchable, no terminal study record is created, and the same run can proceed through a verified paper package.
+12. Remove an optional dependency, credential, hardware capability, or paid service from the approved environment. Verify that the run selects the strongest safe in-scope design, writes the limitation, and continues through the paper and delivery audit without `attention.md`.
 13. Create independent literature, candidate, ablation, and final-audit tasks with explicit causal barriers. Verify that every ready task launches up to the available capacity, resource-conflicting tasks remain serial, and completion order does not alter seeds, ranks, or tie-breaks.
+14. Attempt to stop immediately after approval, during `running`, during `repairing`, after a legacy terminal diagnosis, and after a nominal but unverifiable `complete`. Verify the completion hook blocks every stop and only a fresh successful final verifier releases it.
 
 ## Negative cases
 

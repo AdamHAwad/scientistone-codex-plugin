@@ -92,7 +92,7 @@ function aggregateVerdicts(verdicts) {
 
 function executionId(binding) {
   const required = ["policy_sha256", "interpreter_sha256", "input_manifest_sha256", "selected_snapshot_sha256", "attempt"];
-  if (!binding || required.some((key) => binding[key] === undefined) || !Number.isInteger(binding.attempt) || binding.attempt < 1) throw new Error("execution binding is incomplete.");
+  if (!binding || required.some((key) => binding[key] === undefined) || !Number.isInteger(binding.attempt) || binding.attempt < 1) throw new Error("execution binding is malformed.");
   for (const key of required.slice(0, 3)) if (typeof binding[key] !== "string" || !/^[a-f0-9]{64}$/.test(binding[key])) throw new Error(`execution binding ${key} must be a SHA-256.`);
   if (binding.selected_snapshot_sha256 !== null && (typeof binding.selected_snapshot_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(binding.selected_snapshot_sha256))) throw new Error("execution binding selected_snapshot_sha256 must be a SHA-256 or null.");
   return createHash("sha256").update(canonical(Object.fromEntries(required.map((key) => [key, binding[key]])))).digest("hex");
@@ -154,7 +154,7 @@ function validatePolicySupport(policy) {
     estimandOptions(metric.estimand);
     if (metric.determinism_class === "deterministic" && metric.comparison_design !== "exact") throw new Error(`deterministic metrics require exact comparison for ${metric.id}.`);
     const repetitions = metric.repetitions;
-    if (!repetitions || !Number.isInteger(repetitions.canonical) || !Number.isInteger(repetitions.audit) || !Number.isInteger(repetitions.valid_required) || !Array.isArray(repetitions.canonical_run_ids) || !Array.isArray(repetitions.audit_run_ids) || repetitions.canonical_run_ids.length !== repetitions.canonical || repetitions.audit_run_ids.length !== repetitions.audit || new Set(repetitions.canonical_run_ids).size !== repetitions.canonical || new Set(repetitions.audit_run_ids).size !== repetitions.audit || [...repetitions.canonical_run_ids, ...repetitions.audit_run_ids].some((id) => typeof id !== "string" || !id)) throw new Error(`I1 policy run identities are incomplete for ${metric.id}.`);
+    if (!repetitions || !Number.isInteger(repetitions.canonical) || !Number.isInteger(repetitions.audit) || !Number.isInteger(repetitions.valid_required) || !Array.isArray(repetitions.canonical_run_ids) || !Array.isArray(repetitions.audit_run_ids) || repetitions.canonical_run_ids.length !== repetitions.canonical || repetitions.audit_run_ids.length !== repetitions.audit || new Set(repetitions.canonical_run_ids).size !== repetitions.canonical || new Set(repetitions.audit_run_ids).size !== repetitions.audit || [...repetitions.canonical_run_ids, ...repetitions.audit_run_ids].some((id) => typeof id !== "string" || !id)) throw new Error(`I1 policy run identities are malformed for ${metric.id}.`);
     if (["exact", "paired"].includes(metric.comparison_design) && repetitions.canonical !== repetitions.audit) throw new Error(`${metric.comparison_design} comparison requires one frozen canonical run per audit run for ${metric.id}.`);
     if (metric.estimand.type === "single_seed" && (repetitions.canonical !== 1 || repetitions.audit !== 1 || repetitions.valid_required !== 1)) throw new Error(`single_seed requires one canonical and one audit run for ${metric.id}.`);
   }
