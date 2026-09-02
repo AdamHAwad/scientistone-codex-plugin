@@ -10,7 +10,7 @@ async function text(relative) {
 
 test("public manifest ships one complete local Codex experience", async () => {
   const manifest = JSON.parse(await text(".codex-plugin/plugin.json"));
-  assert.equal(manifest.version, "1.4.0");
+  assert.equal(manifest.version, "1.5.0");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -227,9 +227,22 @@ test("one approval enforces same-run repair through freshly verified delivery", 
   assert.match(skill, /Do not report completion or end the lead turn until every deliverable required by the plan exists and a fresh final verifier passes/i);
   assert.match(skill, /Attempts are evidence counters, not a stopping budget/i);
   assert.match(skill, /record-repair/);
+  assert.match(skill, /raw\s+`REVISE`\/`FAIL` is a proposal, never rollback authority/i);
+  assert.match(skill, /close-repair/);
   assert.match(intake, /only approval checkpoint/i);
   assert.match(protocol, /Approval grants durable authority for every causal in-scope repair required for\s+verified delivery/i);
   assert.match(roles, /closed essential checklist/i);
+  assert.match(roles, /A raw `REVISE` or `FAIL` is only a proposal/i);
+  assert.match(roles, /finding set and repair scope freeze/i);
   assert.equal("Stop" in hooks.hooks, true);
   assert.match(hooks.hooks.PreToolUse[1].matcher, /wait_for_researcher/);
+});
+
+test("the public 1.5 repair frontier is finite and release-owned", async () => {
+  const checklist = JSON.parse(await text("skills/scientist1/references/gate-checklists.json"));
+  assert.equal(checklist.release, "1.5.0");
+  assert.ok(checklist.review_roles.protocol_auditor.includes("metric_and_decision_rule"));
+  assert.ok(checklist.review_roles.brief_critic.includes("citation_identity_and_support"));
+  assert.equal(new Set(checklist.blocker_classes).size, checklist.blocker_classes.length);
+  assert.deepEqual(checklist.dispositions, ["CONFIRMED_DEFECT", "REVIEWER_FALSE_POSITIVE", "REPAIR_REGRESSION", "MECHANICAL_FAILURE"]);
 });

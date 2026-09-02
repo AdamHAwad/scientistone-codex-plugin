@@ -28,6 +28,34 @@ Attempts and repair cycles are recorded without a terminal ceiling. Pre-result
 contract stabilization is governed by the closed checklist and minimal-delta
 rule; result-aware repair always archives affected evidence before rerunning it.
 
+Every review role uses the finite release-owned rows in
+`gate-checklists.json`. A `REVISE` or `FAIL` proposes a finding; it cannot cause
+rollback. A fresh Repair Adjudicator reproduces the alleged failure, records
+all confirmed blockers at once under stable IDs, records coverage of every row
+in each implicated role's checklist, dismisses false positives, and opens one
+controller-owned docket with exact file-level scope. A new docket requires the
+controller's pending failed-review or checkpoint frontier; an adjudicator
+cannot create work spontaneously. Re-review is closure-only. Pre-existing late
+concerns are nonblocking; only a regression caused by a changed in-scope path
+can enter the active docket. The controller rejects mutations outside the
+scope and forbids phase promotion until the docket closes. Reviewers are
+automatically bound to the repaired paths, and zero-delta closure is rejected.
+The controller also freezes the exact target-phase dependent-regeneration
+tasks. Execute each once. If a dependent has the same role and outputs as a
+required closure reviewer, its one PASS receipt satisfies both obligations;
+never overwrite the output with a duplicative second launch. A deleted scoped
+artifact is represented by the controller-owned absence proof and reviewed as
+an explicit absent post-state.
+The phase-agnostic Checkpoint Reviewer handles only controller-issued
+deterministic failures, including ablation and final delivery; it cannot
+originate a scientific-review frontier. A recurring fingerprint is stable by
+phase, role, checklist row, and artifact. Recurrence requires a different
+procedure bound to genuinely changed approved-input or checkpoint-output
+evidence, never another identical retry, newly worded review prose, or an ad
+hoc role-produced evidence file. Finding-local artifact-state seals survive
+unrelated scientific changes and declared-input padding, while genuinely
+changed controller-authoritative causal evidence preserves recurrence liveness.
+
 The plan lists estimated maximum evaluations and compute implications before
 approval. Valid phase stop reasons are evidence saturation under the stated
 rule, no additional eligible ideas, stable ranking under a plan-defined
@@ -258,8 +286,12 @@ A fresh Brief Writer produces `investigation/brief.md` with exactly three top-le
 
 It includes named baselines, grounded directions, the frozen evaluation
 protocol, risks, open questions, feasibility constraints, and traceable
-references. A fresh Brief Critic reviews it. Writer repair stops at the frozen
-brief-repair limit; record every revision and stop reason.
+references. A fresh Brief Critic reviews it. Writer repair stays inside the
+frozen repair docket: repair only confirmed fingerprints, preserve every
+revision, regenerate only the controller-listed dependents, and close
+immediately when the required review passes. Reuse one PASS receipt when a
+listed dependent is also the required reviewer for the same output. Do not
+invent a retry ceiling or perform another open-ended brief review.
 
 Gate: source cache, search log, literature map, notes, directions,
 `protocol-audit.md`, final brief, bibliography, critic PASS, and receipts are

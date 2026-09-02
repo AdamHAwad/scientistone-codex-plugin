@@ -30,6 +30,11 @@ marketplace version.
 - [ ] Monitor reads verified local run files and supports pan, zoom, fit, stage selection, specialist details, and live refresh
 - [ ] Approval is hash-bound before the first launch, repair incidents remain
       nonterminal, and repeated repairs continue the same run to the paper
+- [ ] Raw reviewer verdicts cannot authorize rollback; the 1.5 checklist,
+      independent adjudicator, frozen docket, exact-delta closure, regression
+      provenance, artifact-local seals, authoritative recurrence, ordered
+      migration-frontier disposition, dependent regeneration, overlap reuse,
+      and deletion absence-proof tests all pass
 - [ ] A surface that cannot start the MCP or show the built-in browser uses the text setup without claiming browser support
 - [ ] macOS, Windows, and clean-profile launcher paths are tested or explicitly marked unverified
 

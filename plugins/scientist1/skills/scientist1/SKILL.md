@@ -108,6 +108,34 @@ reviewer when judgment was affected, and continue until the final verifier
 passes. Pre-result contract stabilization stays a short closed-checklist pass:
 optional hardening and speculative improvements never create work.
 
+All review-driven repair uses the 1.5 convergence controller. A raw
+`REVISE`/`FAIL` is a proposal, never rollback authority. Launch one fresh
+Repair Adjudicator against `references/gate-checklists.json`; it either
+dismisses unsupported findings or records every confirmed blocker under a
+stable checklist ID in one finite `record-repair` proposal, records every
+reviewed row, and binds each defect to an artifact, locator, expected state,
+and observed state. A new proposal must consume the controller's pending
+failed-review/checkpoint frontier. The controller archives the adjudication
+authority and freezes the semantic fingerprints, exact file-level repair
+scope, target-phase dependent-regeneration set, and required reviewers. While
+that docket is active, do not rerun a whole phase or add a pre-existing
+concern. A finding dismissed or checklist-sealed against unchanged artifact
+state stays sealed unless genuinely changed controller-authoritative causal
+evidence supports a new strategy; unrelated files and reviewer input padding
+do not count. A later blocker is actionable only when an exact
+changed path inside the docket proves that the repair introduced it. A
+controller checkpoint rejection must use only the phase-agnostic
+Checkpoint Reviewer and its deterministic checklist row; that role can close a
+machine failure in any phase but cannot originate a scientific finding. Close
+the docket only after the bound reviewers read the repaired paths;
+zero-delta closure is invalid. Regenerate every docket-listed dependent once;
+when that regeneration is also a required closure review with the same
+role/output, launch it once and reuse that one PASS receipt for both
+obligations. Then checkpoint. If a fingerprint recurs, change the causal
+strategy and bind genuinely changed approved-input or checkpoint-output
+evidence instead of repeating the same action; an ad hoc role output cannot
+mint recurrence authority. Recurrence never ends the study.
+
 After approval, when native goal tools are available, create one unbudgeted
 goal for the initialized run whose objective is the freshly verified paper and
 delivery package. The saved ledger remains authoritative. The goal can complete
@@ -128,7 +156,11 @@ Do not retrofit active schemas into a 1.2 run. Make the smallest
 evidence-preserving repair allowed by the frozen 1.2 contract and keep
 orchestrating the same run through its verified paper delivery. A legacy
 attention/failed value is a repair signal, never permission to end the lead
-turn. New studies always use 1.4.
+turn. New studies always use 1.5. For an active schema-2/3 run, invoke
+`coe.mjs migrate-convergence <run>` once before further repair work; preserve
+its historical incidents and resolve its ordered per-phase frontiers once.
+When rollback invalidates a later frontier, retain the controller's immutable
+supersession record instead of restarting or replaying prior reviews.
 
 ## Create the run
 
@@ -232,7 +264,15 @@ optional read-only dry run for diagnosing a likely failure; it is never a
 required second validation. On resume, verify saved state and continue from
 the first invalid or unfinished phase.
 
-Retry only the smallest failed work package and preserve every failed artifact. Use a fresh specialist when independence or scientific judgment was affected. Classify failures before retrying: transient dispatch/transport, validator repair, missing requirement, or unavailable tool/route. Record nontrivial failures with `coe.mjs record-repair`; then repair and continue the same run.
+Retry only the smallest failed work package and preserve every failed artifact. Use a fresh specialist when independence or scientific judgment was affected. Classify failures before retrying: transient dispatch/transport, validator repair, missing requirement, or unavailable tool/route. For 1.5 review-driven failures, first produce one Repair-Adjudicator-owned schema-2 proposal, then call `coe.mjs record-repair`. Repair only the frozen paths, run only the required closure reviewers, and call `coe.mjs close-repair` before checkpointing. A deterministic checkpoint repair is an exact-scope correction without external retrieval; it carries no semantic-equivalence claim and still requires the full docket-bound closure review.
+
+The active docket's `dependent_regeneration` list is exhaustive for that
+repair. Run each listed task exactly once with its frozen logical name, inputs,
+outputs, and source authority. If one listed task has the same role and output
+as a required closure reviewer, use its single PASS receipt in the closure;
+do not launch a second reviewer that overwrites the same output. For an
+intentional scoped deletion, bind the controller-created absence proof rather
+than inventing a placeholder artifact.
 
 - For a result-blind defect, revise the execution contract in the same run, record the structured reason, and send the revised contract to a fresh Contract Auditor.
 - For a result-aware defect in the scientific contract, use `revise-contract` with `post_result_guard: "invalidate_and_rerun"`. The CoE archives the old contract and its dependent successors, increments the contract revision, and returns the same run to contract review. Never tune a policy or evaluator to rescue an observed result.

@@ -155,6 +155,23 @@ export function stopDecision(event, options = {}) {
     const detail = String(verified?.stderr || verified?.error?.message || "final verification failed").trim().split("\n")[0].slice(0, 600);
     return continuation(run, `The nominal completion is not valid yet: ${detail}`);
   }
+  let runConfig = null;
+  try { runConfig = JSON.parse(fs.readFileSync(path.join(run, "contract", "run-config.json"), "utf8")); } catch {}
+  if ([2, 3].includes(runConfig?.schema_version) && !record.convergence_control) {
+    return continuation(run, "The next executable transition is mandatory Scientist1 1.5 convergence migration: run `coe.mjs migrate-convergence` now, then adjudicate each controller-ordered frozen frontier once before resuming scientific work.");
+  }
+  if (record.pending_adjudication && !record.active_repair) {
+    return continuation(run, `The next causal transition is independent adjudication of ${record.pending_adjudication.path}: launch one Repair Adjudicator, classify the complete source review against the frozen 1.5 checklist, then either dismiss false positives or open one finite repair docket. Do not rerun the same reviewer first.`);
+  }
+  if (record.active_repair) {
+    const docket = record.active_repair;
+    const rollback = record.checkpoints?.[docket.target_phase]
+      ? docket.target_phase === "contract"
+        ? `First run docket-bound revise-contract with ${docket.incident.path}.`
+        : `First run docket-bound invalidate for ${docket.target_phase} with ${docket.incident.path}.`
+      : "The target phase is not checkpointed, so repair it in place without rollback.";
+    return continuation(run, `The next causal transition is repair docket ${docket.docket_id}: ${rollback} Change only ${JSON.stringify(docket.repair_scope)}, regenerate each controller-derived stale dependent exactly once ${JSON.stringify((docket.dependent_regeneration ?? []).map((item) => item.logical_task_name))}, run only ${JSON.stringify(docket.required_review_roles)} against frozen fingerprints ${JSON.stringify(docket.finding_fingerprints)}, and reuse one PASS receipt when a dependent is also the same role/output closure reviewer. Close the exact delta, then checkpoint ${docket.target_phase}. Do not add pre-existing concerns, duplicate an overlapping reviewer, or repeat a whole-phase review.`);
+  }
   const legacyTerminal = record.state === ["blocked", "exhausted"].join("_");
   return continuation(run, legacyTerminal ? "Convert the preserved legacy terminal diagnosis with `coe.mjs resume-repair`, then continue from the repaired gate." : `The saved run is ${JSON.stringify(record.state)} at phase ${JSON.stringify(record.phase)}.`);
 }

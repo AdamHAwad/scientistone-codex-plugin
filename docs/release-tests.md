@@ -37,6 +37,22 @@ trace, and result. Save a screen recording when visual behavior matters.
 12. Remove an optional dependency, credential, hardware capability, or paid service from the approved environment. Verify that the run selects the strongest safe in-scope design, writes the limitation, and continues through the paper and delivery audit without `attention.md`.
 13. Create independent literature, candidate, ablation, and final-audit tasks with explicit causal barriers. Verify that every ready task launches up to the available capacity, resource-conflicting tasks remain serial, and completion order does not alter seeds, ranks, or tie-breaks.
 14. Attempt to stop immediately after approval, during `running`, during `repairing`, after a legacy terminal diagnosis, and after a nominal but unverifiable `complete`. Verify the completion hook blocks every stop and only a fresh successful final verifier releases it.
+15. Submit a raw `REVISE`/`FAIL`, an unsupported finding, and a valid independently adjudicated finding. Verify only the confirmed stable checklist finding can open rollback authority, while the false positive is immutably dismissed.
+16. During a repair, try to add a pre-existing blocker, change an undeclared scientific file, repeat the same fingerprint with the same strategy, and report a regression from an unchanged path. Verify all four fail closed. Then bind the required passing reviewers, close the exact delta, checkpoint the phase, and finish the paper.
+17. Migrate an active 1.4 repair with outstanding findings in multiple phases.
+    Verify its receipts, incidents, invalidation history, and scientific
+    artifacts are unchanged; one 1.5 checklist and an ordered per-phase
+    frontier queue are added; and an earlier rollback immutably supersedes
+    every now-invalid later frontier without losing or duplicating one.
+18. After dismissing or closing a finding, change an unrelated file and pad a
+    reviewer launch with that file. Verify the same or newly relabeled finding
+    cannot reopen. Then change a checkpoint-authoritative causal input,
+    checkpoint it, and verify a materially changed strategy can reopen and
+    close the recurring exact fingerprint.
+19. Delete an exact repair-scope artifact that a frozen dependent reviewer had
+    read. Verify the launch replaces the missing input with the controller's
+    exact absence proof, one PASS receipt satisfies both regeneration and
+    review, and closure archives the absent post-state without deadlock.
 
 ## Negative cases
 

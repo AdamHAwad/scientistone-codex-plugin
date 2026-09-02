@@ -204,9 +204,13 @@ The ledger utility creates this record:
     "canonical_repetitions": 3,
     "audit_panel_size": 3
   },
-  "orchestration": {"task_attempt_policy": "repair_until_pass", "repair_gate_policy": "invalidate_and_continue", "completion_condition": "fresh_verified_delivery"},
+  "orchestration": {"task_attempt_policy": "repair_until_pass", "repair_gate_policy": "invalidate_and_continue", "completion_condition": "fresh_verified_delivery", "review_frontier_policy": "frozen_release_checklist", "rollback_policy": "independent_adjudication_only", "repair_scope_policy": "exact_delta", "recurrence_policy": "causal_strategy_change"},
   "repair_waves": {},
   "repair_incidents": [],
+  "convergence_control": {"schema_version": 1, "release": "1.5.0", "checklist": {"path": "contract/control-plane/gate-checklists.json", "sha256": "<sha256>"}, "migrated_from": null},
+  "pending_adjudication": null,
+  "active_repair": null,
+  "repair_closures": [],
   "created_at": "2026-08-17T15:30:00.000Z",
   "updated_at": "2026-08-17T15:30:00.000Z",
   "state": "running",
@@ -228,7 +232,7 @@ The ledger utility creates this record:
 }
 ```
 
-Allowed states for a 1.4 run are `running`, `repairing`, and `complete`.
+Allowed states for an active 1.5 run are `running`, `repairing`, and `complete`.
 Research phases are `contract`, `investigation`, `discovery`,
 `selection`, `ablation`, `writing`, `verification`, `audit`, `complete`.
 External-audit mode uses `contract`, `audit`, `complete`.
@@ -245,9 +249,16 @@ history. Result-blind contract stabilization before candidate evidence does not
 increment `repair_waves.contract`; each revision remains archived and hash-bound.
 No count can terminate an approved study.
 
-There is no post-approval pause/attention state in a 1.4 run. Use
-`record-repair` to anchor a nontrivial operational failure and its required next
-action, then continue the same run. Checkpoint is the
+There is no post-approval pause/attention state in a 1.5 run. Review findings
+first enter `pending_adjudication`. A fresh Repair Adjudicator classifies the
+complete finding set against the frozen checklist. `record-repair` either
+records an immutable false-positive dismissal or opens one `active_repair`
+docket with stable fingerprints, exact file scope, and required reviewers.
+`close-repair` compares the live scientific tree with the docket baseline,
+requires the docket-bound passing receipts, anchors the closure, and clears the
+docket. Deterministic checkpoint rejections in any phase bind only the
+phase-agnostic Checkpoint Reviewer; its control-path review cannot create a
+scientific finding. Checkpoint is the
 only command that advances a verified phase or marks completion. A temporary
 `pending_checkpoint` journal makes an interrupted promotion retryable; retry the
 same checkpoint command and the utility removes the unanchored candidate before
@@ -265,13 +276,55 @@ The approval record is bound exactly once before any specialist launch:
 <resolved-node-path> <scientist1-skill-root>/scripts/coe.mjs bind-approval <run> <draft-id> <approved-at> <execution-authority>
 ```
 
-The browser MCP calls this command from `attach_run_monitor`. A repair incident
-uses schema 1 fields `failure_class`, `logical_task_name`, `summary`,
-`evidence_paths`, and `required_action`:
+The browser MCP calls this command from `attach_run_monitor`. Migrate an active
+1.3/1.4 repair in place, preserving all prior evidence, before new repair work:
+
+```sh
+<resolved-node-path> <scientist1-skill-root>/scripts/coe.mjs migrate-convergence <run>
+```
+
+A 1.5 repair proposal uses schema 2 and is owned by a passing
+`repair_adjudicator` receipt. It declares `disposition`, `target_phase`,
+`source_review`, its hash-bound non-passing `source_review_receipt` when the
+frontier came from a reviewer, `adjudicator_receipt`, every closed-checklist
+finding, `required_review_roles`, complete `reviewed_check_ids`, an optional
+changed causal `strategy`, and `required_action`. Each finding declares
+`review_role`, stable `check_id`, allowed `blocker_class`, exact
+`artifact_path` and `locator`, expected and observed state, exact
+`evidence_paths`, exact file-level `repair_paths`, and
+`introduced_by_paths`. The controller derives and archives a finding-local
+state fingerprint from the exact artifact. Unrelated manifest changes,
+uncheckpointed evidence files, and declared-input padding cannot reopen that
+finding; only an artifact delta or genuinely changed controller-authoritative
+causal strategy can do so. The
+controller accepts a new proposal only against its
+own pending checkpoint/reviewer frontier, snapshots every authority artifact
+under `repairs/evidence/`, and seals all rows for that role and evidence epoch.
+Then open or dismiss it with:
 
 ```sh
 <resolved-node-path> <scientist1-skill-root>/scripts/coe.mjs record-repair <run> <repair-incident.json>
 ```
+
+Close an active docket with a Repair-Adjudicator-owned schema-1 proposal that
+binds the docket ID, every frozen fingerprint, and the required passing review
+receipts:
+
+```sh
+<resolved-node-path> <scientist1-skill-root>/scripts/coe.mjs close-repair <run> <repair-closure-proposal.json>
+```
+
+Raw reviewer prose cannot authorize `invalidate`. The invalidation reason must
+be the controller-owned active incident. A re-audit launch is hash-bound to the
+docket semantic digest and automatically reads every live repaired path. A
+confirmed docket cannot close with zero scoped changes, an unbound review, or
+mutation outside its exact scope. Its closure archives explicit present/absent
+post-state, any absence proof, every target-phase dependent regeneration, and
+the post-repair scientific-state seal. One PASS receipt is reused when its
+frozen dependent task is also the required reviewer for the same role/output;
+a second overwriting launch is invalid procedure. Automatic `revise-contract` likewise accepts
+only the active contract incident; an independently supplied, hash-bound
+researcher amendment remains a separate explicit path.
 
 The supported outcome and feedback operations are:
 
@@ -579,7 +632,7 @@ Every specialist writes a unique `role-receipts/<agent-task>.json` named by the 
   "role_contract_sha256": "<hash>",
   "assignment_sha256": "<hash>",
   "task_brief_sha256": "<hash>",
-  "gate_schema_version": 1,
+  "gate_schema_version": 2,
   "model": "<actual model id or declared-by-role>",
   "reasoning_effort": "<actual effort or declared-by-role>",
   "fork_turns": "none",
@@ -666,7 +719,7 @@ metadata:
   "reasoning_effort": "<actual effort>",
   "model_routing_sha256": "<hash>",
   "role_contract_sha256": "<hash>",
-  "gate_schema_version": 1,
+  "gate_schema_version": 2,
   "task_brief": {
     "objective": "Evaluate the frozen selected snapshot.",
     "context": "Selection requires one canonical result.",

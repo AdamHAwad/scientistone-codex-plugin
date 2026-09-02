@@ -37,6 +37,7 @@ const activeLivenessFiles = [
   "plugins/scientist1/skills/scientist1/SKILL.md",
   "plugins/scientist1/skills/scientist1/references/artifacts.md",
   "plugins/scientist1/skills/scientist1/references/doctrine.md",
+  "plugins/scientist1/skills/scientist1/references/gate-checklists.json",
   "plugins/scientist1/skills/scientist1/references/i1-verification.md",
   "plugins/scientist1/skills/scientist1/references/intake.md",
   "plugins/scientist1/skills/scientist1/references/protocol.md",
@@ -104,6 +105,10 @@ for (const relative of activeLivenessFiles) {
 const livenessRequirements = [
   ["plugins/scientist1/skills/scientist1/scripts/coe.mjs", /task_attempt_policy:\s*"repair_until_pass"/],
   ["plugins/scientist1/skills/scientist1/scripts/coe.mjs", /completion_condition:\s*"fresh_verified_delivery"/],
+  ["plugins/scientist1/skills/scientist1/scripts/coe.mjs", /rollback_policy:\s*"independent_adjudication_only"/],
+  ["plugins/scientist1/skills/scientist1/scripts/coe.mjs", /function closeRepair/],
+  ["plugins/scientist1/skills/scientist1/references/gate-checklists.json", /"release":\s*"1\.5\.0"/],
+  ["plugins/scientist1/skills/scientist1/references/roles.md", /A raw `REVISE` or `FAIL` is only a proposal/i],
   ["plugins/scientist1/hooks/hooks.json", /enforce-study-completion\.mjs/],
   ["plugins/scientist1/hooks/enforce-study-completion.mjs", /finalVerification/],
   ["plugins/scientist1/mcp/server.mjs", /bind-approval/],
@@ -119,8 +124,8 @@ for (const [relative, pattern] of livenessRequirements) {
 
 const manifestPath = path.join(root, "plugins/scientist1/.codex-plugin/plugin.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-if (manifest.version !== "1.4.0" || manifest.license !== "Apache-2.0") {
-  findings.push({ file: "plugins/scientist1/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.4.0 and Apache-2.0" });
+if (manifest.version !== "1.5.0" || manifest.license !== "Apache-2.0") {
+  findings.push({ file: "plugins/scientist1/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.5.0 and Apache-2.0" });
 }
 
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
@@ -149,6 +154,7 @@ const requiredRuntimeFiles = [
   "plugins/scientist1/hooks/enforce-study-completion.mjs",
   "plugins/scientist1/skills/scientist1/references/legacy-model-policy-1.2.0.json",
   "plugins/scientist1/skills/scientist1/references/legacy-roles-1.2.0.md",
+  "plugins/scientist1/skills/scientist1/references/gate-checklists.json",
   "plugins/scientist1/skills/scientist1/scripts/capacity-preflight.mjs",
   "plugins/scientist1/skills/scientist1/scripts/i1-interpreter.mjs",
   "plugins/scientist1/skills/scientist1/scripts/legacy-coe-1.2.0.mjs",

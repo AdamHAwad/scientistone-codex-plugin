@@ -20,6 +20,22 @@ const LAUNCH_GRANT_TTL_MS = 10 * 60 * 1000;
 const LIVE_CATALOG_TTL_MS = 15 * 60 * 1000;
 const TIERS = new Set(["strong", "efficient"]);
 const STRUCTURED_TIER_FIELDS = ["tier", "model_tier", "semantic_tier", "performance_tier", "capability_tier"];
+const REPAIR_REVIEW_OUTPUTS = Object.freeze({
+  checkpoint_reviewer: ["repairs/reviews/checkpoint"],
+  contract_auditor: ["contract/audit.md"],
+  protocol_auditor: ["investigation/protocol-audit.md"],
+  brief_critic: ["investigation/critic.md"],
+  idea_critic: ["discovery/idea-critique.jsonl"],
+  legitimacy_auditor: ["legitimacy-audit.md"],
+  selection_auditor: ["selection/selection-audit.md"],
+  paper_critic: ["paper/grounding-report.json", "paper/critic.md"],
+  claim_verifier: ["paper/claims.jsonl", "paper/verification.md", "paper/provenance.jsonl", "paper/paper.tex"],
+  i1_score_auditor: ["audit/i1.json", "audit/i1"],
+  i2_judge: ["audit/i2"],
+  i3_reference_auditor: ["audit/i3.json"],
+  i4_judge: ["audit/i4"],
+  claim_provenance_auditor: ["audit/claim-provenance.json"],
+});
 const TIER_WORDS = {
   strong: ["strong", "frontier", "flagship", "most capable", "most advanced", "state of the art", "state-of-the-art"],
   efficient: ["efficient", "affordable", "fast", "low cost", "low-cost", "cost effective", "cost-effective", "lightweight", "high volume", "high-volume"],
@@ -35,6 +51,15 @@ function canonical(value) {
 
 function sha256(value) {
   return createHash("sha256").update(typeof value === "string" ? value : canonical(value)).digest("hex");
+}
+
+function pathCoveredBy(allowed, observed) {
+  return allowed.some((prefix) => observed === prefix || observed.startsWith(`${prefix}/`));
+}
+
+function repairReviewOutputAllowed(role, observed) {
+  if (role === "legitimacy_auditor") return /^discovery\/nodes\/[^/]+\/legitimacy-audit\.md$/.test(observed);
+  return pathCoveredBy(REPAIR_REVIEW_OUTPUTS[role] ?? [], observed);
 }
 
 function addField(hash, tag, value) {
@@ -302,6 +327,11 @@ function legacyRun(run) {
   return config.schema_version === 1 && config.orchestration === undefined;
 }
 
+function convergenceMigrationRequired(run, runRecord) {
+  const config = readJson(path.join(run, "contract", "run-config.json"));
+  return [2, 3].includes(config.schema_version) && !runRecord.convergence_control;
+}
+
 function validateCurrentAvailability(record, catalog) {
   const current = normalizeCatalog(catalog);
   for (const [tier, selected] of Object.entries(record.tiers)) {
@@ -393,6 +423,18 @@ function bindArtifact(run, relative) {
   return { path: clean, sha256: hashAt(target, clean) };
 }
 
+function ensureRepairAbsenceProof(run, docket) {
+  const absentPaths = docket.repair_scope.filter((relative) => !fs.existsSync(path.join(run, relative))).sort();
+  if (!absentPaths.length) return null;
+  const relative = `repairs/absence-proofs/${docket.semantic_digest}.json`;
+  const proof = { schema_version: 1, docket_id: docket.docket_id, semantic_digest: docket.semantic_digest, absent_paths: absentPaths };
+  const target = path.join(run, relative);
+  if (fs.existsSync(target)) {
+    if (canonical(readJson(target)) !== canonical(proof)) throw Object.assign(new Error("The controller-owned repair absence proof differs from the current exact absent scope."), { code: "S1_REPAIR_ABSENCE_PROOF_DRIFT" });
+  } else atomicJson(target, proof, true);
+  return relative;
+}
+
 function currentRunBinding(run) {
   const record = readJson(path.join(run, "run.json"));
   if (!Number.isInteger(record.contract_revision) || !Number.isInteger(record.charter_revision) || !record.checkpoints || typeof record.checkpoints !== "object") throw new Error("Scientist1 run revisions or checkpoint anchors are malformed.");
@@ -437,13 +479,13 @@ function taskBrief(value, declaredInputs) {
   return { objective: value.objective.trim(), context: value.context.trim(), acceptance_gate: value.acceptance_gate.trim(), constraints: value.constraints.trim(), upstream_summary: upstream };
 }
 
-function taskWorkKey(role, declaredOutputs, contractRevision, charterRevision) {
-  return createHash("sha256").update(canonical({ contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...declaredOutputs].sort() })).digest("hex");
+function taskWorkKey(role, declaredOutputs, contractRevision, charterRevision, repairDocketId = null, repairSemanticDigest = null) {
+  return createHash("sha256").update(canonical({ contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...declaredOutputs].sort(), ...(repairDocketId ? { repair_docket_id: repairDocketId, repair_semantic_digest: repairSemanticDigest } : {}) })).digest("hex");
 }
 
 function launchWorkKey(launch) {
   if (!launch || typeof launch.role !== "string" || !Array.isArray(launch.declared_outputs)) throw new Error("Scientist1 launch lacks a stable role/output work identity.");
-  const observed = taskWorkKey(launch.role, launch.declared_outputs, launch.contract_revision ?? 1, launch.charter_revision ?? 1);
+  const observed = taskWorkKey(launch.role, launch.declared_outputs, launch.contract_revision ?? 1, launch.charter_revision ?? 1, launch.repair_binding?.docket_id ?? null, launch.repair_binding?.semantic_digest ?? null);
   if (launch.work_key_sha256 !== undefined && launch.work_key_sha256 !== observed) throw new Error("Scientist1 launch work identity does not match its role and exclusive outputs.");
   return observed;
 }
@@ -479,8 +521,9 @@ function acquireIdentityLock(file) {
   throw Object.assign(new Error("Scientist1 work identity is being bound by another live launch; retry this grant preparation."), { code: "S1_IDENTITY_BIND_BUSY" });
 }
 
-function bindWorkIdentity(run, logicalTaskName, workKey, role, declaredOutputs, contractRevision, charterRevision) {
-  const base = path.join(run, "role-attempts", `_revision-${contractRevision}-${charterRevision}`);
+function bindWorkIdentity(run, logicalTaskName, workKey, role, declaredOutputs, contractRevision, charterRevision, repairDocketId = null, repairSemanticDigest = null) {
+  const revisionBase = path.join(run, "role-attempts", `_revision-${contractRevision}-${charterRevision}`);
+  const base = repairDocketId ? path.join(revisionBase, `_repair-${repairDocketId}-${repairSemanticDigest}`) : revisionBase;
   const common = { schema_version: 1, contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...declaredOutputs].sort(), work_key_sha256: workKey };
   const outputs = [...declaredOutputs].sort();
   const overlaps = (left, right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
@@ -523,6 +566,8 @@ function bindWorkIdentity(run, logicalTaskName, workKey, role, declaredOutputs, 
 
 function executedLogicalTaskState(run, workKey, requestedLogicalTaskName) {
   const current = readJson(path.join(run, "run.json"));
+  const currentRepairGeneration = current.active_repair?.semantic_digest ?? null;
+  const inCurrentGeneration = (launch) => currentRepairGeneration === null ? !launch.repair_binding : launch.repair_binding?.semantic_digest === currentRepairGeneration;
   const attempts = new Set();
   const logicalTaskNames = new Set();
   let complete = false;
@@ -550,7 +595,7 @@ function executedLogicalTaskState(run, workKey, requestedLogicalTaskName) {
         const launch = readJson(launchFile);
         const observedWorkKey = launchWorkKey(launch);
         if (record.schema_version === 2 && record.work_key_sha256 !== observedWorkKey) throw new Error(`Accepted attempt ${record.attempt} for ${logicalTaskName} has a mismatched work identity.`);
-        if (logicalTaskName === requestedLogicalTaskName && observedWorkKey !== workKey && (launch.contract_revision ?? 1) === current.contract_revision && (launch.charter_revision ?? 1) === current.charter_revision) throw Object.assign(new Error(`Logical task ${logicalTaskName} is already bound to different role/output work in this frozen revision.`), { code: "S1_LOGICAL_TASK_REBOUND" });
+        if (logicalTaskName === requestedLogicalTaskName && observedWorkKey !== workKey && inCurrentGeneration(launch) && (launch.contract_revision ?? 1) === current.contract_revision && (launch.charter_revision ?? 1) === current.charter_revision) throw Object.assign(new Error(`Logical task ${logicalTaskName} is already bound to different role/output work in this frozen revision and repair generation.`), { code: "S1_LOGICAL_TASK_REBOUND" });
         if (observedWorkKey !== workKey) continue;
         if ((launch.logical_task_name ?? path.basename(launchRelative, ".json")) !== logicalTaskName || launch.attempt !== record.attempt || attempts.has(record.attempt)) throw new Error(`Accepted attempts for work ${workKey} have duplicate or inconsistent attempt numbers.`);
         logicalTaskNames.add(logicalTaskName);
@@ -564,7 +609,7 @@ function executedLogicalTaskState(run, workKey, requestedLogicalTaskName) {
     if (!fs.existsSync(launchFile)) continue;
     const launch = readJson(launchFile);
     const receiptLogicalTaskName = launch.logical_task_name ?? path.basename(name, ".json");
-    if (receiptLogicalTaskName === requestedLogicalTaskName && launchWorkKey(launch) !== workKey && (launch.contract_revision ?? 1) === current.contract_revision && (launch.charter_revision ?? 1) === current.charter_revision) throw Object.assign(new Error(`Logical task ${receiptLogicalTaskName} is already bound to different role/output work in this frozen revision.`), { code: "S1_LOGICAL_TASK_REBOUND" });
+    if (receiptLogicalTaskName === requestedLogicalTaskName && launchWorkKey(launch) !== workKey && inCurrentGeneration(launch) && (launch.contract_revision ?? 1) === current.contract_revision && (launch.charter_revision ?? 1) === current.charter_revision) throw Object.assign(new Error(`Logical task ${receiptLogicalTaskName} is already bound to different role/output work in this frozen revision and repair generation.`), { code: "S1_LOGICAL_TASK_REBOUND" });
     if (launchWorkKey(launch) !== workKey) continue;
     const logicalTaskName = receiptLogicalTaskName;
     if (!Number.isInteger(launch.attempt) || launch.attempt < 1) throw new Error(`Executed receipt for work ${workKey} has an invalid attempt number.`);
@@ -613,7 +658,7 @@ function rolePrompt(role, roleContractFile = ROLE_CONTRACT_FILE) {
   return { envelope, card };
 }
 
-function canonicalAssignment({ role, run, launchRelative, declaredInputs, inputArtifacts, declaredOutputs, allowedExternalSources, brief, attempt, logicalTaskName, legacy = false }) {
+function canonicalAssignment({ role, run, launchRelative, declaredInputs, inputArtifacts, declaredOutputs, allowedExternalSources, brief, attempt, logicalTaskName, repairBinding = null, legacy = false }) {
   const prompt = rolePrompt(role, legacy ? LEGACY_ROLE_CONTRACT_FILE : ROLE_CONTRACT_FILE);
   const binding = {
     run_path: run,
@@ -626,6 +671,7 @@ function canonicalAssignment({ role, run, launchRelative, declaredInputs, inputA
     declared_outputs: declaredOutputs,
     allowed_external_sources: allowedExternalSources,
     task_brief: brief,
+    ...(repairBinding ? { repair_binding: repairBinding } : {}),
   };
   const closing = legacy ? "Use saved artifacts as authority. Follow the frozen Scientist1 1.2 receipt contract in the role card." : "Use saved artifacts as authority. Return the compact handoff in your role receipt.";
   return `${prompt.envelope}\n\nRole card\n${prompt.card}\n\nBinding task brief\n${JSON.stringify(binding, null, 2)}\n\n${closing}`;
@@ -637,6 +683,7 @@ async function prepareRoleLaunch(args, options = {}) {
   const runRecord = readJson(path.join(run, "run.json"));
   const legacy = legacyRun(run);
   if (!["running", "repairing"].includes(runRecord.state)) throw Object.assign(new Error(`Scientist1 specialists can launch only while the run is running or repairing; received ${runRecord.state}.`), { code: "S1_RUN_TERMINAL_OR_INACTIVE" });
+  if (!legacy && convergenceMigrationRequired(run, runRecord)) throw Object.assign(new Error("This active Scientist1 1.3/1.4 run must execute migrate-convergence before any further specialist launch."), { code: "S1_CONVERGENCE_MIGRATION_REQUIRED" });
   if (!legacy && (typeof runRecord.approval_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(runRecord.approval_sha256) || !fs.existsSync(path.join(run, "contract", "approval.json")))) throw Object.assign(new Error("Scientist1 cannot launch research work before durable approval is bound to the run."), { code: "S1_APPROVAL_NOT_BOUND" });
   if (runRecord.pending_checkpoint) throw Object.assign(new Error(`Scientist1 cannot launch a specialist while the ${runRecord.pending_checkpoint.phase} checkpoint is pending recovery.`), { code: "S1_CHECKPOINT_PENDING" });
   if (runRecord.pending_invalidation) throw Object.assign(new Error("Scientist1 cannot launch a specialist while an invalidation is pending recovery."), { code: "S1_INVALIDATION_PENDING" });
@@ -648,13 +695,54 @@ async function prepareRoleLaunch(args, options = {}) {
   if (typeof args.role !== "string" || !args.role) throw new Error("role is required.");
   const routing = await ensureRunRouting(run, options);
   const runtime = expectedRoleRuntime(run, args.role);
-  const declaredInputs = stringArray(args.declared_inputs, "declared_inputs").map((value) => normalizeRolePath(run, value, "declared_inputs"));
+  let declaredInputs = stringArray(args.declared_inputs, "declared_inputs").map((value) => normalizeRolePath(run, value, "declared_inputs"));
   const declaredOutputs = stringArray(args.declared_outputs, "declared_outputs").map((value) => normalizeRolePath(run, value, "declared_outputs"));
   if (!declaredOutputs.length) throw new Error("declared_outputs must not be empty.");
   const runBinding = currentRunBinding(run);
-  const workKey = legacy ? null : taskWorkKey(args.role, declaredOutputs, runBinding.contract_revision, runBinding.charter_revision);
-  if (!legacy) bindWorkIdentity(run, logicalTaskName, workKey, args.role, declaredOutputs, runBinding.contract_revision, runBinding.charter_revision);
+  if (!legacy && runRecord.convergence_control && runRecord.pending_adjudication && !runRecord.active_repair && args.role !== "repair_adjudicator") throw Object.assign(new Error("A pending review or machine rejection must be independently adjudicated before more scientific work launches."), { code: "S1_REPAIR_ADJUDICATION_REQUIRED" });
+  if (!legacy && runRecord.convergence_control && args.role === "repair_adjudicator" && !runRecord.pending_adjudication && !runRecord.active_repair) throw Object.assign(new Error("A Repair Adjudicator can launch only for a controller-issued pending adjudication or active repair docket."), { code: "S1_REPAIR_ADJUDICATION_NOT_PENDING" });
+  let repairBinding = null;
+  let dependentRegeneration = null;
+  if (!legacy && runRecord.active_repair) {
+    const docket = runRecord.active_repair;
+    if (docket.requires_invalidation && runRecord.checkpoints?.[docket.target_phase]) throw Object.assign(new Error(`Repair docket ${docket.docket_id} targets checkpointed phase ${docket.target_phase}; run the docket-bound invalidation or contract revision before launching repair work.`), { code: "S1_REPAIR_INVALIDATION_REQUIRED" });
+    repairBinding = { docket_id: docket.docket_id, semantic_digest: docket.semantic_digest, incident_path: docket.incident.path, incident_sha256: docket.incident.sha256, repair_mode: docket.repair_mode, finding_fingerprints: docket.finding_fingerprints, repair_scope: docket.repair_scope, scope_baseline: docket.scope_baseline, controller_delta: docket.controller_delta, dependent_regeneration: docket.dependent_regeneration ?? [], baseline: docket.baseline.filter((item) => docket.repair_scope.includes(item.path)) };
+    const overlappingDependent = (docket.dependent_regeneration ?? []).find((item) => item.role === args.role && canonical([...item.declared_outputs].sort()) === canonical([...declaredOutputs].sort())) ?? null;
+    if (docket.required_review_roles.includes(args.role) && overlappingDependent && logicalTaskName !== overlappingDependent.logical_task_name) throw Object.assign(new Error(`Closure review ${args.role} overlaps dependent ${overlappingDependent.logical_task_name}; launch that frozen logical task once and reuse its PASS receipt for both obligations.`), { code: "S1_REPAIR_OVERLAP_REUSE_REQUIRED" });
+    dependentRegeneration = (docket.dependent_regeneration ?? []).find((item) => item.logical_task_name === logicalTaskName && item.role === args.role && canonical([...item.declared_outputs].sort()) === canonical([...declaredOutputs].sort())) ?? null;
+    let deletedDependentInputs = [];
+    if (dependentRegeneration) {
+      deletedDependentInputs = dependentRegeneration.declared_inputs.filter((relative) => !fs.existsSync(path.join(run, relative)));
+      if (deletedDependentInputs.some((relative) => !docket.repair_scope.includes(relative))) throw Object.assign(new Error(`Dependent regeneration ${logicalTaskName} lost a frozen input outside the exact repair scope.`), { code: "S1_REPAIR_DEPENDENT_INPUT_MISSING" });
+      const readableDependentInputs = dependentRegeneration.declared_inputs.filter((relative) => !deletedDependentInputs.includes(relative));
+      const suppliedReadableInputs = declaredInputs.filter((relative) => !deletedDependentInputs.includes(relative));
+      if (canonical([...suppliedReadableInputs].sort()) !== canonical([...readableDependentInputs].sort()) || declaredInputs.some((relative) => !dependentRegeneration.declared_inputs.includes(relative))) throw Object.assign(new Error(`Dependent regeneration ${logicalTaskName} must preserve its controller-derived readable input path set exactly.`), { code: "S1_REPAIR_DEPENDENT_INPUT_SCOPE" });
+      declaredInputs = readableDependentInputs;
+    }
+    const controlInputs = [docket.incident.path, runRecord.convergence_control.checklist.path];
+    declaredInputs = [...new Set([...declaredInputs, ...controlInputs])];
+    if (docket.required_review_roles.includes(args.role) || args.role === "repair_adjudicator" || deletedDependentInputs.length) {
+      const absenceProof = ensureRepairAbsenceProof(run, docket);
+      const readableScope = docket.required_review_roles.includes(args.role) || args.role === "repair_adjudicator" ? docket.repair_scope.filter((relative) => fs.existsSync(path.join(run, relative))) : [];
+      declaredInputs = [...new Set([...declaredInputs, ...readableScope, ...[absenceProof].filter(Boolean)])];
+    }
+    if (args.role === "repair_adjudicator") {
+      if (declaredOutputs.some((output) => !output.startsWith("repairs/proposals/"))) throw Object.assign(new Error("A docket-bound Repair Adjudicator may write only controller proposal files."), { code: "S1_REPAIR_OUTPUT_SCOPE" });
+    } else if (docket.required_review_roles.includes(args.role)) {
+      const allowed = REPAIR_REVIEW_OUTPUTS[args.role] ?? [];
+      if (!allowed.length || declaredOutputs.some((output) => !repairReviewOutputAllowed(args.role, output))) throw Object.assign(new Error(`Docket closure role ${args.role} may write only its exact review outputs.`), { code: "S1_REPAIR_REVIEW_OUTPUT_SCOPE" });
+    } else if (!dependentRegeneration && declaredOutputs.some((output) => !docket.repair_scope.includes(output))) {
+      throw Object.assign(new Error("Repair work may write only the active docket's frozen repair scope."), { code: "S1_REPAIR_OUTPUT_SCOPE" });
+    }
+  } else if (!legacy && runRecord.convergence_control && args.role === "repair_adjudicator") {
+    const controlInputs = [runRecord.convergence_control.checklist.path, ...(runRecord.pending_adjudication ? [runRecord.pending_adjudication.path] : [])];
+    declaredInputs = [...new Set([...declaredInputs, ...controlInputs])];
+  }
+  const workKey = legacy ? null : taskWorkKey(args.role, declaredOutputs, runBinding.contract_revision, runBinding.charter_revision, repairBinding?.docket_id ?? null, repairBinding?.semantic_digest ?? null);
+  if (!legacy) bindWorkIdentity(run, logicalTaskName, workKey, args.role, declaredOutputs, runBinding.contract_revision, runBinding.charter_revision, repairBinding?.docket_id ?? null, repairBinding?.semantic_digest ?? null);
   const allowedExternalSources = stringArray(args.allowed_external_sources ?? [], "allowed_external_sources");
+  if (dependentRegeneration && repairBinding?.repair_mode !== "deterministic_delta" && canonical([...allowedExternalSources].sort()) !== canonical([...dependentRegeneration.allowed_external_sources].sort())) throw Object.assign(new Error(`Dependent regeneration ${logicalTaskName} must preserve its controller-derived external-source authority exactly.`), { code: "S1_REPAIR_DEPENDENT_SOURCE_SCOPE" });
+  if (repairBinding?.repair_mode === "deterministic_delta" && allowedExternalSources.length) throw Object.assign(new Error("A deterministic checkpoint repair cannot retrieve external evidence; it must correct only the frozen machine-rejected artifact."), { code: "S1_DETERMINISTIC_REPAIR_EXTERNAL_SOURCE" });
   if (!legacy) {
     const taskState = executedLogicalTaskState(run, workKey, logicalTaskName);
     if (taskState.logicalTaskNames.size && !taskState.logicalTaskNames.has(logicalTaskName)) throw Object.assign(new Error(`Logical task name ${logicalTaskName} is an alias for existing role/output work ${[...taskState.logicalTaskNames].sort().join(", ")}; reuse its stable logical name.`), { code: "S1_LOGICAL_TASK_ALIAS" });
@@ -666,7 +754,7 @@ async function prepareRoleLaunch(args, options = {}) {
   const startedAt = new Date().toISOString();
   const launchRelative = `role-launches/${args.task_name}.json`;
   const launchFile = path.join(run, launchRelative);
-  const assignment = canonicalAssignment({ role: args.role, run, launchRelative, declaredInputs, inputArtifacts, declaredOutputs, allowedExternalSources, brief, attempt, logicalTaskName, legacy });
+  const assignment = canonicalAssignment({ role: args.role, run, launchRelative, declaredInputs, inputArtifacts, declaredOutputs, allowedExternalSources, brief, attempt, logicalTaskName, repairBinding, legacy });
   const launch = {
     schema_version: 1,
     task_id: `native-${args.task_name}`,
@@ -683,7 +771,8 @@ async function prepareRoleLaunch(args, options = {}) {
     reasoning_effort: runtime.reasoning_effort,
     model_routing_sha256: routing.routing_sha256,
     role_contract_sha256: createHash("sha256").update(fs.readFileSync(legacy ? LEGACY_ROLE_CONTRACT_FILE : ROLE_CONTRACT_FILE)).digest("hex"),
-    gate_schema_version: 1,
+    gate_schema_version: legacy ? 1 : 2,
+    ...(repairBinding ? { repair_binding: repairBinding } : {}),
     ...(legacy ? {} : { task_brief: brief, task_brief_sha256: sha256(brief) }),
     assignment,
     assignment_sha256: sha256(assignment),
@@ -754,19 +843,23 @@ function consumeLaunchToken(marker, options = {}) {
     const runRecord = readJson(path.join(run, "run.json"));
     const legacy = grant.legacy === true && legacyRun(run);
     if (!["running", "repairing"].includes(runRecord.state)) throw new LaunchAuthorizationError("S1_RUN_TERMINAL_OR_INACTIVE", `Scientist1 specialists can launch only while the run is running or repairing; received ${runRecord.state}.`);
+    if (!legacy && convergenceMigrationRequired(run, runRecord)) throw new LaunchAuthorizationError("S1_CONVERGENCE_MIGRATION_REQUIRED", "This active Scientist1 1.3/1.4 run must execute migrate-convergence before this launch can run.");
     if (!legacy && (typeof runRecord.approval_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(runRecord.approval_sha256) || !fs.existsSync(path.join(run, "contract", "approval.json")))) throw new LaunchAuthorizationError("S1_APPROVAL_NOT_BOUND", "Scientist1 cannot consume a launch before durable approval is bound to the run.");
     if (runRecord.pending_checkpoint) throw new LaunchAuthorizationError("S1_CHECKPOINT_PENDING", `Scientist1 cannot consume a launch while the ${runRecord.pending_checkpoint.phase} checkpoint is pending recovery.`);
     if (runRecord.pending_invalidation) throw new LaunchAuthorizationError("S1_INVALIDATION_PENDING", "Scientist1 cannot consume a launch while an invalidation is pending recovery.");
     const runtimeRecord = readRunRouting(run);
     const launchFile = path.join(run, normalizeRolePath(run, grant.launch_record, "launch_record"));
     const launch = readJson(launchFile);
+    if (!legacy && runRecord.convergence_control && runRecord.pending_adjudication && !runRecord.active_repair && launch.role !== "repair_adjudicator") throw new LaunchAuthorizationError("S1_REPAIR_ADJUDICATION_REQUIRED", "A pending review or machine rejection must be independently adjudicated before this pre-existing grant can run.");
+    if (!legacy && runRecord.convergence_control && launch.role === "repair_adjudicator" && !runRecord.pending_adjudication && !runRecord.active_repair) throw new LaunchAuthorizationError("S1_REPAIR_ADJUDICATION_NOT_PENDING", "This Repair Adjudicator grant no longer has a controller-issued frontier.");
     const runtime = expectedRoleRuntime(run, launch.role);
     const runBinding = currentRunBinding(run);
+    const activeRepairBinding = runRecord.active_repair ? { docket_id: runRecord.active_repair.docket_id, semantic_digest: runRecord.active_repair.semantic_digest, incident_path: runRecord.active_repair.incident.path, incident_sha256: runRecord.active_repair.incident.sha256, repair_mode: runRecord.active_repair.repair_mode, finding_fingerprints: runRecord.active_repair.finding_fingerprints, repair_scope: runRecord.active_repair.repair_scope, scope_baseline: runRecord.active_repair.scope_baseline, controller_delta: runRecord.active_repair.controller_delta, dependent_regeneration: runRecord.active_repair.dependent_regeneration ?? [], baseline: runRecord.active_repair.baseline.filter((item) => runRecord.active_repair.repair_scope.includes(item.path)) } : null;
     const cleanTaskName = path.basename(grant.launch_record, ".json");
     const logicalTaskName = launch.logical_task_name ?? cleanTaskName;
     const workKey = legacy ? null : launchWorkKey(launch);
     const attempt = launch.attempt ?? 1;
-    if (markerRole !== launch.role || launch.task_id !== `native-${cleanTaskName}` || grant.logical_task_name !== logicalTaskName || grant.work_key_sha256 !== workKey || grant.attempt !== attempt || launch.contract_revision !== runBinding.contract_revision || launch.charter_revision !== runBinding.charter_revision || canonical(launch.predecessor) !== canonical(runBinding.predecessor) || launch.fork_turns !== "none" || launch.model_tier !== runtime.tier || launch.model !== runtime.model || launch.reasoning_effort !== runtime.reasoning_effort || launch.model_routing_sha256 !== runtimeRecord.routing_sha256) throw new LaunchAuthorizationError("S1_LAUNCH_POLICY_MISMATCH", "Scientist1 launch authorization does not match the frozen role policy, revision, predecessor, or launch attempt.");
+    if (markerRole !== launch.role || launch.task_id !== `native-${cleanTaskName}` || grant.logical_task_name !== logicalTaskName || grant.work_key_sha256 !== workKey || grant.attempt !== attempt || launch.contract_revision !== runBinding.contract_revision || launch.charter_revision !== runBinding.charter_revision || canonical(launch.predecessor) !== canonical(runBinding.predecessor) || canonical(launch.repair_binding ?? null) !== canonical(activeRepairBinding) || launch.fork_turns !== "none" || launch.model_tier !== runtime.tier || launch.model !== runtime.model || launch.reasoning_effort !== runtime.reasoning_effort || launch.model_routing_sha256 !== runtimeRecord.routing_sha256) throw new LaunchAuthorizationError("S1_LAUNCH_POLICY_MISMATCH", "Scientist1 launch authorization does not match the frozen role policy, repair docket, revision, predecessor, or launch attempt.");
     if (!legacy) {
       const taskState = executedLogicalTaskState(run, workKey, logicalTaskName);
       if (taskState.logicalTaskNames.size && !taskState.logicalTaskNames.has(logicalTaskName)) throw new LaunchAuthorizationError("S1_LOGICAL_TASK_ALIAS", `Logical task name ${logicalTaskName} aliases existing role/output work.`);

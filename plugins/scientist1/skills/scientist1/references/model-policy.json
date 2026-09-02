@@ -1,6 +1,8 @@
 {
   "schema_version": 1,
   "roles": {
+    "repair_adjudicator": { "tier": "strong", "reasoning_effort": "high" },
+    "checkpoint_reviewer": { "tier": "efficient", "reasoning_effort": "high" },
     "contract_auditor": { "tier": "strong", "reasoning_effort": "high" },
     "literature_mapper": { "tier": "efficient", "reasoning_effort": "medium" },
     "evidence_reader": { "tier": "efficient", "reasoning_effort": "high" },

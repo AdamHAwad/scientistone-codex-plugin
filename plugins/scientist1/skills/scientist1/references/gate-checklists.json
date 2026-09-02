@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "release": "1.5.0",
+  "review_roles": {
+    "checkpoint_reviewer": [
+      "deterministic_checkpoint_validation"
+    ],
+    "contract_auditor": [
+      "charter_fidelity",
+      "outcome_and_baseline",
+      "metric_semantics",
+      "split_repetitions_uncertainty_failures",
+      "budgets_and_stopping",
+      "evaluator_separation",
+      "i1_bindings_and_support",
+      "deliverables",
+      "contradictions"
+    ],
+    "protocol_auditor": [
+      "metric_and_decision_rule",
+      "comparator",
+      "unit_of_analysis",
+      "data_split_and_heldout_isolation",
+      "repetitions_seeds_and_uncertainty",
+      "failure_handling",
+      "compute_feasibility",
+      "ablation_opportunities",
+      "negative_result_interpretation",
+      "leakage_and_evaluator_exposure",
+      "i1_comparison_design"
+    ],
+    "brief_critic": [
+      "question_relevance",
+      "evidence_coverage",
+      "citation_identity_and_support",
+      "protocol_completeness",
+      "baseline_fairness",
+      "constraint_fidelity",
+      "unsupported_claims",
+      "open_method_space"
+    ],
+    "idea_critic": [
+      "contract_fit",
+      "evidence_grounding",
+      "distinct_mechanism",
+      "testability",
+      "evaluation_separation"
+    ],
+    "legitimacy_auditor": [
+      "contract_compliance",
+      "evaluator_isolation",
+      "data_lineage",
+      "method_integrity",
+      "evaluation_integrity"
+    ],
+    "selection_auditor": [
+      "eligibility",
+      "decision_rule",
+      "metric_direction",
+      "lineage",
+      "canonical_evaluation"
+    ],
+    "paper_critic": [
+      "tag_resolution",
+      "claim_grounding",
+      "comparison_fairness",
+      "limitations",
+      "representation_consistency"
+    ],
+    "claim_verifier": [
+      "citation_claims",
+      "numerical_claims",
+      "methodological_claims",
+      "conclusion_claims",
+      "provenance_completeness"
+    ],
+    "i1_score_auditor": [
+      "lineage",
+      "reproducibility",
+      "claim_semantics"
+    ],
+    "i2_judge": [
+      "evaluator_import",
+      "test_exploitation",
+      "task_substitution",
+      "hidden_input_use"
+    ],
+    "i3_reference_auditor": [
+      "reference_identity",
+      "source_retrievability",
+      "claim_support",
+      "bibliographic_consistency"
+    ],
+    "i4_judge": [
+      "method_class_alignment",
+      "core_mechanism_alignment",
+      "artifact_description_alignment",
+      "result_description_alignment"
+    ],
+    "claim_provenance_auditor": [
+      "claim_inventory",
+      "evidence_mapping",
+      "canonical_result_binding",
+      "coverage"
+    ]
+  },
+  "blocker_classes": [
+    "charter_contradiction",
+    "missing_executable_definition",
+    "deterministic_machine_failure",
+    "unsupported_claim",
+    "evidence_mismatch",
+    "evaluation_leakage",
+    "lineage_break",
+    "repair_regression"
+  ],
+  "repair_cause_codes": [
+    "incomplete_prior_repair",
+    "wrong_source_artifact",
+    "stale_generator_or_template",
+    "stale_dependent_artifact",
+    "representation_or_schema_mismatch",
+    "invalid_scientific_assumption",
+    "insufficient_or_invalid_evidence",
+    "repair_introduced_regression",
+    "controller_state_mismatch"
+  ],
+  "repair_action_codes": [
+    "repair_authoritative_source",
+    "regenerate_from_authoritative_source",
+    "replace_invalid_evidence",
+    "reconcile_exact_dependents",
+    "narrow_or_correct_claim",
+    "revise_executable_protocol",
+    "restore_verified_artifact",
+    "repair_schema_and_revalidate",
+    "repair_controller_binding"
+  ],
+  "dispositions": [
+    "CONFIRMED_DEFECT",
+    "REVIEWER_FALSE_POSITIVE",
+    "REPAIR_REGRESSION",
+    "MECHANICAL_FAILURE"
+  ]
+}

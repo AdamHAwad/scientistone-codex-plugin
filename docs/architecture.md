@@ -20,7 +20,23 @@ dependency-ready work. One unbudgeted native goal tracks the freshly verified
 paper and delivery package; the run ledger remains the authority. Specialist
 attempts and repair cycles are immutable evidence counters, not stopping
 budgets. Pre-result contract stabilization uses a closed checklist,
-all-findings-at-once review, and minimal repair deltas. Later repairs archive
+all-findings-at-once review, and minimal repair deltas. In 1.5, every review
+role uses release-owned stable checklist IDs. Reviewer prose proposes but does
+not authorize rollback: a fresh Repair Adjudicator reproduces the defect and
+the CoE requires a controller-issued pending frontier, snapshots the complete
+adjudication authority, seals every reviewed row for that evidence epoch, and
+freezes one exact-scope docket plus its target-phase dependent-regeneration
+set. Docket-bound launches have a new work identity; closure reviewers must
+read the repaired paths, and closure rejects zero-delta repairs, changes
+outside the scope, unregenerated dependents, and late pre-existing findings.
+One PASS receipt may satisfy an overlapping dependent/reviewer obligation, so
+the same output is never regenerated twice. Finding-local artifact-state seals
+prevent unrelated file changes or input padding from reopening work while
+changed controller-authoritative causal evidence preserves liveness. Only a changed
+in-scope path can establish a repair regression, and a recurring fingerprint
+must change a procedure bound to genuinely changed approved-input or
+checkpoint-output evidence. A phase-agnostic Checkpoint Reviewer closes deterministic controller
+failures in every phase without originating scientific findings. Later repairs archive
 and invalidate affected successors before rerunning them. A drained queue
 becomes explicit repair-required work. Only fresh final CoE verification can
 complete the run or release the lead turn.
@@ -103,7 +119,8 @@ is the sole authority that promotes it.
 
 Checkpoint revalidates the candidate receipt and every bound input/output
 immediately before atomically advancing `run.json`. A rejected checkpoint saves
-a repair incident. Invalidation archives the entire affected chain and returns
+a pending adjudication. Only a controller-owned confirmed incident may
+authorize invalidation. Invalidation archives the entire affected chain and returns
 the run to `repairing`; every subsequent repair cycle does the same without a
 terminal counter path.
 
@@ -111,7 +128,11 @@ An existing run created by 1.2 remains bound to its saved 1.2 contracts and is
 verified by one narrow compatibility controller derived from the released 1.2
 verifier, alongside the exact released role and model-policy assets. It is not
 migrated or silently reinterpreted. Its legacy failure values remain repair
-signals to the lead. New runs never enter that path and use only 1.4.
+signals to the lead. Active 1.3/1.4 runs may add the separate 1.5 convergence
+control without rewriting their evidence. Migration creates an ordered
+per-phase frontier queue. Each frozen frontier must verify as exactly one of
+queued, pending, adjudicated, or superseded by an immutable rollback archive;
+new runs use 1.5 directly.
 
 Codex model catalogs can change between sessions. If the active semantic route
 disappears, Scientist1 preserves the original record and activates a currently

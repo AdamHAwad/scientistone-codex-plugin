@@ -21,10 +21,17 @@ const PROFILE_BUDGETS = {
   standard: { idea_ceiling: 18, minimum_eligible_ideas: 5, candidate_node_ceiling: 25, minimum_evaluated_candidates: 5, evaluation_ceiling_per_node: 4, ablation_ceiling: 4, minimum_valid_ablations: 1, canonical_repetitions: 5, audit_panel_size: 5 },
   pilot: { idea_ceiling: 4, minimum_eligible_ideas: 2, candidate_node_ceiling: 4, minimum_evaluated_candidates: 2, evaluation_ceiling_per_node: 2, ablation_ceiling: 2, minimum_valid_ablations: 1, canonical_repetitions: 3, audit_panel_size: 3 },
 };
-const ORCHESTRATION_POLICY = {
+const LEGACY_1_4_ORCHESTRATION = {
   task_attempt_policy: "repair_until_pass",
   repair_gate_policy: "invalidate_and_continue",
   completion_condition: "fresh_verified_delivery",
+};
+const ORCHESTRATION_POLICY = {
+  ...LEGACY_1_4_ORCHESTRATION,
+  review_frontier_policy: "frozen_release_checklist",
+  rollback_policy: "independent_adjudication_only",
+  repair_scope_policy: "exact_delta",
+  recurrence_policy: "causal_strategy_change",
 };
 const LEGACY_1_3_ORCHESTRATION = { max_task_attempts: 2, max_repair_waves_per_gate: 1 };
 const BUDGET_KEYS = Object.keys(PROFILE_BUDGETS.standard);
@@ -38,6 +45,45 @@ const REPAIR_CLASSES = new Set(["specialist_failure", "checkpoint_rejected", "re
 const I1_INTERPRETER_PATH = "contract/control-plane/i1-interpreter.mjs";
 const BUNDLED_I1_INTERPRETER = new URL("./i1-interpreter.mjs", import.meta.url);
 const ROLE_CONTRACT_FILE = new URL("../references/roles.md", import.meta.url);
+const GATE_CHECKLIST_FILE = new URL("../references/gate-checklists.json", import.meta.url);
+const GATE_CHECKLIST_CONTRACT_PATH = "contract/control-plane/gate-checklists.json";
+const GATE_CHECKLIST_MIGRATION_PATH = "repairs/control-plane/convergence-1.5.0/gate-checklists.json";
+const LEGACY_1_4_ROLE_CONTRACT_SHA256 = "9ebf3da43adcf5e7eaadb9ea4c32579ba6fc173472feb56ca8fd61188dc805ea";
+const CONVERGENCE_DISPOSITIONS = new Set(["CONFIRMED_DEFECT", "REVIEWER_FALSE_POSITIVE", "REPAIR_REGRESSION", "MECHANICAL_FAILURE"]);
+const CONVERGENCE_BLOCKER_CLASSES = new Set(readJson(GATE_CHECKLIST_FILE).blocker_classes);
+const CONTROL_PLANE_ROOTS = ["repairs", "role-launches", "role-receipts", "role-attempts", "receipts", ".transactions"];
+const REVIEW_OUTPUTS = Object.freeze({
+  checkpoint_reviewer: ["repairs/reviews/checkpoint"],
+  contract_auditor: ["contract/audit.md"],
+  protocol_auditor: ["investigation/protocol-audit.md"],
+  brief_critic: ["investigation/critic.md"],
+  idea_critic: ["discovery/idea-critique.jsonl"],
+  legitimacy_auditor: ["legitimacy-audit.md"],
+  selection_auditor: ["selection/selection-audit.md"],
+  paper_critic: ["paper/grounding-report.json", "paper/critic.md"],
+  claim_verifier: ["paper/claims.jsonl", "paper/verification.md", "paper/provenance.jsonl", "paper/paper.tex"],
+  i1_score_auditor: ["audit/i1.json", "audit/i1"],
+  i2_judge: ["audit/i2"],
+  i3_reference_auditor: ["audit/i3.json"],
+  i4_judge: ["audit/i4"],
+  claim_provenance_auditor: ["audit/claim-provenance.json"],
+});
+const REVIEW_PHASES = Object.freeze({
+  checkpoint_reviewer: "*",
+  contract_auditor: "contract",
+  protocol_auditor: "investigation",
+  brief_critic: "investigation",
+  idea_critic: "discovery",
+  legitimacy_auditor: "discovery",
+  selection_auditor: "selection",
+  paper_critic: "writing",
+  claim_verifier: "verification",
+  i1_score_auditor: "audit",
+  i2_judge: "audit",
+  i3_reference_auditor: "audit",
+  i4_judge: "audit",
+  claim_provenance_auditor: "audit",
+});
 const LEGACY_COE_1_2 = fileURLToPath(new URL("./legacy-coe-1.2.0.mjs", import.meta.url));
 const CONTRACT_GENERATED_PATHS = ["contract/evaluator-contract.md", "contract/evaluator-manifest.json", "contract/i1-verification-policy.json", "contract/audit.md"];
 const CONTRACT_ROLE_NAMES = new Set(["i1_verifier_builder", "contract_auditor"]);
@@ -85,6 +131,7 @@ const CORE_DELIVERABLE_SOURCES = {
 const artifactHashMemo = new Map();
 const contentHashMemo = new Map();
 let memoizeHashes = false;
+let checkpointRejectionContext = null;
 
 function clearHashMemo() {
   memoizeHashes = false;
@@ -136,13 +183,22 @@ function nextIncidentPath(run, incident) {
 }
 
 function saveRepairIncident(run, record, details) {
-  const evidence = (details.evidence_paths ?? []).map((relative) => entry(run, relative));
+  const at = new Date().toISOString();
+  let evidence;
+  if (record.convergence_control) {
+    const snapshotRoot = `repairs/evidence/pending-${createHash("sha256").update(canonicalJson({ at, phase: record.phase, evidence_paths: details.evidence_paths ?? [] })).digest("hex").slice(0, 20)}`;
+    const copied = new Map();
+    evidence = (details.evidence_paths ?? []).map((relative) => snapshotBinding(run, snapshotRoot, entry(run, relative), copied));
+  } else {
+    evidence = (details.evidence_paths ?? []).map((relative) => entry(run, relative));
+  }
   const incident = {
-    schema_version: 1,
-    at: new Date().toISOString(),
-    phase: record.phase,
+    schema_version: record.convergence_control ? 3 : 1,
+    at,
+    phase: details.phase ?? record.phase,
     failure_class: details.failure_class,
     logical_task_name: details.logical_task_name ?? null,
+    ...(record.convergence_control ? { authority_kind: details.authority_kind ?? "controller_checkpoint", absence_paths: [...new Set((details.absence_paths ?? []).map(relativePath))].sort() } : {}),
     summary: details.summary,
     evidence,
     required_action: details.required_action,
@@ -152,12 +208,482 @@ function saveRepairIncident(run, record, details) {
   const anchor = { path: relative, sha256: hashArtifact(run, relative) };
   record.repair_incidents ??= [];
   record.repair_incidents.push(anchor);
+  if (record.convergence_control && !record.active_repair) record.pending_adjudication = anchor;
   record.state = "repairing";
   record.outcome = null;
   record.updated_at = new Date().toISOString();
   writeJson(path.join(run, "run.json"), record);
-  appendEvent(run, { event: "repair_required", phase: record.phase, failure_class: incident.failure_class, incident: relative });
+  appendEvent(run, { event: "repair_required", phase: incident.phase, failure_class: incident.failure_class, incident: relative });
   return relative;
+}
+
+function checklistFor(record, run) {
+  const binding = record.convergence_control?.checklist;
+  if (!binding || !nonemptyString(binding.path) || !validSha256(binding.sha256)) fail("Scientist1 1.5 convergence control is not installed; run migrate-convergence before repair work");
+  if (hashArtifact(run, binding.path) !== binding.sha256) fail("The frozen convergence checklist changed after installation");
+  const checklist = readJson(path.join(run, binding.path));
+  if (checklist.schema_version !== 1 || checklist.release !== "1.5.0" || !checklist.review_roles || !Array.isArray(checklist.blocker_classes) || !Array.isArray(checklist.repair_cause_codes) || !checklist.repair_cause_codes.length || !Array.isArray(checklist.repair_action_codes) || !checklist.repair_action_codes.length) fail("The frozen convergence checklist is malformed");
+  return checklist;
+}
+
+function isControlPath(relative) {
+  return relative === "run.json" || relative === "events.jsonl" || relative === "attention.md" || relative === "environment/task-ledger.json" || relative.startsWith("environment/model-routing") || CONTROL_PLANE_ROOTS.some((root) => relative === root || relative.startsWith(`${root}/`));
+}
+
+function scientificManifest(run) {
+  const files = [];
+  const walk = (directory) => {
+    for (const name of fs.readdirSync(directory).sort()) {
+      const absolute = path.join(directory, name);
+      const relative = path.relative(run, absolute).replaceAll(path.sep, "/");
+      if (isControlPath(relative)) continue;
+      const stat = fs.lstatSync(absolute);
+      if (stat.isSymbolicLink()) fail(`Symlinks cannot enter a repair baseline: ${relative}`);
+      if (stat.isDirectory()) walk(absolute);
+      else if (stat.isFile()) files.push(relative);
+      else fail(`Unsupported repair-baseline artifact: ${relative}`);
+    }
+  };
+  walk(run);
+  return files.map((relative) => ({ path: relative, sha256: hashArtifact(run, relative) }));
+}
+
+function repairPathCovers(scope, relative) {
+  return scope.includes(relative);
+}
+
+function manifestDigest(manifest) {
+  return createHash("sha256").update(canonicalJson([...manifest].sort((left, right) => left.path.localeCompare(right.path)))).digest("hex");
+}
+
+function isReviewOutputPath(relative) {
+  return Object.keys(REVIEW_OUTPUTS).some((role) => reviewOutputAllowed(role, relative));
+}
+
+function reviewOutputAllowed(role, relative) {
+  if (role === "legitimacy_auditor") return /^discovery\/nodes\/[^/]+\/legitimacy-audit\.md$/.test(relative);
+  return (REVIEW_OUTPUTS[role] ?? []).some((allowed) => relative === allowed || relative.startsWith(`${allowed}/`));
+}
+
+function reviewRoleMatchesPhase(role, phase) {
+  return REVIEW_PHASES[role] === "*" || REVIEW_PHASES[role] === phase;
+}
+
+function artifactRepairPhase(record, relative, required = true) {
+  const clean = relativePath(relative);
+  if (["request.md", "study-plan.md"].includes(clean) || clean.startsWith("contract/")) return "contract";
+  if (clean.startsWith("evidence/") || clean.startsWith("investigation/")) return "investigation";
+  if (clean.startsWith("discovery/")) return "discovery";
+  if (clean.startsWith("selection/")) return "selection";
+  if (clean.startsWith("ablation/")) return "ablation";
+  if (/^paper\/(?:claims\.jsonl|verification\.md|paper-verified-tagged\.tex|provenance\.jsonl|paper\.tex|paper\.pdf)$/.test(clean) || clean === "delivery/visual-inspection.json") return "verification";
+  if (clean.startsWith("paper/")) return "writing";
+  if (clean.startsWith("audit/") || clean === "delivery/reproduction.md") return "audit";
+  if (clean.startsWith("deliverables/")) return "complete";
+  if (required) fail(`No release-owned repair phase owns scientific artifact ${clean}`);
+  return null;
+}
+
+function controllerRepairTarget(record, findings) {
+  const phases = phasesFor(record);
+  const owned = findings.flatMap((finding) => [finding.artifact_path, ...finding.repair_paths]).map((relative) => artifactRepairPhase(record, relative));
+  return owned.sort((left, right) => phases.indexOf(left) - phases.indexOf(right))[0];
+}
+
+function reviewEvidenceManifest(run) {
+  return scientificManifest(run).filter((item) => !isReviewOutputPath(item.path));
+}
+
+function scopeBaseline(run, scope) {
+  return scope.map((relative) => {
+    const target = artifactPath(run, relative).target;
+    if (!fs.existsSync(target)) return { path: relative, kind: "absent", sha256: null };
+    const stat = fs.lstatSync(target);
+    if (!stat.isFile() || stat.isSymbolicLink()) fail(`Repair scope must remain an exact regular file: ${relative}`);
+    return { path: relative, kind: "file", sha256: hashArtifact(run, relative) };
+  });
+}
+
+function validateRepairScope(run, paths) {
+  if (!Array.isArray(paths) || !paths.length || paths.some((item) => !nonemptyString(item))) fail("A confirmed repair requires at least one exact run-relative repair path");
+  const normalized = [...new Set(paths.map(relativePath))].sort();
+  const forbidden = new Set(["contract", "evidence", "investigation", "discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables", "private"]);
+  for (const relative of normalized) {
+    if (forbidden.has(relative) || isControlPath(relative)) fail(`Repair scope must name exact scientific files or a narrow component, not ${relative}`);
+    const target = path.join(run, relative);
+    if (fs.existsSync(target) && fs.lstatSync(target).isDirectory()) fail(`Repair scope must name exact files, not an existing directory: ${relative}`);
+  }
+  return normalized;
+}
+
+function repairFingerprint(phase, finding) {
+  return createHash("sha256").update(canonicalJson({
+    target_phase: phase,
+    review_role: finding.review_role,
+    check_id: finding.check_id,
+    artifact_path: finding.artifact_path,
+  })).digest("hex");
+}
+
+function repairEvidenceEpoch(run, record, phase) {
+  const phases = phasesFor(record);
+  const index = phases.indexOf(phase);
+  const predecessor = index > 0 ? record.checkpoints[phases[index - 1]]?.receipt_sha256 ?? null : null;
+  const reviewedEvidence = reviewEvidenceManifest(run);
+  return createHash("sha256").update(canonicalJson({ phase, contract_revision: record.contract_revision, charter_revision: record.charter_revision, predecessor, reviewed_evidence: reviewedEvidence })).digest("hex");
+}
+
+function convergenceIncidents(run, record, phase = null, evidenceEpoch = null) {
+  return (record.repair_incidents ?? []).map((anchor) => readJson(path.join(run, anchor.path))).filter((incident) => incident.schema_version === 2 && (phase === null || incident.target_phase === phase) && (evidenceEpoch === null || incident.evidence_epoch === evidenceEpoch));
+}
+
+function convergenceClosures(run, record, phase = null, evidenceEpoch = null) {
+  return (record.repair_closures ?? []).map((anchor) => readJson(path.join(run, anchor.path))).filter((closure) => closure.schema_version === 2 && (phase === null || closure.target_phase === phase) && (evidenceEpoch === null || closure.evidence_epoch === evidenceEpoch));
+}
+
+function verifyAdjudicator(run, proposalRelative, receiptRelative) {
+  const receiptPath = relativePath(receiptRelative || "");
+  if (!/^role-receipts\/[^/]+\.json$/.test(receiptPath)) fail("A repair proposal requires a repair_adjudicator role receipt");
+  const verified = verifyRoleReceipt(run, receiptPath);
+  if (verified.role !== "repair_adjudicator" || !verified.outputs.includes(proposalRelative)) fail(`Repair proposal ${proposalRelative} is not owned by its independent repair_adjudicator receipt`);
+  return { ...verified, receipt_path: receiptPath, launch_path: `role-launches/${path.basename(receiptPath, ".json")}.json` };
+}
+
+function reviewerFrontier(run, receiptRelative, verified = null) {
+  const clean = relativePath(receiptRelative);
+  const receipt = verified ?? verifyRoleReceipt(run, clean, { allowReviewFailure: true });
+  const launch = readJson(path.join(run, `role-launches/${path.basename(clean, ".json")}.json`));
+  return reviewerFrontierFromInputs(receipt.role, launch.input_artifacts);
+}
+
+function reviewerFrontierFromInputs(role, inputArtifacts) {
+  const inputs = [...inputArtifacts]
+    .map((item) => ({ path: relativePath(item.path), sha256: item.sha256 }))
+    .filter((item) => !isControlPath(item.path) && !isReviewOutputPath(item.path) && !["request.md", "study-plan.md"].includes(item.path))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  return { role, input_digest: createHash("sha256").update(canonicalJson(inputs)).digest("hex"), inputs };
+}
+
+function findingLocalStateIdentity(run, finding, archived = false) {
+  const evidenceBySource = new Map((finding.evidence ?? []).map((binding) => [archived ? binding.source_path : binding.path, binding]));
+  if (finding.artifact_state === "absent") return [{ path: finding.artifact_path, state: "absent", content_sha256: null }];
+  const binding = evidenceBySource.get(finding.artifact_path);
+  if (!binding) fail(`Finding-local state lacks a frozen artifact binding for ${finding.artifact_path}`);
+  return [{ path: finding.artifact_path, state: "present", content_sha256: contentHash(path.join(run, binding.path)) }];
+}
+
+function findingLocalStateFingerprint(run, finding, archived = false) {
+  return createHash("sha256").update(canonicalJson(findingLocalStateIdentity(run, finding, archived))).digest("hex");
+}
+
+function scientificStateChanged(run, finding, priorState) {
+  const prior = new Map(priorState.map((binding) => [binding.path, binding.sha256]));
+  return findingLocalStateIdentity(run, finding).some((binding) => binding.state === "absent" ? prior.has(binding.path) : prior.get(binding.path) !== hashArtifact(run, binding.path));
+}
+
+function causalStrategyChangedSince(strategy, priorState) {
+  if (!strategy) return false;
+  const prior = new Map(priorState.map((binding) => [binding.path, binding.sha256]));
+  const causalPaths = new Set(strategy.evidence_provenance.map((item) => item.evidence_path));
+  return strategy.evidence.some((binding) => causalPaths.has(binding.path) && prior.get(binding.path) !== binding.sha256);
+}
+
+function normalizedFindings(run, record, checklist, phase, findings, disposition) {
+  if (!Array.isArray(findings) || !findings.length) fail("A convergence proposal requires at least one finding");
+  const normalized = [];
+  const seen = new Set();
+  for (const [index, finding] of findings.entries()) {
+    if (!finding || !nonemptyString(finding.review_role) || !nonemptyString(finding.check_id) || !nonemptyString(finding.blocker_class) || !nonemptyString(finding.artifact_path) || !nonemptyString(finding.locator) || !nonemptyString(finding.expected_state) || !nonemptyString(finding.observed_state) || !Array.isArray(finding.evidence_paths) || !finding.evidence_paths.length || finding.evidence_paths.some((item) => !nonemptyString(item)) || !Array.isArray(finding.repair_paths) || !Array.isArray(finding.introduced_by_paths)) fail(`Malformed convergence finding at index ${index}`);
+    if (!checklist.review_roles[finding.review_role]?.includes(finding.check_id)) fail(`Finding uses unknown closed-checklist row ${finding.review_role}/${finding.check_id}`);
+    if (!CONVERGENCE_BLOCKER_CLASSES.has(finding.blocker_class)) fail(`Finding uses unknown blocker class ${finding.blocker_class}`);
+    const artifactPath = relativePath(finding.artifact_path);
+    const artifactState = finding.artifact_state ?? "present";
+    if (!["present", "absent"].includes(artifactState)) fail(`Finding ${finding.review_role}/${finding.check_id} has invalid artifact_state`);
+    const evidencePaths = [...new Set(finding.evidence_paths.map(relativePath))];
+    if (artifactState === "present" && !evidencePaths.includes(artifactPath)) fail(`Finding ${finding.review_role}/${finding.check_id} must include its present artifact_path in evidence_paths`);
+    if (artifactState === "absent" && fs.existsSync(path.join(run, artifactPath))) fail(`Finding ${finding.review_role}/${finding.check_id} claims an artifact is absent but it exists: ${artifactPath}`);
+    const evidence = evidencePaths.map((relative) => entry(run, relative));
+    const repairPaths = disposition === "REVIEWER_FALSE_POSITIVE" ? [] : validateRepairScope(run, finding.repair_paths);
+    if (disposition !== "REVIEWER_FALSE_POSITIVE" && artifactState === "absent" && !repairPaths.includes(artifactPath)) fail(`An absent-artifact finding must create its exact artifact_path: ${artifactPath}`);
+    const introducedBy = [...new Set(finding.introduced_by_paths.map(relativePath))].sort();
+    const fingerprint = repairFingerprint(phase, finding);
+    if (seen.has(fingerprint)) fail(`Repair proposal repeats finding fingerprint ${fingerprint}`);
+    seen.add(fingerprint);
+    const normalizedFinding = { review_role: finding.review_role, check_id: finding.check_id, blocker_class: finding.blocker_class, artifact_path: artifactPath, artifact_state: artifactState, locator: finding.locator.trim(), expected_state: finding.expected_state.trim(), observed_state: finding.observed_state.trim(), fingerprint, state_fingerprint: null, evidence, repair_paths: repairPaths, introduced_by_paths: introducedBy };
+    normalizedFinding.state_fingerprint = findingLocalStateFingerprint(run, normalizedFinding);
+    normalized.push(normalizedFinding);
+  }
+  return normalized;
+}
+
+function normalizedReviewedCheckIds(checklist, roles, value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) fail("reviewed_check_ids must map every finding role to its complete frozen checklist");
+  const expectedRoles = [...new Set(roles)].sort();
+  if (canonicalJson(Object.keys(value).sort()) !== canonicalJson(expectedRoles)) fail("reviewed_check_ids roles must equal required_review_roles exactly");
+  const normalized = {};
+  for (const role of expectedRoles) {
+    const ids = value[role];
+    if (!Array.isArray(ids) || !ids.length || ids.some((item) => !nonemptyString(item)) || new Set(ids).size !== ids.length) fail(`reviewed_check_ids.${role} must enumerate unique frozen checklist rows`);
+    const expected = [...(checklist.review_roles[role] ?? [])].sort();
+    const observed = [...ids].sort();
+    if (canonicalJson(observed) !== canonicalJson(expected)) fail(`reviewed_check_ids.${role} must cover every frozen checklist row exactly once`);
+    normalized[role] = observed;
+  }
+  return normalized;
+}
+
+function liveArtifactState(run, relative) {
+  const clean = relativePath(relative);
+  const target = path.join(run, clean);
+  if (!fs.existsSync(target)) return { path: clean, state: "absent", sha256: null };
+  const stat = fs.lstatSync(target);
+  if (!stat.isFile() || stat.isSymbolicLink()) fail(`Repair strategy paths must be exact regular files or explicit absences: ${clean}`);
+  return { ...entry(run, clean), state: "present" };
+}
+
+function repairAbsenceProof(run, docket) {
+  const absentPaths = docket.repair_scope.filter((relative) => !fs.existsSync(path.join(run, relative))).sort();
+  if (!absentPaths.length) return null;
+  const relative = `repairs/absence-proofs/${docket.semantic_digest}.json`;
+  const value = readJson(path.join(run, relative));
+  if (canonicalJson(value) !== canonicalJson({ schema_version: 1, docket_id: docket.docket_id, semantic_digest: docket.semantic_digest, absent_paths: absentPaths })) fail("Controller-owned repair absence proof is missing or differs from the exact absent scope");
+  return relative;
+}
+
+function archivedArtifactState(run, snapshotRoot, binding, copied) {
+  if (binding.state === "absent") return { source_path: binding.path, state: "absent", path: null, sha256: null };
+  return { ...snapshotBinding(run, snapshotRoot, binding, copied), state: "present" };
+}
+
+function artifactStateIdentity(run, binding, archived = false) {
+  const sourcePath = archived ? binding.source_path : binding.path;
+  return { path: sourcePath, state: binding.state, content_sha256: binding.state === "present" ? contentHash(path.join(run, archived ? binding.path : sourcePath)) : null };
+}
+
+function strategyEvidenceProvenance(run, record, binding) {
+  const evidencePath = binding.path;
+  const recordAnchors = { "request.md": record.request_sha256, "study-plan.md": record.study_plan_sha256, "contract/approval.json": record.approval_sha256, "contract/run-config.json": record.contract_parameters_sha256 };
+  if (recordAnchors[evidencePath] && hashArtifact(run, evidencePath) === recordAnchors[evidencePath]) {
+    return { evidence_path: evidencePath, kind: "frozen_input", authorities: [entry(run, evidencePath)] };
+  }
+  for (const phase of Object.keys(record.checkpoints ?? {})) {
+    const receiptRelative = `receipts/${phase}.json`;
+    const checkpointReceipt = readJson(path.join(run, receiptRelative));
+    for (const authority of checkpointReceipt.outputs ?? []) {
+      if (!pathCovered(evidencePath, [authority.path]) || hashArtifact(run, authority.path) !== authority.sha256) continue;
+      return { evidence_path: evidencePath, kind: "checkpoint_output", authorities: [entry(run, receiptRelative)] };
+    }
+  }
+  fail(`Repair strategy evidence ${evidencePath} has no immutable approved-input or checkpoint provenance; ad hoc role outputs cannot mint recurrence authority`);
+}
+
+function evidenceProvenanceIdentity(run, provenance, archived = false) {
+  return provenance.map((item) => ({
+    evidence_path: item.evidence_path,
+    kind: item.kind,
+    authorities: item.authorities.map((authority) => ({ path: archived ? authority.source_path : authority.path, content_sha256: contentHash(path.join(run, authority.path)) })).sort((left, right) => left.path.localeCompare(right.path)),
+  })).sort((left, right) => left.evidence_path.localeCompare(right.evidence_path));
+}
+
+function strategyRecord(run, record, checklist, strategy, allowedProcedurePaths, options = {}) {
+  if (strategy === null) return null;
+  if (!strategy || !nonemptyString(strategy.cause_code) || !nonemptyString(strategy.action_code) || !nonemptyString(strategy.cause) || !nonemptyString(strategy.changed_action) || !Array.isArray(strategy.evidence_paths) || !strategy.evidence_paths.length || strategy.evidence_paths.some((item) => !nonemptyString(item)) || !Array.isArray(strategy.procedure_paths) || !strategy.procedure_paths.length || strategy.procedure_paths.some((item) => !nonemptyString(item))) fail("A repair strategy must name release-owned cause/action codes, its diagnosis, changed action, non-control evidence, and exact procedure paths");
+  if (!checklist.repair_cause_codes?.includes(strategy.cause_code) || !checklist.repair_action_codes?.includes(strategy.action_code)) fail("A repair strategy must use release-owned cause_code and action_code values");
+  const evidence = [...new Set(strategy.evidence_paths.map(relativePath))].sort().map((relative) => entry(run, relative));
+  const procedurePathSet = new Set(allowedProcedurePaths.map(relativePath));
+  const causalEvidence = evidence.filter((binding) => !isControlPath(binding.path) && !isReviewOutputPath(binding.path) && !procedurePathSet.has(binding.path));
+  const procedurePaths = [...new Set(strategy.procedure_paths.map(relativePath))].sort();
+  const exactProcedurePaths = [...new Set(allowedProcedurePaths.map(relativePath))].sort();
+  if (canonicalJson(procedurePaths) !== canonicalJson(exactProcedurePaths)) fail("Repair strategy procedure_paths must equal the complete exact finding repair scope");
+  const procedure = procedurePaths.map((relative) => liveArtifactState(run, relative));
+  const controllerChangedState = [...new Set(options.controllerChangedPaths ?? [])].sort().map((relative) => liveArtifactState(run, relative));
+  if (!causalEvidence.length && options.allowControllerAbsence !== true && !controllerChangedState.length) fail("A recurring repair strategy requires newly bound approved/checkpoint evidence or a controller-observed repair regression state; review prose and newly written notes are not causal evidence");
+  const evidenceIdentity = { evidence: causalEvidence.map((item) => ({ path: item.path, content_sha256: contentHash(path.join(run, item.path)) })), controller_absence: options.allowControllerAbsence === true ? procedure.filter((item) => item.state === "absent").map((item) => item.path) : [], controller_changed_state: controllerChangedState.map((item) => artifactStateIdentity(run, item)) };
+  const evidenceProvenance = causalEvidence.map((binding) => strategyEvidenceProvenance(run, record, binding));
+  const provenanceFingerprint = createHash("sha256").update(canonicalJson(evidenceProvenanceIdentity(run, evidenceProvenance))).digest("hex");
+  const evidenceFingerprint = createHash("sha256").update(canonicalJson(evidenceIdentity)).digest("hex");
+  const causalIdentity = { cause_code: strategy.cause_code, action_code: strategy.action_code, evidence_fingerprint: evidenceFingerprint, ...evidenceIdentity };
+  const causalFingerprint = createHash("sha256").update(canonicalJson(causalIdentity)).digest("hex");
+  const identity = { causal: causalIdentity, provenance_fingerprint: provenanceFingerprint, procedure: procedure.map((item) => artifactStateIdentity(run, item)) };
+  const fingerprint = createHash("sha256").update(canonicalJson(identity)).digest("hex");
+  return { cause_code: strategy.cause_code, action_code: strategy.action_code, cause: strategy.cause.trim(), changed_action: strategy.changed_action.trim(), evidence, evidence_provenance: evidenceProvenance, provenance_fingerprint: provenanceFingerprint, procedure, controller_changed_state: controllerChangedState, evidence_fingerprint: evidenceFingerprint, causal_fingerprint: causalFingerprint, fingerprint };
+}
+
+function snapshotBinding(run, snapshotRoot, binding, copied) {
+  const sourcePath = relativePath(binding.path);
+  let archivedPath = copied.get(sourcePath);
+  if (!archivedPath) {
+    const objectId = createHash("sha256").update(sourcePath).digest("hex").slice(0, 20);
+    archivedPath = `${snapshotRoot}/objects/${objectId}-${path.basename(sourcePath)}`;
+    const source = artifactPath(run, sourcePath).target;
+    const destination = artifactPath(run, archivedPath).target;
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.cpSync(source, destination, { recursive: true, errorOnExist: true });
+    copied.set(sourcePath, archivedPath);
+  }
+  return { source_path: sourcePath, ...entry(run, archivedPath) };
+}
+
+function verifySnapshotBinding(run, binding, context) {
+  if (!binding || !nonemptyString(binding.source_path) || !nonemptyString(binding.path) || !validSha256(binding.sha256) || !binding.path.startsWith("repairs/evidence/")) fail(`Malformed archived authority binding: ${context}`);
+  if (hashArtifact(run, binding.path) !== binding.sha256) fail(`Archived authority drifted: ${binding.path}`);
+}
+
+function saveConvergenceIncident(run, record, proposalRelative, proposal, evidenceEpoch, reviewedCheckIds, findings, strategy, adjudicator, sourceReviewer, originPhase) {
+  const at = new Date().toISOString();
+  const snapshotId = createHash("sha256").update(canonicalJson({ at, proposal: entry(run, proposalRelative), adjudicator: adjudicator.receipt_path })).digest("hex").slice(0, 20);
+  const snapshotRoot = `repairs/evidence/${snapshotId}`;
+  const copied = new Map();
+  const archive = (binding) => snapshotBinding(run, snapshotRoot, binding, copied);
+  const archivedFindings = findings.map((finding) => ({ ...finding, evidence: finding.evidence.map(archive), introduced_by: finding.introduced_by_paths.map((relative) => archivedArtifactState(run, snapshotRoot, liveArtifactState(run, relative), copied)) }));
+  for (const finding of archivedFindings) finding.state_fingerprint = findingLocalStateFingerprint(run, finding, true);
+  const archivedStrategy = strategy ? { ...strategy, evidence: strategy.evidence.map(archive), evidence_provenance: strategy.evidence_provenance.map((item) => ({ ...item, authorities: item.authorities.map(archive) })), procedure: strategy.procedure.map((binding) => archivedArtifactState(run, snapshotRoot, binding, copied)), controller_changed_state: strategy.controller_changed_state.map((binding) => archivedArtifactState(run, snapshotRoot, binding, copied)) } : null;
+  if (archivedStrategy) {
+    const procedurePaths = new Set(archivedStrategy.procedure.map((binding) => binding.source_path));
+    archivedStrategy.provenance_fingerprint = createHash("sha256").update(canonicalJson(evidenceProvenanceIdentity(run, archivedStrategy.evidence_provenance, true))).digest("hex");
+    const evidenceIdentity = { evidence: archivedStrategy.evidence.filter((binding) => !isControlPath(binding.source_path) && !isReviewOutputPath(binding.source_path) && !procedurePaths.has(binding.source_path)).map((binding) => ({ path: binding.source_path, content_sha256: contentHash(path.join(run, binding.path)) })).sort((left, right) => left.path.localeCompare(right.path)), controller_absence: archivedStrategy.procedure.filter((binding) => binding.state === "absent").map((binding) => binding.source_path).sort(), controller_changed_state: archivedStrategy.controller_changed_state.map((binding) => artifactStateIdentity(run, binding, true)).sort((left, right) => left.path.localeCompare(right.path)) };
+    archivedStrategy.evidence_fingerprint = createHash("sha256").update(canonicalJson(evidenceIdentity)).digest("hex");
+    const causalIdentity = { cause_code: archivedStrategy.cause_code, action_code: archivedStrategy.action_code, evidence_fingerprint: archivedStrategy.evidence_fingerprint, ...evidenceIdentity };
+    archivedStrategy.causal_fingerprint = createHash("sha256").update(canonicalJson(causalIdentity)).digest("hex");
+    archivedStrategy.fingerprint = createHash("sha256").update(canonicalJson({ causal: causalIdentity, provenance_fingerprint: archivedStrategy.provenance_fingerprint, procedure: archivedStrategy.procedure.map((binding) => artifactStateIdentity(run, binding, true)).sort((left, right) => left.path.localeCompare(right.path)) })).digest("hex");
+  }
+  const incident = {
+    schema_version: 2,
+    at,
+    phase: originPhase,
+    target_phase: proposal.target_phase,
+    evidence_epoch: evidenceEpoch,
+    scientific_state: reviewEvidenceManifest(run),
+    scientific_state_sha256: manifestDigest(reviewEvidenceManifest(run)),
+    disposition: proposal.disposition,
+    source_review: archive(entry(run, proposal.source_review)),
+    source_review_receipt: sourceReviewer ? archive(entry(run, sourceReviewer.receipt_path)) : null,
+    review_frontier: sourceReviewer ? reviewerFrontier(run, sourceReviewer.receipt_path, sourceReviewer) : null,
+    proposal: archive(entry(run, proposalRelative)),
+    adjudicator_receipt: archive(entry(run, adjudicator.receipt_path)),
+    adjudicator_launch: archive(entry(run, adjudicator.launch_path)),
+    adjudicator_attempt: archive(entry(run, adjudicator.attempt_record)),
+    findings: archivedFindings,
+    required_review_roles: [...new Set(proposal.required_review_roles)].sort(),
+    reviewed_check_ids: reviewedCheckIds,
+    strategy: archivedStrategy,
+    required_action: proposal.required_action,
+  };
+  const relative = nextIncidentPath(run, incident);
+  writeJson(path.join(run, relative), incident);
+  const anchor = { path: relative, sha256: hashArtifact(run, relative) };
+  record.repair_incidents ??= [];
+  record.repair_incidents.push(anchor);
+  return { incident, relative, anchor };
+}
+
+function repairDocketSemantic(docket) {
+  return createHash("sha256").update(canonicalJson({
+    incident: docket.incident,
+    regression_incidents: docket.regression_incidents ?? [],
+    target_phase: docket.target_phase,
+    requires_invalidation: docket.requires_invalidation === true,
+    repair_mode: docket.repair_mode,
+    finding_fingerprints: [...docket.finding_fingerprints].sort(),
+    repair_scope: [...docket.repair_scope].sort(),
+    scope_baseline: [...(docket.scope_baseline ?? [])].sort((left, right) => left.path.localeCompare(right.path)),
+    controller_delta: [...(docket.controller_delta ?? [])].sort((left, right) => left.path.localeCompare(right.path)),
+    dependent_regeneration: [...(docket.dependent_regeneration ?? [])].sort((left, right) => left.logical_task_name.localeCompare(right.logical_task_name)),
+    required_review_roles: [...docket.required_review_roles].sort(),
+    baseline: [...docket.baseline].sort((left, right) => left.path.localeCompare(right.path)),
+  })).digest("hex");
+}
+
+function pathsOverlap(left, right) {
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
+function deriveDependentRegeneration(run, record, repairScope, targetPhase) {
+  const launchRoot = path.join(run, "role-launches");
+  const receiptRoot = path.join(run, "role-receipts");
+  if (!fs.existsSync(launchRoot) || !fs.existsSync(receiptRoot)) return [];
+  const candidatesByLogicalTask = new Map();
+  for (const name of fs.readdirSync(launchRoot).filter((item) => item.endsWith(".json")).sort()) {
+    const launchRelative = `role-launches/${name}`;
+    const receiptRelative = `role-receipts/${name}`;
+    if (!fs.existsSync(path.join(run, receiptRelative))) continue;
+    const launch = readJson(path.join(launchRoot, name));
+    const receipt = readJson(path.join(receiptRoot, name));
+    if (launch.role === "repair_adjudicator" || launch.contract_revision !== record.contract_revision || launch.charter_revision !== record.charter_revision || receipt.execution_status !== "COMPLETE" || receipt.gate_verdict !== "PASS") continue;
+    if (!Array.isArray(launch.declared_inputs) || !Array.isArray(launch.declared_outputs) || !launch.declared_outputs.length || !Array.isArray(launch.allowed_external_sources)) continue;
+    const declaredOutputs = launch.declared_outputs.map(relativePath);
+    if (!declaredOutputs.some((output) => artifactRepairPhase(record, output, false) === targetPhase)) continue;
+    const candidate = {
+      source_launch: launchRelative,
+      source_launch_sha256: hashArtifact(run, launchRelative),
+      role: launch.role,
+      logical_task_name: launch.logical_task_name,
+      declared_inputs: launch.declared_inputs.map(relativePath).filter((relative) => !isControlPath(relative)),
+      declared_outputs: declaredOutputs,
+      allowed_external_sources: [...launch.allowed_external_sources],
+      started_at: launch.started_at,
+    };
+    const prior = candidatesByLogicalTask.get(candidate.logical_task_name);
+    if (!prior || Date.parse(candidate.started_at) >= Date.parse(prior.started_at)) candidatesByLogicalTask.set(candidate.logical_task_name, candidate);
+  }
+  const candidates = [...candidatesByLogicalTask.values()].map(({ started_at, ...candidate }) => candidate);
+  const affected = new Set(repairScope);
+  const selected = new Map();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const candidate of candidates) {
+      const ownsRepairPath = candidate.declared_outputs.some((output) => repairScope.some((relative) => pathsOverlap(output, relative)));
+      const readsAffectedPath = candidate.declared_inputs.some((input) => [...affected].some((relative) => pathsOverlap(input, relative)));
+      if (selected.has(candidate.logical_task_name) || (!ownsRepairPath && !readsAffectedPath)) continue;
+      selected.set(candidate.logical_task_name, candidate);
+      for (const output of candidate.declared_outputs.filter((relative) => !isControlPath(relative))) affected.add(output);
+      changed = true;
+    }
+  }
+  return [...selected.values()].sort((left, right) => left.logical_task_name.localeCompare(right.logical_task_name));
+}
+
+function assertRepairBaselineUnchanged(run, docket) {
+  if (canonicalJson(scientificManifest(run)) !== canonicalJson(docket.baseline)) fail("Scientific artifacts changed after adjudication but before controller rollback; restore the frozen docket baseline before invalidating");
+}
+
+function bindControllerDelta(run, record, affectedPaths) {
+  if (!record.active_repair) return;
+  const before = new Map(record.active_repair.baseline.map((item) => [item.path, item.sha256]));
+  const after = new Map(scientificManifest(run).map((item) => [item.path, item.sha256]));
+  const affected = [...new Set(affectedPaths.map(relativePath))];
+  const covered = (relative) => affected.some((root) => relative === root || relative.startsWith(`${root}/`));
+  record.active_repair.controller_delta = [...new Set([...before.keys(), ...after.keys()])]
+    .filter((relative) => before.get(relative) !== after.get(relative) && covered(relative))
+    .sort()
+    .map((relative) => ({ path: relative, before_sha256: before.get(relative) ?? null, after_sha256: after.get(relative) ?? null }));
+  record.active_repair.semantic_digest = repairDocketSemantic(record.active_repair);
+}
+
+function reconcileTaskLedger(run, invalidatedPaths) {
+  const relative = "environment/task-ledger.json";
+  const file = path.join(run, relative);
+  if (!fs.existsSync(file)) return [];
+  const ledger = readJson(file);
+  if (ledger.schema_version !== 1 || !Array.isArray(ledger.tasks)) fail("Cannot reconcile a malformed environment/task-ledger.json after invalidation");
+  const overlaps = (left, right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+  const reset = new Set();
+  for (const task of ledger.tasks) {
+    if (!task || !nonemptyString(task.id) || !Array.isArray(task.outputs) || !Array.isArray(task.predecessors)) fail("Cannot reconcile a malformed task entry after invalidation");
+    if (task.outputs.some((output) => invalidatedPaths.some((affected) => overlaps(relativePath(output), relativePath(affected))))) reset.add(task.id);
+  }
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const task of ledger.tasks) if (!reset.has(task.id) && task.predecessors.some((id) => reset.has(id))) {
+      reset.add(task.id);
+      changed = true;
+    }
+  }
+  if (!reset.size) return [];
+  for (const task of ledger.tasks) if (reset.has(task.id)) task.status = "pending";
+  writeJson(file, ledger);
+  return [...reset].sort();
 }
 
 function consumeRepairCycle(record, gate) {
@@ -307,6 +833,7 @@ function requiredOutputs(run, record, phase) {
     for (const optional of ["paper/paper.pdf", "delivery/visual-inspection.json"]) outputs.splice(outputs.indexOf(optional), 1);
   }
   if (phase === "contract" && record.mode === "research") outputs.push("contract/evaluator-contract.md", "contract/evaluator-manifest.json");
+  if (phase === "contract" && record.convergence_control?.checklist?.path === GATE_CHECKLIST_CONTRACT_PATH) outputs.push(GATE_CHECKLIST_CONTRACT_PATH);
   return outputs;
 }
 
@@ -340,7 +867,7 @@ function validateBudgets(budgets) {
 }
 
 function validateOrchestrationPolicy(value, schemaVersion) {
-  const expected = schemaVersion === 2 ? LEGACY_1_3_ORCHESTRATION : ORCHESTRATION_POLICY;
+  const expected = schemaVersion === 2 ? LEGACY_1_3_ORCHESTRATION : schemaVersion === 3 ? LEGACY_1_4_ORCHESTRATION : ORCHESTRATION_POLICY;
   if (!value || Object.keys(value).sort().join() !== Object.keys(expected).sort().join()) fail(`Run orchestration policy must contain exactly ${Object.keys(expected).join(", ")}`);
   for (const [key, required] of Object.entries(expected)) {
     if (value[key] !== required) fail(`Invalid orchestration policy at contract/run-config.json#/orchestration/${key}; expected ${JSON.stringify(required)}, received ${JSON.stringify(value[key])}`);
@@ -373,7 +900,7 @@ function verifyRunRecord(run, { allowReceiptDrift = false } = {}) {
   record.charter_revision ??= 1;
   if (!Number.isInteger(record.charter_revision) || record.charter_revision < 1) fail(`Invalid charter revision at ${file}#/charter_revision`);
   const config = readJson(path.join(run, "contract", "run-config.json"));
-  if (![2, 3].includes(config.schema_version)) fail("Active Scientist1 runs require contract/run-config.json schema_version 2 or 3");
+  if (![2, 3, 4].includes(config.schema_version)) fail("Active Scientist1 runs require contract/run-config.json schema_version 2, 3, or 4");
   validateBudgets(config.budgets);
   const orchestration = config.orchestration;
   validateOrchestrationPolicy(orchestration, config.schema_version);
@@ -389,12 +916,167 @@ function verifyRunRecord(run, { allowReceiptDrift = false } = {}) {
   const actualIncidents = fs.existsSync(incidentRoot) ? fs.readdirSync(incidentRoot).filter((name) => name.endsWith(".json")).sort().map((name) => `repairs/incidents/${name}`) : [];
   const anchoredIncidents = record.repair_incidents.map((item) => item.path).sort();
   if (canonicalJson(actualIncidents) !== canonicalJson(anchoredIncidents)) fail("Repair incident files do not match run anchors");
+  const convergenceChecklist = record.convergence_control ? checklistFor(record, run) : null;
   for (const anchor of record.repair_incidents) {
     if (!anchor || !nonemptyString(anchor.path) || !validSha256(anchor.sha256) || hashArtifact(run, anchor.path) !== anchor.sha256) fail(`Invalid repair incident anchor: ${anchor?.path ?? "unknown"}`);
     const incident = readJson(path.join(run, anchor.path));
-    exactKeys(incident, ["schema_version", "at", "phase", "failure_class", "logical_task_name", "summary", "evidence", "required_action"], anchor.path);
-    if (incident.schema_version !== 1 || !Number.isFinite(Date.parse(incident.at)) || !phasesFor(record).includes(incident.phase) || !REPAIR_CLASSES.has(incident.failure_class) || (incident.logical_task_name !== null && !nonemptyString(incident.logical_task_name)) || !nonemptyString(incident.summary) || !nonemptyString(incident.required_action) || !Array.isArray(incident.evidence)) fail(`Malformed repair incident: ${anchor.path}`);
-    for (const evidence of incident.evidence) if (!evidence || !nonemptyString(evidence.path) || !validSha256(evidence.sha256) || hashArtifact(run, evidence.path) !== evidence.sha256) fail(`Repair incident evidence drifted: ${anchor.path}`);
+    if (incident.schema_version === 1) {
+      exactKeys(incident, ["schema_version", "at", "phase", "failure_class", "logical_task_name", "summary", "evidence", "required_action"], anchor.path);
+      if (!Number.isFinite(Date.parse(incident.at)) || !phasesFor(record).includes(incident.phase) || !REPAIR_CLASSES.has(incident.failure_class) || (incident.logical_task_name !== null && !nonemptyString(incident.logical_task_name)) || !nonemptyString(incident.summary) || !nonemptyString(incident.required_action) || !Array.isArray(incident.evidence)) fail(`Malformed repair incident: ${anchor.path}`);
+      for (const evidence of incident.evidence) if (!evidence || !nonemptyString(evidence.path) || !validSha256(evidence.sha256) || hashArtifact(run, evidence.path) !== evidence.sha256) fail(`Repair incident evidence drifted: ${anchor.path}`);
+      continue;
+    }
+    if (incident.schema_version === 3) {
+      exactKeys(incident, ["schema_version", "at", "phase", "failure_class", "logical_task_name", "authority_kind", "absence_paths", "summary", "evidence", "required_action"], anchor.path);
+      if (!Number.isFinite(Date.parse(incident.at)) || !phasesFor(record).includes(incident.phase) || !REPAIR_CLASSES.has(incident.failure_class) || !["controller_checkpoint", "nonpassing_reviewer"].includes(incident.authority_kind) || (incident.authority_kind === "controller_checkpoint" && incident.failure_class !== "checkpoint_rejected") || (incident.authority_kind === "nonpassing_reviewer" && incident.failure_class !== "specialist_failure") || !Array.isArray(incident.absence_paths) || incident.absence_paths.some((item) => !nonemptyString(item)) || !nonemptyString(incident.summary) || !nonemptyString(incident.required_action) || !Array.isArray(incident.evidence)) fail(`Malformed controller repair authority: ${anchor.path}`);
+      for (const absent of incident.absence_paths) relativePath(absent);
+      for (const evidence of incident.evidence) verifySnapshotBinding(run, evidence, anchor.path);
+      continue;
+    }
+    exactKeys(incident, ["schema_version", "at", "phase", "target_phase", "evidence_epoch", "scientific_state", "scientific_state_sha256", "disposition", "source_review", "source_review_receipt", "review_frontier", "proposal", "adjudicator_receipt", "adjudicator_launch", "adjudicator_attempt", "findings", "required_review_roles", "reviewed_check_ids", "strategy", "required_action"], anchor.path);
+    if (incident.schema_version !== 2 || !Number.isFinite(Date.parse(incident.at)) || !phasesFor(record).includes(incident.phase) || !phasesFor(record).includes(incident.target_phase) || !validSha256(incident.evidence_epoch) || !Array.isArray(incident.scientific_state) || !validSha256(incident.scientific_state_sha256) || !CONVERGENCE_DISPOSITIONS.has(incident.disposition) || !Array.isArray(incident.findings) || !incident.findings.length || !Array.isArray(incident.required_review_roles) || !incident.reviewed_check_ids || typeof incident.reviewed_check_ids !== "object" || Array.isArray(incident.reviewed_check_ids) || !nonemptyString(incident.required_action)) fail(`Malformed convergence incident: ${anchor.path}`);
+    if (canonicalJson([...incident.scientific_state].sort((left, right) => left.path.localeCompare(right.path))) !== canonicalJson(incident.scientific_state) || incident.scientific_state.some((binding) => !nonemptyString(binding.path) || !validSha256(binding.sha256)) || manifestDigest(incident.scientific_state) !== incident.scientific_state_sha256) fail(`Convergence incident scientific-state seal drifted: ${anchor.path}`);
+    const reviewed = normalizedReviewedCheckIds(convergenceChecklist, incident.required_review_roles, incident.reviewed_check_ids);
+    if (canonicalJson(reviewed) !== canonicalJson(incident.reviewed_check_ids)) fail(`Convergence incident checklist coverage is not canonical: ${anchor.path}`);
+    for (const binding of [incident.source_review, incident.source_review_receipt, incident.proposal, incident.adjudicator_receipt, incident.adjudicator_launch, incident.adjudicator_attempt].filter(Boolean)) verifySnapshotBinding(run, binding, anchor.path);
+    if ((incident.source_review_receipt === null) !== (incident.review_frontier === null)) fail(`Convergence incident source frontier coverage is incomplete: ${anchor.path}`);
+    if (incident.source_review_receipt) {
+      const sourceReceipt = readJson(path.join(run, incident.source_review_receipt.path));
+      const expectedFrontier = reviewerFrontierFromInputs(sourceReceipt.role, sourceReceipt.input_artifacts);
+      if (canonicalJson(incident.review_frontier) !== canonicalJson(expectedFrontier)) fail(`Convergence incident source frontier drifted: ${anchor.path}`);
+    }
+    for (const finding of incident.findings) {
+      if (!nonemptyString(finding.review_role) || !nonemptyString(finding.check_id) || !nonemptyString(finding.blocker_class) || !nonemptyString(finding.artifact_path) || !["present", "absent"].includes(finding.artifact_state) || !nonemptyString(finding.locator) || !nonemptyString(finding.expected_state) || !nonemptyString(finding.observed_state) || !validSha256(finding.fingerprint) || finding.fingerprint !== repairFingerprint(incident.target_phase, finding) || !validSha256(finding.state_fingerprint) || !Array.isArray(finding.evidence) || !finding.evidence.length || !Array.isArray(finding.repair_paths) || !Array.isArray(finding.introduced_by_paths) || !Array.isArray(finding.introduced_by) || finding.introduced_by.length !== finding.introduced_by_paths.length) fail(`Malformed convergence finding: ${anchor.path}`);
+      if (phasesFor(record).indexOf(incident.target_phase) > phasesFor(record).indexOf(incident.phase)) fail(`Convergence repair target is later than its review origin: ${anchor.path}`);
+      if (incident.disposition !== "REPAIR_REGRESSION" && !reviewRoleMatchesPhase(finding.review_role, incident.phase)) fail(`Convergence finding role is bound to the wrong origin phase: ${anchor.path}`);
+      for (const evidence of finding.evidence) verifySnapshotBinding(run, evidence, anchor.path);
+      if (finding.state_fingerprint !== findingLocalStateFingerprint(run, finding, true)) fail(`Convergence finding-local state drifted: ${anchor.path}`);
+      for (const binding of finding.introduced_by) {
+        if (!binding || !finding.introduced_by_paths.includes(binding.source_path) || !["present", "absent"].includes(binding.state) || (binding.state === "present" && (!nonemptyString(binding.path) || !validSha256(binding.sha256))) || (binding.state === "absent" && (binding.path !== null || binding.sha256 !== null))) fail(`Malformed repair-regression state binding: ${anchor.path}`);
+        if (binding.state === "present") verifySnapshotBinding(run, binding, anchor.path);
+      }
+    }
+    if (incident.strategy !== null) {
+      if (!incident.strategy || !convergenceChecklist.repair_cause_codes?.includes(incident.strategy.cause_code) || !convergenceChecklist.repair_action_codes?.includes(incident.strategy.action_code) || !nonemptyString(incident.strategy.cause) || !nonemptyString(incident.strategy.changed_action) || !Array.isArray(incident.strategy.evidence) || !incident.strategy.evidence.length || !Array.isArray(incident.strategy.evidence_provenance) || !validSha256(incident.strategy.provenance_fingerprint) || !Array.isArray(incident.strategy.procedure) || !incident.strategy.procedure.length || !Array.isArray(incident.strategy.controller_changed_state) || !validSha256(incident.strategy.evidence_fingerprint) || !validSha256(incident.strategy.causal_fingerprint) || !validSha256(incident.strategy.fingerprint)) fail(`Malformed convergence strategy: ${anchor.path}`);
+      for (const evidence of incident.strategy.evidence) verifySnapshotBinding(run, evidence, anchor.path);
+      for (const procedure of incident.strategy.procedure) {
+        if (!procedure || !nonemptyString(procedure.source_path) || !["present", "absent"].includes(procedure.state) || (procedure.state === "present" && (!nonemptyString(procedure.path) || !validSha256(procedure.sha256))) || (procedure.state === "absent" && (procedure.path !== null || procedure.sha256 !== null))) fail(`Malformed convergence strategy procedure state: ${anchor.path}`);
+        if (procedure.state === "present") verifySnapshotBinding(run, procedure, anchor.path);
+      }
+      for (const changedState of incident.strategy.controller_changed_state) {
+        if (!changedState || !nonemptyString(changedState.source_path) || !["present", "absent"].includes(changedState.state) || (changedState.state === "present" && (!nonemptyString(changedState.path) || !validSha256(changedState.sha256))) || (changedState.state === "absent" && (changedState.path !== null || changedState.sha256 !== null))) fail(`Malformed controller-observed strategy state: ${anchor.path}`);
+        if (changedState.state === "present") verifySnapshotBinding(run, changedState, anchor.path);
+      }
+      const procedurePaths = incident.strategy.procedure.map((binding) => binding.source_path).sort();
+      const findingScope = [...new Set(incident.findings.flatMap((finding) => finding.repair_paths))].sort();
+      if (canonicalJson(procedurePaths) !== canonicalJson(findingScope)) fail(`Convergence strategy does not bind the complete exact finding scope: ${anchor.path}`);
+      const procedureSet = new Set(incident.strategy.procedure.map((binding) => binding.source_path));
+      const expectedProvenance = createHash("sha256").update(canonicalJson(evidenceProvenanceIdentity(run, incident.strategy.evidence_provenance, true))).digest("hex");
+      const evidenceIdentity = { evidence: incident.strategy.evidence.filter((binding) => !isControlPath(binding.source_path) && !isReviewOutputPath(binding.source_path) && !procedureSet.has(binding.source_path)).map((binding) => ({ path: binding.source_path, content_sha256: contentHash(path.join(run, binding.path)) })).sort((left, right) => left.path.localeCompare(right.path)), controller_absence: incident.strategy.procedure.filter((binding) => binding.state === "absent").map((binding) => binding.source_path).sort(), controller_changed_state: incident.strategy.controller_changed_state.map((binding) => artifactStateIdentity(run, binding, true)).sort((left, right) => left.path.localeCompare(right.path)) };
+      if (incident.strategy.evidence_provenance.length !== evidenceIdentity.evidence.length || canonicalJson(incident.strategy.evidence_provenance.map((item) => item.evidence_path).sort()) !== canonicalJson(evidenceIdentity.evidence.map((item) => item.path).sort())) fail(`Convergence strategy causal-evidence provenance is incomplete: ${anchor.path}`);
+      for (const provenance of incident.strategy.evidence_provenance) {
+        if (!provenance || !["frozen_input", "checkpoint_output"].includes(provenance.kind) || !nonemptyString(provenance.evidence_path) || !Array.isArray(provenance.authorities) || !provenance.authorities.length) fail(`Malformed convergence strategy provenance: ${anchor.path}`);
+        for (const authority of provenance.authorities) verifySnapshotBinding(run, authority, anchor.path);
+      }
+      if (incident.strategy.provenance_fingerprint !== expectedProvenance) fail(`Convergence strategy provenance fingerprint drifted: ${anchor.path}`);
+      const expectedEvidence = createHash("sha256").update(canonicalJson(evidenceIdentity)).digest("hex");
+      const causalIdentity = { cause_code: incident.strategy.cause_code, action_code: incident.strategy.action_code, evidence_fingerprint: expectedEvidence, ...evidenceIdentity };
+      const expectedCausal = createHash("sha256").update(canonicalJson(causalIdentity)).digest("hex");
+      const expected = createHash("sha256").update(canonicalJson({ causal: causalIdentity, provenance_fingerprint: expectedProvenance, procedure: incident.strategy.procedure.map((binding) => artifactStateIdentity(run, binding, true)).sort((left, right) => left.path.localeCompare(right.path)) })).digest("hex");
+      if (incident.strategy.evidence_fingerprint !== expectedEvidence) fail(`Convergence evidence-state strategy fingerprint drifted: ${anchor.path}`);
+      if (incident.strategy.causal_fingerprint !== expectedCausal) fail(`Convergence causal strategy fingerprint drifted: ${anchor.path}`);
+      if (incident.strategy.fingerprint !== expected) fail(`Convergence strategy fingerprint drifted: ${anchor.path}`);
+    }
+  }
+  if (config.schema_version === 4 && !record.convergence_control) fail("Scientist1 1.5 run lacks its frozen convergence controller");
+  if (record.convergence_control) {
+    if (!convergenceChecklist) fail("Scientist1 convergence checklist is unavailable");
+    if (record.convergence_control.schema_version !== 1 || record.convergence_control.release !== "1.5.0") fail("Malformed Scientist1 convergence-control binding");
+    if (record.convergence_control.migrated_from !== null && record.convergence_control.migrated_from !== undefined && !validSha256(record.convergence_control.source_ledger_sha256)) fail("Migrated convergence control lacks its immutable source-ledger digest");
+    if (!Array.isArray(record.convergence_control.frontier_queue ?? [])) fail("Convergence-control frontier queue is malformed");
+    for (const queued of record.convergence_control.frontier_queue ?? []) {
+      if (!queued || !nonemptyString(queued.path) || !validSha256(queued.sha256) || hashArtifact(run, queued.path) !== queued.sha256) fail("Queued convergence frontier anchor is malformed");
+      const frontier = readJson(path.join(run, queued.path));
+      if (frontier.schema_version !== 1 || !phasesFor(record).includes(frontier.phase) || frontier.source_ledger_sha256 !== record.convergence_control.source_ledger_sha256) fail("Queued migration frontier differs from its frozen source ledger");
+    }
+    if (!Array.isArray(record.convergence_control.superseded_frontiers ?? [])) fail("Convergence-control superseded-frontier ledger is malformed");
+    const supersededPaths = new Set();
+    for (const superseded of record.convergence_control.superseded_frontiers ?? []) {
+      exactKeys(superseded, ["frontier", "phase", "superseded_by", "target_phase", "docket_id"], "run.json#/convergence_control/superseded_frontiers");
+      if (!superseded.frontier || !nonemptyString(superseded.frontier.path) || !validSha256(superseded.frontier.sha256) || hashArtifact(run, superseded.frontier.path) !== superseded.frontier.sha256 || supersededPaths.has(superseded.frontier.path)) fail("Superseded migration frontier anchor is malformed or duplicated");
+      const frontier = readJson(path.join(run, superseded.frontier.path));
+      if (frontier.schema_version !== 1 || frontier.phase !== superseded.phase || frontier.source_ledger_sha256 !== record.convergence_control.source_ledger_sha256 || !phasesFor(record).includes(superseded.target_phase) || phasesFor(record).indexOf(superseded.target_phase) > phasesFor(record).indexOf(superseded.phase) || !validSha256(superseded.docket_id)) fail("Superseded migration frontier disposition is malformed");
+      if (!superseded.superseded_by || !nonemptyString(superseded.superseded_by.path) || !validSha256(superseded.superseded_by.sha256) || !Array.isArray(record.invalidation_roots) || !record.invalidation_roots.some((anchor) => canonicalJson(anchor) === canonicalJson(superseded.superseded_by))) fail("Superseded migration frontier lacks its immutable invalidation authority");
+      supersededPaths.add(superseded.frontier.path);
+    }
+    if (record.convergence_control.migrated_from !== null && record.convergence_control.migrated_from !== undefined) {
+      const migrationRoot = path.join(run, path.dirname(GATE_CHECKLIST_MIGRATION_PATH));
+      const frontiers = fs.readdirSync(migrationRoot).filter((name) => /^migration-frontier-[^/]+\.json$/.test(name)).sort().map((name) => `${path.dirname(GATE_CHECKLIST_MIGRATION_PATH)}/${name}`);
+      const queued = new Set((record.convergence_control.frontier_queue ?? []).map((anchor) => anchor.path));
+      const pending = record.pending_adjudication?.path?.includes("/migration-frontier-") ? new Set([record.pending_adjudication.path]) : new Set();
+      const adjudicated = new Set((record.repair_incidents ?? []).flatMap((anchor) => {
+        const incident = readJson(path.join(run, anchor.path));
+        return incident.schema_version === 2 && incident.source_review?.source_path?.includes("/migration-frontier-") ? [incident.source_review.source_path] : [];
+      }));
+      for (const frontier of frontiers) {
+        const dispositions = Number(queued.has(frontier)) + Number(pending.has(frontier)) + Number(adjudicated.has(frontier)) + Number(supersededPaths.has(frontier));
+        if (dispositions !== 1) fail(`Migration frontier ${frontier} must have exactly one queued, pending, adjudicated, or superseded disposition`);
+      }
+      const known = new Set(frontiers);
+      for (const frontier of [...queued, ...pending, ...adjudicated, ...supersededPaths]) if (!known.has(frontier)) fail(`Convergence control references unknown migration frontier ${frontier}`);
+    }
+    record.repair_closures ??= [];
+    if (!Array.isArray(record.repair_closures)) fail("Run repair closure anchors are malformed");
+    for (const anchor of record.repair_closures) {
+      if (!anchor || !nonemptyString(anchor.path) || !validSha256(anchor.sha256) || hashArtifact(run, anchor.path) !== anchor.sha256) fail(`Invalid repair closure anchor: ${anchor?.path ?? "unknown"}`);
+      const closure = readJson(path.join(run, anchor.path));
+      exactKeys(closure, ["schema_version", "at", "docket_id", "semantic_digest", "target_phase", "evidence_epoch", "post_evidence_epoch", "post_scientific_state", "post_scientific_state_sha256", "post_manifest_sha256", "delta_fingerprint", "docket", "incident", "regression_incidents", "resolved_fingerprints", "reviewed_check_ids", "review_frontiers", "repair_scope", "changed_paths", "review_receipts", "review_launches", "review_attempts", "review_outputs", "dependent_receipts", "dependent_launches", "dependent_attempts", "dependent_outputs", "repaired_artifacts", "absence_proof", "adjudicator_receipt", "adjudicator_launch", "adjudicator_attempt", "proposal", "required_action"], anchor.path);
+      if (closure.schema_version !== 2 || !phasesFor(record).includes(closure.target_phase) || !validSha256(closure.evidence_epoch) || !validSha256(closure.post_evidence_epoch) || !Array.isArray(closure.post_scientific_state) || !validSha256(closure.post_scientific_state_sha256) || !validSha256(closure.semantic_digest) || !validSha256(closure.post_manifest_sha256) || !validSha256(closure.delta_fingerprint) || !Array.isArray(closure.resolved_fingerprints) || !Array.isArray(closure.repair_scope) || !Array.isArray(closure.changed_paths) || !Array.isArray(closure.review_frontiers) || !Array.isArray(closure.review_receipts) || !Array.isArray(closure.review_launches) || !Array.isArray(closure.review_attempts) || !Array.isArray(closure.review_outputs) || !Array.isArray(closure.dependent_receipts) || !Array.isArray(closure.dependent_launches) || !Array.isArray(closure.dependent_attempts) || !Array.isArray(closure.dependent_outputs) || !Array.isArray(closure.repaired_artifacts) || !Array.isArray(closure.regression_incidents) || !closure.reviewed_check_ids) fail(`Malformed repair closure: ${anchor.path}`);
+      if (canonicalJson([...closure.post_scientific_state].sort((left, right) => left.path.localeCompare(right.path))) !== canonicalJson(closure.post_scientific_state) || closure.post_scientific_state.some((binding) => !nonemptyString(binding.path) || !validSha256(binding.sha256)) || manifestDigest(closure.post_scientific_state) !== closure.post_scientific_state_sha256) fail(`Repair closure scientific-state seal drifted: ${anchor.path}`);
+      if (!closure.docket || closure.docket.docket_id !== closure.docket_id || closure.docket.target_phase !== closure.target_phase || repairDocketSemantic(closure.docket) !== closure.semantic_digest) fail(`Repair closure docket semantics drifted: ${anchor.path}`);
+      if (canonicalJson(closure.repaired_artifacts.map((item) => item.source_path).sort()) !== canonicalJson([...closure.repair_scope].sort()) || closure.review_receipts.length !== closure.review_launches.length || closure.review_receipts.length !== closure.review_attempts.length) fail(`Repair closure authority coverage is incomplete: ${anchor.path}`);
+      for (const repaired of closure.repaired_artifacts) {
+        if (!repaired || !["present", "absent"].includes(repaired.state) || (repaired.state === "present" && (!nonemptyString(repaired.path) || !validSha256(repaired.sha256))) || (repaired.state === "absent" && (repaired.path !== null || repaired.sha256 !== null))) fail(`Malformed repaired-artifact post-state: ${anchor.path}`);
+        if (repaired.state === "present") verifySnapshotBinding(run, repaired, anchor.path);
+      }
+      if (closure.dependent_receipts.length !== (closure.docket.dependent_regeneration ?? []).length || closure.dependent_receipts.length !== closure.dependent_launches.length || closure.dependent_receipts.length !== closure.dependent_attempts.length) fail(`Repair closure dependent-regeneration coverage is incomplete: ${anchor.path}`);
+      if (closure.review_frontiers.length !== closure.review_launches.length) fail(`Repair closure reviewer frontier coverage is incomplete: ${anchor.path}`);
+      for (const [index, frontier] of closure.review_frontiers.entries()) {
+        const launch = readJson(path.join(run, closure.review_launches[index].path));
+        const inputs = [...launch.input_artifacts]
+          .map((item) => ({ path: relativePath(item.path), sha256: item.sha256 }))
+          .filter((item) => !isControlPath(item.path) && !isReviewOutputPath(item.path) && !["request.md", "study-plan.md"].includes(item.path))
+          .sort((left, right) => left.path.localeCompare(right.path));
+        const expected = createHash("sha256").update(canonicalJson(inputs)).digest("hex");
+        if (!frontier || frontier.role !== launch.role || frontier.input_digest !== expected || canonicalJson(frontier.inputs) !== canonicalJson(inputs)) fail(`Repair closure reviewer frontier drifted: ${anchor.path}`);
+      }
+      normalizedReviewedCheckIds(convergenceChecklist, Object.keys(closure.reviewed_check_ids), closure.reviewed_check_ids);
+      for (const binding of [closure.incident, ...closure.regression_incidents, ...closure.review_receipts, ...closure.review_launches, ...closure.review_attempts, ...closure.review_outputs, ...closure.dependent_receipts, ...closure.dependent_launches, ...closure.dependent_attempts, ...closure.dependent_outputs, closure.absence_proof, closure.adjudicator_receipt, closure.adjudicator_launch, closure.adjudicator_attempt, closure.proposal].filter(Boolean)) verifySnapshotBinding(run, binding, anchor.path);
+    }
+    if (record.pending_adjudication !== null && record.pending_adjudication !== undefined) {
+      if (!record.pending_adjudication || !nonemptyString(record.pending_adjudication.path) || !validSha256(record.pending_adjudication.sha256) || hashArtifact(run, record.pending_adjudication.path) !== record.pending_adjudication.sha256) fail("Pending repair adjudication anchor is malformed");
+      const pendingValue = readJson(path.join(run, record.pending_adjudication.path));
+      if (!Array.isArray(pendingValue.evidence)) fail("Pending repair adjudication lacks frozen evidence bindings");
+      for (const binding of pendingValue.evidence) {
+        if (!binding || !nonemptyString(binding.path) || !validSha256(binding.sha256) || hashArtifact(run, binding.path) !== binding.sha256) fail(`Pending adjudication evidence drifted: ${binding?.path ?? "unknown"}`);
+      }
+      if (pendingValue.schema_version === 1 && pendingValue.source_ledger_sha256 !== record.convergence_control.source_ledger_sha256) fail("Migration frontier differs from its frozen source-ledger digest");
+    }
+    if (record.active_repair !== null && record.active_repair !== undefined) {
+      const docket = record.active_repair;
+      if (!validSha256(docket.docket_id) || !validSha256(docket.semantic_digest) || !docket.incident || !nonemptyString(docket.incident.path) || !validSha256(docket.incident.sha256) || hashArtifact(run, docket.incident.path) !== docket.incident.sha256 || !phasesFor(record).includes(docket.target_phase) || typeof docket.requires_invalidation !== "boolean" || !["scientific_delta", "deterministic_delta"].includes(docket.repair_mode) || !Array.isArray(docket.finding_fingerprints) || !docket.finding_fingerprints.length || !Array.isArray(docket.repair_scope) || !docket.repair_scope.length || !Array.isArray(docket.scope_baseline) || docket.scope_baseline.length !== docket.repair_scope.length || !Array.isArray(docket.controller_delta ?? []) || !Array.isArray(docket.dependent_regeneration ?? []) || !Array.isArray(docket.required_review_roles) || !Array.isArray(docket.baseline) || !Array.isArray(docket.regression_incidents ?? [])) fail("Active repair docket is malformed");
+      for (const state of docket.scope_baseline) if (!state || !docket.repair_scope.includes(state.path) || !["file", "absent"].includes(state.kind) || (state.kind === "file") !== validSha256(state.sha256) || (state.kind === "absent" && state.sha256 !== null)) fail("Active repair docket scope baseline is malformed");
+      for (const delta of docket.controller_delta ?? []) if (!delta || !nonemptyString(delta.path) || (delta.before_sha256 !== null && !validSha256(delta.before_sha256)) || (delta.after_sha256 !== null && !validSha256(delta.after_sha256))) fail("Active repair docket controller delta is malformed");
+      for (const dependent of docket.dependent_regeneration ?? []) if (!dependent || !nonemptyString(dependent.source_launch) || !validSha256(dependent.source_launch_sha256) || hashArtifact(run, dependent.source_launch) !== dependent.source_launch_sha256 || !nonemptyString(dependent.role) || !nonemptyString(dependent.logical_task_name) || !Array.isArray(dependent.declared_inputs) || !Array.isArray(dependent.declared_outputs) || !dependent.declared_outputs.length || !Array.isArray(dependent.allowed_external_sources)) fail("Active repair docket dependent-regeneration binding is malformed");
+      if (docket.semantic_digest !== repairDocketSemantic(docket)) fail("Active repair docket semantic binding drifted");
+      const docketIncidents = [docket.incident, ...(docket.regression_incidents ?? [])].map((binding) => {
+        if (!binding || !nonemptyString(binding.path) || !validSha256(binding.sha256) || hashArtifact(run, binding.path) !== binding.sha256) fail("Active repair docket incident binding drifted");
+        return readJson(path.join(run, binding.path));
+      });
+      const expectedFingerprints = [...new Set(docketIncidents.flatMap((incident) => incident.findings.map((finding) => finding.fingerprint)))].sort();
+      const expectedRoles = [...new Set(docketIncidents.flatMap((incident) => incident.required_review_roles))].sort();
+      if (canonicalJson([...docket.finding_fingerprints].sort()) !== canonicalJson(expectedFingerprints) || canonicalJson([...docket.required_review_roles].sort()) !== canonicalJson(expectedRoles)) fail("Active repair docket differs from its immutable incidents");
+    }
   }
   if (!record.checkpoints || Array.isArray(record.checkpoints) || typeof record.checkpoints !== "object") fail("Run checkpoint anchors are malformed");
   if (record.pending_checkpoint !== null && (!record.pending_checkpoint || !phasesFor(record).includes(record.pending_checkpoint.phase) || !Number.isFinite(Date.parse(record.pending_checkpoint.started_at)) || record.pending_checkpoint.phase !== record.phase || record.checkpoints[record.pending_checkpoint.phase])) fail("Run pending checkpoint journal is malformed");
@@ -702,7 +1384,7 @@ function verifyAttemptRecord(run, launchRelative, launch) {
   if (!nonemptyString(launch.logical_task_name) || !Number.isInteger(launch.attempt) || launch.attempt < 1) fail(`Launch ${launchRelative} lacks a valid logical task and accepted-attempt number`);
   if (!Number.isInteger(launch.attempt) || launch.attempt < 1) fail(`Launch ${launchRelative} has an invalid accepted-attempt number`);
   if (!nonemptyString(launch.role) || !Array.isArray(launch.declared_outputs) || !launch.declared_outputs.length) fail(`Launch ${launchRelative} lacks a stable role/output work identity`);
-  const workKey = createHash("sha256").update(canonicalJson({ contract_revision: launch.contract_revision ?? 1, charter_revision: launch.charter_revision ?? 1, role: launch.role, declared_outputs: [...launch.declared_outputs].sort() })).digest("hex");
+  const workKey = createHash("sha256").update(canonicalJson({ contract_revision: launch.contract_revision ?? 1, charter_revision: launch.charter_revision ?? 1, role: launch.role, declared_outputs: [...launch.declared_outputs].sort(), ...(launch.repair_binding ? { repair_docket_id: launch.repair_binding.docket_id, repair_semantic_digest: launch.repair_binding.semantic_digest } : {}) })).digest("hex");
   if (launch.work_key_sha256 !== workKey) fail(`Launch ${launchRelative} has an invalid role/output work identity`);
   const versionedRelative = `role-attempts/${launch.logical_task_name}/${workKey}/attempt-${launch.attempt}.json`;
   const relative = versionedRelative;
@@ -713,13 +1395,15 @@ function verifyAttemptRecord(run, launchRelative, launch) {
   return relative;
 }
 
-function verifyRoleReceipt(run, relative) {
+function verifyRoleReceipt(run, relative, options = {}) {
   const receipt = readJson(artifactPath(run, relative).target);
   const task = path.basename(relative, ".json");
   if (receipt.schema_version !== 1 || receipt.agent_task !== task || !nonemptyString(receipt.role)) fail(`Invalid role receipt identity at ${relative}; expected agent_task ${task}, received ${JSON.stringify(receipt.agent_task)}`);
   if (!["COMPLETE", "BLOCKED", "FAILED"].includes(receipt.execution_status)) fail(`Invalid execution_status at ${relative}; expected COMPLETE|BLOCKED|FAILED, received ${JSON.stringify(receipt.execution_status)}`);
   if (!["PASS", "REVISE", "FAIL", "NOT_ASSESSED"].includes(receipt.gate_verdict)) fail(`Invalid gate_verdict at ${relative}; expected PASS|REVISE|FAIL|NOT_ASSESSED, received ${JSON.stringify(receipt.gate_verdict)}`);
-  if (receipt.execution_status !== "COMPLETE" || receipt.gate_verdict !== "PASS") fail(`Unpromotable role receipt at ${relative}; expected execution_status COMPLETE and gate_verdict PASS, received ${receipt.execution_status}/${receipt.gate_verdict}`);
+  if (options.allowReviewFailure === true) {
+    if (receipt.execution_status !== "COMPLETE" || !["REVISE", "FAIL"].includes(receipt.gate_verdict)) fail(`Source review receipt at ${relative} must be COMPLETE/REVISE or COMPLETE/FAIL; received ${receipt.execution_status}/${receipt.gate_verdict}`);
+  } else if (receipt.execution_status !== "COMPLETE" || receipt.gate_verdict !== "PASS") fail(`Unpromotable role receipt at ${relative}; expected execution_status COMPLETE and gate_verdict PASS, received ${receipt.execution_status}/${receipt.gate_verdict}`);
   if (receipt.fork_turns !== "none" || !nonemptyString(receipt.model) || !nonemptyString(receipt.reasoning_effort)) fail(`Invalid runtime declaration at ${relative}; expected fork_turns none plus non-empty model/reasoning_effort`);
   if (!Array.isArray(receipt.declared_inputs) || !Array.isArray(receipt.allowed_external_sources) || !Array.isArray(receipt.external_results_used) || !Array.isArray(receipt.environment_changes) || !Array.isArray(receipt.outputs) || !Array.isArray(receipt.undeclared_inputs_accessed) || !Array.isArray(receipt.limitations)) fail(`Malformed role receipt: ${relative}`);
   if (receipt.undeclared_inputs_accessed.length) fail(`Role accessed undeclared inputs: ${relative}`);
@@ -765,7 +1449,13 @@ function verifyRoleReceipt(run, relative) {
   const record = readJson(path.join(run, "run.json"));
   const expectedLogicalTask = launch.logical_task_name;
   const expectedAttempt = launch.attempt;
-  if (!nonemptyString(expectedLogicalTask) || !Number.isInteger(expectedAttempt) || expectedAttempt < 1 || launch.contract_revision !== record.contract_revision || launch.charter_revision !== record.charter_revision || launch.role_contract_sha256 !== fileSha256(ROLE_CONTRACT_FILE) || launch.gate_schema_version !== 1) fail(`Hash-bound launch metadata is invalid or uses a stale role contract at ${launchRelative}`);
+  const currentRoleHash = fileSha256(ROLE_CONTRACT_FILE);
+  const validRoleContract = (launch.role_contract_sha256 === currentRoleHash && [1, 2].includes(launch.gate_schema_version)) || (launch.role_contract_sha256 === LEGACY_1_4_ROLE_CONTRACT_SHA256 && launch.gate_schema_version === 1);
+  if (!nonemptyString(expectedLogicalTask) || !Number.isInteger(expectedAttempt) || expectedAttempt < 1 || launch.contract_revision !== record.contract_revision || launch.charter_revision !== record.charter_revision || !validRoleContract) fail(`Hash-bound launch metadata is invalid or uses an unsupported role contract at ${launchRelative}`);
+  if (launch.repair_binding) {
+    const binding = launch.repair_binding;
+    if (launch.gate_schema_version !== 2 || !validSha256(binding.docket_id) || !validSha256(binding.semantic_digest) || !nonemptyString(binding.incident_path) || !validSha256(binding.incident_sha256) || hashArtifact(run, binding.incident_path) !== binding.incident_sha256 || !["scientific_delta", "deterministic_delta"].includes(binding.repair_mode) || !Array.isArray(binding.finding_fingerprints) || !Array.isArray(binding.repair_scope) || !Array.isArray(binding.scope_baseline) || !Array.isArray(binding.controller_delta) || !Array.isArray(binding.dependent_regeneration ?? []) || !Array.isArray(binding.baseline)) fail(`Launch ${launchRelative} has a malformed repair-docket binding`);
+  }
   if (receipt.launch_record !== launchRelative || receipt.logical_task_name !== expectedLogicalTask || receipt.attempt !== expectedAttempt || receipt.contract_revision !== launch.contract_revision || receipt.charter_revision !== launch.charter_revision || JSON.stringify(receipt.predecessor) !== JSON.stringify(launch.predecessor) || receipt.model_routing_sha256 !== launch.model_routing_sha256 || receipt.role_contract_sha256 !== launch.role_contract_sha256 || receipt.assignment_sha256 !== launch.assignment_sha256 || receipt.task_brief_sha256 !== launch.task_brief_sha256 || receipt.gate_schema_version !== launch.gate_schema_version) fail(`Hash-bound receipt metadata differs from ${launchRelative}`);
   const handoff = receipt.handoff;
   if (!handoff || !nonemptyString(handoff.summary) || !nonemptyString(handoff.recommended_next_action) || ["decisions", "evidence_ids", "conflicts", "unresolved"].some((field) => !Array.isArray(handoff[field]) || handoff[field].some((item) => !nonemptyString(item)))) fail(`Role receipt ${relative} lacks a compact saved handoff`);
@@ -774,7 +1464,7 @@ function verifyRoleReceipt(run, relative) {
   if (JSON.stringify(receiptInputs) !== JSON.stringify(launch.input_artifacts)) fail(`Receipt input hashes differ from supervisor launch bindings at ${relative}`);
   const boundOutputs = outputs.filter((output) => output !== relative);
   verifyArtifactBindings(run, receipt.output_artifacts, boundOutputs, `${relative}#/output_artifacts`);
-  return { role: receipt.role, agent_task: receipt.agent_task, logical_task_name: launch.logical_task_name, attempt: launch.attempt, attempt_record: attemptRecord, hash_bound: true, inputs, outputs: outputs.filter((output) => !environmentArtifacts.has(output)) };
+  return { role: receipt.role, agent_task: receipt.agent_task, logical_task_name: launch.logical_task_name, attempt: launch.attempt, attempt_record: attemptRecord, gate_verdict: receipt.gate_verdict, hash_bound: true, inputs, outputs: outputs.filter((output) => !environmentArtifacts.has(output)) };
 }
 
 function outputOwned(record, expected) {
@@ -1841,10 +2531,12 @@ function configure(runArg, profile = "pilot", mode = "research", customProfilePa
   const budgets = profile === "custom"
     ? validateBudgets(readJson(artifactPath(run, customProfilePath || "contract/custom-profile.json").target))
     : PROFILE_BUDGETS[profile];
-  writeJson(path.join(run, "contract", "run-config.json"), { schema_version: 3, mode, search_profile: profile, budgets, orchestration: ORCHESTRATION_POLICY });
+  writeJson(path.join(run, "contract", "run-config.json"), { schema_version: 4, mode, search_profile: profile, budgets, orchestration: ORCHESTRATION_POLICY });
   const interpreterTarget = path.join(run, I1_INTERPRETER_PATH);
   fs.mkdirSync(path.dirname(interpreterTarget), { recursive: true });
   fs.copyFileSync(BUNDLED_I1_INTERPRETER, interpreterTarget, fs.constants.COPYFILE_EXCL);
+  const checklistTarget = path.join(run, GATE_CHECKLIST_CONTRACT_PATH);
+  fs.copyFileSync(GATE_CHECKLIST_FILE, checklistTarget, fs.constants.COPYFILE_EXCL);
   process.stdout.write(`${path.join(run, "contract", "run-config.json")}\n`);
 }
 
@@ -1853,10 +2545,11 @@ function init(runArg) {
   if (!runArg || !fs.existsSync(run) || !fs.statSync(run).isDirectory()) fail("init requires an existing run directory");
   if (fs.existsSync(path.join(run, "run.json"))) fail("run.json already exists; refusing to reinitialize evidence");
   const config = readJson(path.join(run, "contract", "run-config.json"));
-  if (config.schema_version !== 3 || !PROFILES.has(config.search_profile) || !MODES.has(config.mode)) fail("Invalid frozen run configuration");
+  if (config.schema_version !== 4 || !PROFILES.has(config.search_profile) || !MODES.has(config.mode)) fail("Invalid frozen run configuration");
   validateBudgets(config.budgets);
   validateOrchestrationPolicy(config.orchestration, config.schema_version);
   hashArtifact(run, I1_INTERPRETER_PATH);
+  hashArtifact(run, GATE_CHECKLIST_CONTRACT_PATH);
   if (config.search_profile !== "custom" && JSON.stringify(config.budgets) !== JSON.stringify(PROFILE_BUDGETS[config.search_profile])) fail(`${config.search_profile} budgets do not match the built-in profile`);
   for (const required of ["request.md", "study-plan.md"]) hashArtifact(run, required);
   fs.mkdirSync(path.join(run, "receipts", "superseded"), { recursive: true });
@@ -1883,6 +2576,11 @@ function init(runArg) {
     charter_revision: 1,
     repair_waves: {},
     repair_incidents: [],
+    convergence_control: { schema_version: 1, release: "1.5.0", checklist: entry(run, GATE_CHECKLIST_CONTRACT_PATH), migrated_from: null, frontier_queue: [], superseded_frontiers: [] },
+    pending_adjudication: null,
+    active_repair: null,
+    repair_closures: [],
+    sealed_review_frontier: null,
     last_checkpoint: null,
     invalidation_roots: [],
     checkpoints: {},
@@ -1924,25 +2622,63 @@ function bindApproval(runArg, draftId, approvedAt, executionAuthority) {
   process.stdout.write(`${target}\n`);
 }
 
-function preserveCheckpointRejection(runArg, phase, message) {
+function preserveCheckpointRejection(context, message) {
   try {
-    const run = path.resolve(runArg || "");
+    if (!context) return;
+    const { run, phase, evidence_paths: evidencePaths, absence_paths: absencePaths } = context;
     const record = readJson(path.join(run, "run.json"));
-    if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint || !phasesFor(record).includes(phase) || !validSha256(record.approval_sha256)) return;
+    if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint || record.pending_adjudication || record.active_repair || record.phase !== phase || !validSha256(record.approval_sha256)) return;
     saveRepairIncident(run, record, {
       failure_class: "checkpoint_rejected",
+      authority_kind: "controller_checkpoint",
+      absence_paths: absencePaths,
       logical_task_name: null,
       summary: String(message || "Checkpoint validation failed.").split("\n")[0].slice(0, 1000),
-      evidence_paths: [],
+      evidence_paths: evidencePaths,
       required_action: `Repair only the failed ${phase} gate, preserve prior evidence, and retry the same checkpoint.`,
     });
-  } catch {
+  } catch (error) {
     // The original validator failure remains authoritative when incident
     // preservation itself cannot safely update the ledger.
+    process.stderr.write(`Checkpoint rejection could not be preserved for adjudication: ${error.message}\n`);
   }
 }
 
+function queueReviewFailure(runArg, phase, receiptArg) {
+  const run = path.resolve(runArg || "");
+  const record = verifyRunRecord(run);
+  if (!record.convergence_control || !["running", "repairing"].includes(record.state) || record.pending_checkpoint || record.pending_adjudication || record.active_repair) fail("A non-passing review can be queued only on an open Scientist1 1.5 review frontier");
+  if (phase !== record.phase) fail(`Review failure target ${phase} is not the current open phase ${record.phase}; completed phase checklists cannot be reopened by a late reviewer`);
+  const receiptRelative = relativePath(receiptArg || "");
+  if (!/^role-receipts\/[^/]+\.json$/.test(receiptRelative)) fail("queue-review-failure requires one role-receipts/<task>.json path");
+  const verified = verifyRoleReceipt(run, receiptRelative, { allowReviewFailure: true });
+  if (verified.role === "checkpoint_reviewer" || !reviewRoleMatchesPhase(verified.role, phase)) fail(`Review role ${verified.role} cannot originate a ${phase} scientific-review frontier`);
+  if (!verified.outputs.length || verified.outputs.some((output) => !reviewOutputAllowed(verified.role, output))) fail(`Review role ${verified.role} must write only its release-owned canonical review output before it can originate a repair frontier`);
+  const frontier = reviewerFrontier(run, receiptRelative, verified);
+  const evidenceEpoch = repairEvidenceEpoch(run, record, phase);
+  const roleAlreadySealed = convergenceIncidents(run, record, phase, evidenceEpoch).some((incident) => Object.keys(incident.reviewed_check_ids ?? {}).includes(verified.role))
+    || convergenceClosures(run, record, phase).some((closure) => closure.post_evidence_epoch === evidenceEpoch && Object.keys(closure.reviewed_check_ids ?? {}).includes(verified.role));
+  if (roleAlreadySealed) fail(`The ${verified.role} release checklist is already sealed for the current controller-observed scientific state; declared-input padding cannot open another docket`);
+  const alreadyClosed = convergenceClosures(run, record, phase).some((closure) => (closure.review_frontiers ?? []).some((prior) => prior.role === frontier.role && prior.input_digest === frontier.input_digest))
+    || convergenceIncidents(run, record, phase).some((incident) => incident.disposition === "REVIEWER_FALSE_POSITIVE" && incident.review_frontier?.role === frontier.role && incident.review_frontier.input_digest === frontier.input_digest);
+  if (alreadyClosed) fail(`The ${verified.role} checklist is already closed for this exact frozen input set; unchanged evidence cannot open another docket`);
+  const launchRelative = `role-launches/${path.basename(receiptRelative, ".json")}.json`;
+  const evidencePaths = [...new Set([receiptRelative, launchRelative, verified.attempt_record, ...verified.inputs, ...verified.outputs])];
+  const incident = saveRepairIncident(run, record, {
+    phase,
+    failure_class: "specialist_failure",
+    authority_kind: "nonpassing_reviewer",
+    absence_paths: [],
+    logical_task_name: verified.logical_task_name,
+    summary: `${verified.role} returned ${verified.gate_verdict} against its release-owned closed checklist.`,
+    evidence_paths: evidencePaths,
+    required_action: `Adjudicate the complete frozen ${verified.role} finding set once; dismiss unsupported findings or open one finite exact-path docket for ${phase}.`,
+  });
+  process.stdout.write(`${path.join(run, incident)}\n`);
+}
+
 function validatePhasePromotion(runArg, phase, args) {
+  checkpointRejectionContext = null;
   const run = path.resolve(runArg || "");
   const record = verifyRunRecord(run);
   const phases = phasesFor(record);
@@ -1950,6 +2686,8 @@ function validatePhasePromotion(runArg, phase, args) {
   if (index < 0) fail(`Phase ${phase} is not valid for ${record.mode} mode`);
   if (!["running", "repairing"].includes(record.state)) fail(`Cannot checkpoint while run state is ${record.state}; expected running|repairing`);
   if (record.pending_checkpoint) fail(`Recover the interrupted ${record.pending_checkpoint.phase} checkpoint before validating another promotion`);
+  if (record.active_repair) fail(`Close active repair docket ${record.active_repair.docket_id} with exact-delta review before checkpointing ${phase}`);
+  if (record.pending_adjudication) fail(`Resolve pending repair adjudication ${record.pending_adjudication.path} before checkpointing ${phase}`);
   if (record.phase !== phase) fail(`Cannot checkpoint ${phase}; run.json#/phase is ${record.phase}`);
   const allowedOutcomes = record.mode === "external_audit" ? AUDIT_OUTCOMES : RESEARCH_OUTCOMES;
   if (phase === "complete" && !allowedOutcomes.has(record.outcome)) fail(`Set a valid ${record.mode} outcome before checkpointing complete; expected ${[...allowedOutcomes].join("|")}, received ${JSON.stringify(record.outcome)}`);
@@ -1963,8 +2701,8 @@ function validatePhasePromotion(runArg, phase, args) {
   if (last !== expectedLast) fail(`Cannot checkpoint ${phase}; expected last checkpoint ${expectedLast ?? "none"}, found ${last ?? "none"}`);
   if (fs.existsSync(receiptFile(run, phase))) fail(`${phase} already has a receipt; invalidate it before rebuilding`);
   const { inputs, outputs } = parsePathFlags(args);
-  for (const required of requiredOutputs(run, record, phase)) {
-    hashArtifact(run, required);
+  const gateRequiredOutputs = requiredOutputs(run, record, phase);
+  for (const required of gateRequiredOutputs) {
     if (!pathCovered(required, outputs)) fail(`${phase} checkpoint must include required output: ${required}`);
   }
   if (phase === "selection") {
@@ -1974,10 +2712,16 @@ function validatePhasePromotion(runArg, phase, args) {
     }
   }
   if (phase === "writing" && outputs.includes("paper")) fail("writing must promote its individual files, not the paper directory that verification will extend");
-  verifyPhaseArtifacts(run, record, phase, phase === "contract");
   const roleOutputs = outputs.filter((item) => /^role-receipts\/[^/]+\.json$/.test(item));
   if (phase !== "complete" && !roleOutputs.length) fail(`${phase} checkpoint requires an individual role receipt output`);
   if (phase !== "complete") verifyRoleCoverage(run, phase, roleOutputs);
+  const absencePaths = gateRequiredOutputs.filter((required) => !fs.existsSync(path.join(run, required)));
+  const evidencePaths = [...new Set(outputs)].filter((relative) => (gateRequiredOutputs.some((required) => relative === required || relative.startsWith(`${required}/`) || required.startsWith(`${relative}/`)) || /^role-receipts\/[^/]+\.json$/.test(relative))).filter((relative) => {
+    try { return fs.existsSync(artifactPath(run, relative).target); } catch { return false; }
+  });
+  checkpointRejectionContext = { run, phase, evidence_paths: evidencePaths, absence_paths: absencePaths };
+  for (const required of gateRequiredOutputs) hashArtifact(run, required);
+  verifyPhaseArtifacts(run, record, phase, phase === "contract");
   if (phase === "contract") {
     verifyInputManifest(run);
     for (const required of requiredContractInputs(run, record)) {
@@ -2017,7 +2761,10 @@ function checkpoint(runArg, phase, args) {
   for (const roleReceipt of outputs.filter((item) => /^role-receipts\/[^/]+\.json$/.test(item))) {
     const task = path.basename(roleReceipt, ".json");
     const launchRelative = `role-launches/${task}.json`;
-    const attemptRecord = verifyAttemptRecord(run, launchRelative, readJson(artifactPath(run, launchRelative).target));
+    const launch = readJson(artifactPath(run, launchRelative).target);
+    const expectedPredecessor = expectedLast === null ? null : { path: `receipts/${expectedLast}.json`, sha256: record.checkpoints[expectedLast].receipt_sha256 };
+    if (canonicalJson(launch.predecessor) !== canonicalJson(expectedPredecessor)) fail(`Role receipt ${roleReceipt} was not launched from the current predecessor checkpoint`);
+    const attemptRecord = verifyAttemptRecord(run, launchRelative, launch);
     if (!inputs.includes(attemptRecord)) inputs.push(attemptRecord);
   }
   const previousPath = expectedLast ? `receipts/${expectedLast}.json` : null;
@@ -2072,6 +2819,7 @@ function checkpoint(runArg, phase, args) {
     record.state = "running";
     record.phase = phases[index + 1];
   }
+  record.sealed_review_frontier = null;
   writeJson(path.join(run, "run.json"), record);
   appendEvent(run, { event: "phase_checkpointed", phase });
   process.stdout.write(`${receiptFile(run, phase)}\n`);
@@ -2257,12 +3005,18 @@ function prepareInvalidation(run, record, phase, reason, options = {}) {
   const revisionAfter = options.contractRevision ? revisionBefore + 1 : revisionBefore;
   const charterRevisionAfter = record.charter_revision + (options.contractRevision && options.amendedPlan ? 1 : 0);
   writeJson(path.join(transaction, "invalidation.json"), { schema_version: 1, at: new Date().toISOString(), from_phase: phase, repair_wave_consumed: options.repairWaveConsumed === true, contract_revision_before: revisionBefore, contract_revision_after: revisionAfter, charter_revision_before: record.charter_revision, charter_revision_after: charterRevisionAfter, reason, archived_reason: path.relative(run, path.join(archive, "reason", path.basename(reason.path))).replaceAll(path.sep, "/"), moved_receipts: moved, receipt_hashes: receiptHashes, expected_outputs: [...expectedOutputs].map(([outputPath, sha256]) => ({ path: outputPath, sha256 })), archived_artifacts: archivedArtifacts });
-  return { transaction, archive, invalidatedPhases, index, revisionAfter, cleanupPaths, contractCleanupPaths: options.contractRevision ? [...new Set(options.additionalPaths ?? [])] : [], amendedPlan: options.amendedPlan ?? null };
+  const targetOutputs = record.checkpoints[phase]?.outputs.map((item) => item.path) ?? [];
+  const restorePaths = options.preserveTargetOutputs ? minimalPaths(targetOutputs.flatMap((relative) => {
+    const receiptMatch = /^role-receipts\/([^/]+)\.json$/.exec(relative);
+    return receiptMatch ? [relative, `role-launches/${receiptMatch[1]}.json`] : [relative];
+  })) : [];
+  return { transaction, archive, invalidatedPhases, index, revisionAfter, cleanupPaths, restorePaths, contractCleanupPaths: options.contractCleanupPaths ?? (options.contractRevision ? [...new Set(options.additionalPaths ?? [])] : []), amendedPlan: options.amendedPlan ?? null };
 }
 
 function finishPendingInvalidation(run, record) {
   const journal = record.pending_invalidation;
-  if (!journal || journal.schema_version !== 1 || !nonemptyString(journal.transaction_path) || !nonemptyString(journal.archive_path) || !Array.isArray(journal.invalidated_phases) || !Array.isArray(journal.cleanup_paths) || !Array.isArray(journal.contract_cleanup_paths) || !phasesFor(record).includes(journal.phase)) fail("Run invalidation journal is malformed");
+  if (journal?.schema_version === 1 && journal.restore_paths === undefined) journal.restore_paths = [];
+  if (!journal || journal.schema_version !== 1 || !nonemptyString(journal.transaction_path) || !nonemptyString(journal.archive_path) || !Array.isArray(journal.invalidated_phases) || !Array.isArray(journal.cleanup_paths) || !Array.isArray(journal.restore_paths) || !Array.isArray(journal.contract_cleanup_paths) || !phasesFor(record).includes(journal.phase)) fail("Run invalidation journal is malformed");
   const transaction = artifactPath(run, journal.transaction_path).target;
   const archive = artifactPath(run, journal.archive_path).target;
   if (!fs.existsSync(archive)) {
@@ -2277,6 +3031,13 @@ function finishPendingInvalidation(run, record) {
     if (fs.existsSync(target)) fs.rmSync(target, { recursive: true, force: true });
   }
   if (journal.contract_cleanup_paths.length) removeContractGeneratedPaths(run, journal.contract_cleanup_paths);
+  for (const relative of journal.restore_paths) {
+    const source = path.join(archive, "artifacts", relative);
+    const target = artifactPath(run, relative).target;
+    if (!fs.existsSync(source) || fs.existsSync(target)) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.cpSync(source, target, { recursive: true, errorOnExist: true });
+  }
   for (const current of journal.invalidated_phases) {
     const file = receiptFile(run, current);
     if (fs.existsSync(file)) fs.unlinkSync(file);
@@ -2307,10 +3068,24 @@ function finishPendingInvalidation(run, record) {
   record.pending_invalidation = null;
   record.updated_at = new Date().toISOString();
   record.state = "repairing";
+  if (record.convergence_control?.frontier_queue) {
+    const phaseOrder = phasesFor(record);
+    const rollbackIndex = phaseOrder.indexOf(journal.phase);
+    const superseded = [];
+    record.convergence_control.frontier_queue = record.convergence_control.frontier_queue.filter((anchor) => {
+      const frontier = readJson(path.join(run, anchor.path));
+      if (phaseOrder.indexOf(frontier.phase) < rollbackIndex) return true;
+      superseded.push({ frontier: anchor, phase: frontier.phase, superseded_by: anchored, target_phase: journal.phase, docket_id: record.active_repair?.docket_id ?? null });
+      return false;
+    });
+    record.convergence_control.superseded_frontiers = [...(record.convergence_control.superseded_frontiers ?? []), ...superseded];
+  }
+  const resetTasks = reconcileTaskLedger(run, [...journal.cleanup_paths, ...journal.contract_cleanup_paths]);
+  bindControllerDelta(run, record, [...journal.cleanup_paths, ...journal.contract_cleanup_paths, ...journal.restore_paths, ...(journal.amended_plan_path ? ["study-plan.md", "contract/approval.json"] : [])]);
   writeJson(path.join(run, "run.json"), record);
   const transactionRoot = path.join(run, ".transactions");
   if (fs.existsSync(transactionRoot) && !fs.readdirSync(transactionRoot).length) fs.rmdirSync(transactionRoot);
-  appendEvent(run, { event: "receipt_chain_invalidated", phase: journal.phase, reason: journal.reason_path, archive: journal.archive_path, repair_cycle: record.repair_waves[journal.phase] ?? 0, recovered: true });
+  appendEvent(run, { event: "receipt_chain_invalidated", phase: journal.phase, reason: journal.reason_path, archive: journal.archive_path, repair_cycle: record.repair_waves[journal.phase] ?? 0, reset_task_ids: resetTasks, recovered: true });
   return { archive, kind: journal.kind };
 }
 
@@ -2334,15 +3109,18 @@ function invalidate(runArg, phase, reasonArg) {
   const index = phases.indexOf(phase);
   if (index < 0) fail(`Phase ${phase} is not valid for ${record.mode} mode`);
   if (phase === "contract") fail("Use revise-contract for a versioned same-run contract repair");
+  if (record.convergence_control && (!record.active_repair || record.active_repair.target_phase !== phase)) fail(`Scientific rollback requires one independently adjudicated active repair docket for ${phase}`);
   const reason = entry(run, reasonArg);
+  if (record.convergence_control && reason.path !== record.active_repair.incident.path) fail(`Invalidation reason must be the controller-owned active incident ${record.active_repair.incident.path}`);
   const reasonSource = artifactPath(run, reason.path).target;
   if (!fs.lstatSync(reasonSource).isFile()) fail("Invalidation reason must be a regular file");
   if (!record.checkpoints[phase]) fail(`No ${phase} checkpoint exists to invalidate`);
+  if (record.convergence_control) assertRepairBaselineUnchanged(run, record.active_repair);
   consumeRepairCycle(record, phase);
-  const prepared = prepareInvalidation(run, record, phase, reason, { repairWaveConsumed: true });
+  const prepared = prepareInvalidation(run, record, phase, reason, { repairWaveConsumed: true, preserveTargetOutputs: Boolean(record.convergence_control) });
   const { archive, transaction, invalidatedPhases } = prepared;
   const archivePath = path.relative(run, archive).replaceAll(path.sep, "/");
-  record.pending_invalidation = { schema_version: 1, kind: "invalidate", transaction_path: path.relative(run, transaction).replaceAll(path.sep, "/"), archive_path: archivePath, reason_path: reason.path, phase, invalidated_phases: invalidatedPhases, cleanup_paths: prepared.cleanupPaths, contract_cleanup_paths: [], contract_revision_after: record.contract_revision, charter_revision_after: record.charter_revision, last_checkpoint: index ? phases[index - 1] : null, amended_plan_path: null };
+  record.pending_invalidation = { schema_version: 1, kind: "invalidate", transaction_path: path.relative(run, transaction).replaceAll(path.sep, "/"), archive_path: archivePath, reason_path: reason.path, phase, invalidated_phases: invalidatedPhases, cleanup_paths: prepared.cleanupPaths, restore_paths: prepared.restorePaths, contract_cleanup_paths: [], contract_revision_after: record.contract_revision, charter_revision_after: record.charter_revision, last_checkpoint: index ? phases[index - 1] : null, amended_plan_path: null };
   record.updated_at = new Date().toISOString();
   writeJson(path.join(run, "run.json"), record);
   if (process.env.SCIENTIST1_TEST_INTERRUPT_INVALIDATION === "after_journal") fail("Injected invalidation interruption after journal");
@@ -2359,12 +3137,29 @@ function reviseContract(runArg, reasonArg, amendedPlanArg) {
   }
   const record = verifyRunRecord(run, { allowReceiptDrift: true });
   if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Cannot revise a contract while run state is ${record.state} or a checkpoint is pending`);
-  const { reason, value } = contractRepairReason(run, reasonArg);
+  if (record.active_repair && record.active_repair.target_phase !== "contract") fail(`Active repair docket ${record.active_repair.docket_id} targets ${record.active_repair.target_phase}, not contract`);
+  let reason;
+  let value;
+  let docketAutomatic = false;
+  const requestedReason = relativePath(reasonArg || "");
+  if (record.convergence_control && record.active_repair && requestedReason === record.active_repair.incident.path) {
+    reason = entry(run, requestedReason);
+    value = { classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: null, post_result_guard: null, finding: "Controller-adjudicated contract defect", repair: "Repair only the active docket scope", researcher_approval: null };
+    docketAutomatic = true;
+  } else {
+    ({ reason, value } = contractRepairReason(run, requestedReason));
+    if (record.convergence_control && value.classification === "AUTOMATIC_REPAIR") fail(`Scientist1 1.5 automatic contract repair requires active docket incident ${record.active_repair?.incident.path ?? "<none>"}`);
+    if (record.convergence_control && value.classification === "RESEARCHER_APPROVED_AMENDMENT") fail("Scientist1 1.5 cannot accept agent-authored amendment authority; a charter change requires a separately approved new study until the app provides controller-signed amendment provenance");
+    if (record.convergence_control && record.active_repair) fail(`Researcher amendment cannot bypass active repair docket ${record.active_repair.docket_id}`);
+  }
   const additionalPaths = contractGeneratedPaths(run);
   const successorPaths = contractSuccessorPaths(run);
   const detectedResultAwareness = resultAwareEvidenceExists(run, record, successorPaths);
   const resultAwareRepair = detectedResultAwareness || archivedResultAwareContractEvidenceExists(run, record);
-  if (value.result_aware !== resultAwareRepair) {
+  if (docketAutomatic) {
+    value.result_aware = resultAwareRepair;
+    value.post_result_guard = resultAwareRepair ? "invalidate_and_rerun" : null;
+  } else if (value.result_aware !== resultAwareRepair) {
     const expected = resultAwareRepair ? "true because candidate or downstream evidence exists" : "false because no candidate or downstream evidence exists";
     fail(`Contract repair reason must declare result_aware ${expected} at ${reason.path}`);
   }
@@ -2380,10 +3175,11 @@ function reviseContract(runArg, reasonArg, amendedPlanArg) {
   } else if (amendedPlanArg) {
     fail("Automatic contract repair cannot replace study-plan.md");
   }
-  const prepared = prepareInvalidation(run, record, "contract", reason, { repairWaveConsumed: resultAwareRepair, contractRevision: true, additionalPaths, amendedPlan });
+  if (record.convergence_control) assertRepairBaselineUnchanged(run, record.active_repair);
+  const prepared = prepareInvalidation(run, record, "contract", reason, { repairWaveConsumed: resultAwareRepair, contractRevision: true, additionalPaths, amendedPlan, ...(docketAutomatic ? { contractCleanupPaths: [] } : {}) });
   const { archive, transaction, invalidatedPhases, revisionAfter } = prepared;
   const archivePath = path.relative(run, archive).replaceAll(path.sep, "/");
-  record.pending_invalidation = { schema_version: 1, kind: "revise_contract", transaction_path: path.relative(run, transaction).replaceAll(path.sep, "/"), archive_path: archivePath, reason_path: reason.path, phase: "contract", invalidated_phases: invalidatedPhases, cleanup_paths: prepared.cleanupPaths, contract_cleanup_paths: prepared.contractCleanupPaths, contract_revision_after: revisionAfter, charter_revision_after: record.charter_revision + (amendedPlan ? 1 : 0), last_checkpoint: null, amended_plan_path: amendedPlan ? `${archivePath}/successor/study-plan.md` : null };
+  record.pending_invalidation = { schema_version: 1, kind: "revise_contract", transaction_path: path.relative(run, transaction).replaceAll(path.sep, "/"), archive_path: archivePath, reason_path: reason.path, phase: "contract", invalidated_phases: invalidatedPhases, cleanup_paths: prepared.cleanupPaths, restore_paths: [], contract_cleanup_paths: prepared.contractCleanupPaths, contract_revision_after: revisionAfter, charter_revision_after: record.charter_revision + (amendedPlan ? 1 : 0), last_checkpoint: null, amended_plan_path: amendedPlan ? `${archivePath}/successor/study-plan.md` : null };
   record.updated_at = new Date().toISOString();
   writeJson(path.join(run, "run.json"), record);
   if (process.env.SCIENTIST1_TEST_INTERRUPT_INVALIDATION === "after_journal") fail("Injected invalidation interruption after journal");
@@ -2426,6 +3222,7 @@ function acceptedAttemptCount(run, logicalTaskName, record) {
   if (!fs.existsSync(root)) return 0;
   const attempts = new Set();
   const workKeys = new Set();
+  const activeRepairGeneration = record.active_repair?.semantic_digest ?? null;
   const files = [];
   for (const name of fs.readdirSync(root).sort()) {
     const candidate = path.join(root, name);
@@ -2439,10 +3236,11 @@ function acceptedAttemptCount(run, logicalTaskName, record) {
     const launchRelative = relativePath(value.launch_record);
     const launch = readJson(artifactPath(run, launchRelative).target);
     if ((launch.contract_revision ?? 1) !== record.contract_revision || (launch.charter_revision ?? 1) !== record.charter_revision) continue;
+    if (activeRepairGeneration === null ? Boolean(launch.repair_binding) : launch.repair_binding?.semantic_digest !== activeRepairGeneration) continue;
     const verified = verifyAttemptRecord(run, launchRelative, launch);
     const observedRelative = path.relative(run, file).replaceAll(path.sep, "/");
     if (verified !== observedRelative || attempts.has(launch.attempt)) fail(`Accepted attempts for ${logicalTaskName} are duplicated or misfiled`);
-    const workKey = createHash("sha256").update(canonicalJson({ contract_revision: launch.contract_revision ?? 1, charter_revision: launch.charter_revision ?? 1, role: launch.role, declared_outputs: [...launch.declared_outputs].sort() })).digest("hex");
+    const workKey = createHash("sha256").update(canonicalJson({ contract_revision: launch.contract_revision ?? 1, charter_revision: launch.charter_revision ?? 1, role: launch.role, declared_outputs: [...launch.declared_outputs].sort(), ...(launch.repair_binding ? { repair_docket_id: launch.repair_binding.docket_id, repair_semantic_digest: launch.repair_binding.semantic_digest } : {}) })).digest("hex");
     workKeys.add(workKey);
     attempts.add(launch.attempt);
   }
@@ -2452,23 +3250,427 @@ function acceptedAttemptCount(run, logicalTaskName, record) {
   return attempts.size;
 }
 
+function migrateConvergence(runArg) {
+  const run = path.resolve(runArg || "");
+  const recordFile = path.join(run, "run.json");
+  const record = readJson(recordFile);
+  if (!fs.existsSync(path.join(run, "contract", "run-config.json"))) fail("migrate-convergence requires an initialized Scientist1 run");
+  const config = readJson(path.join(run, "contract", "run-config.json"));
+  if (![2, 3, 4].includes(config.schema_version)) fail("Only active Scientist1 1.3, 1.4, or 1.5 runs can migrate to convergence control");
+  if (record.state === "complete") fail("A completed run is immutable and does not need convergence migration");
+  if (record.convergence_control) {
+    verifyRunRecord(run);
+    process.stdout.write(`${path.join(run, record.convergence_control.checklist.path)}\n`);
+    return;
+  }
+  const originalRecord = structuredClone(record);
+  const bundledChecklist = readJson(GATE_CHECKLIST_FILE);
+  const finalRootRelative = path.dirname(GATE_CHECKLIST_MIGRATION_PATH).replaceAll(path.sep, "/");
+  const finalRoot = path.join(run, finalRootRelative);
+  const commonEvidencePaths = new Set(reviewEvidenceManifest(run).map((item) => item.path));
+  const evidenceByPhase = new Map();
+  const addPhaseEvidence = (phase, relative) => {
+    if (!phasesFor(record).includes(phase) || phasesFor(record).indexOf(phase) > phasesFor(record).indexOf(record.phase)) return;
+    if (!evidenceByPhase.has(phase)) evidenceByPhase.set(phase, new Set());
+    evidenceByPhase.get(phase).add(relativePath(relative));
+  };
+  for (const anchor of record.repair_incidents ?? []) {
+    const incident = readJson(path.join(run, anchor.path));
+    addPhaseEvidence(incident.phase, anchor.path);
+    if (incident.schema_version === 1) for (const binding of incident.evidence ?? []) addPhaseEvidence(incident.phase, binding.source_path ?? binding.path);
+  }
+  const receiptRoot = path.join(run, "role-receipts");
+  if (fs.existsSync(receiptRoot)) for (const name of fs.readdirSync(receiptRoot).filter((item) => item.endsWith(".json")).sort()) {
+    const receiptRelative = `role-receipts/${name}`;
+    const receipt = readJson(path.join(receiptRoot, name));
+    if (receipt.execution_status !== "COMPLETE" || !["REVISE", "FAIL"].includes(receipt.gate_verdict) || !bundledChecklist.review_roles[receipt.role]) continue;
+    const receiptPhase = REVIEW_PHASES[receipt.role];
+    if (!receiptPhase || receiptPhase === "*") continue;
+    addPhaseEvidence(receiptPhase, receiptRelative);
+    const launchRelative = `role-launches/${name}`;
+    if (fs.existsSync(path.join(run, launchRelative))) addPhaseEvidence(receiptPhase, launchRelative);
+    for (const output of receipt.outputs ?? []) if (nonemptyString(output) && fs.existsSync(path.join(run, output))) addPhaseEvidence(receiptPhase, output);
+  }
+  if (record.state === "repairing" && !evidenceByPhase.size) evidenceByPhase.set(record.phase, new Set());
+  const orderedFrontiers = record.state === "repairing" ? [...evidenceByPhase].sort((left, right) => phasesFor(record).indexOf(left[0]) - phasesFor(record).indexOf(right[0])) : [];
+  const allEvidencePaths = new Set([...commonEvidencePaths, ...orderedFrontiers.flatMap(([, paths]) => [...paths])]);
+  const migrationEvidence = [...allEvidencePaths].sort().filter((relative) => fs.existsSync(path.join(run, relative))).map((relative) => entry(run, relative));
+  const sourceLedgerSha256 = createHash("sha256").update(canonicalJson({ phase: record.phase, state: record.state, repair_incidents: record.repair_incidents ?? [], frontiers: orderedFrontiers.map(([phase, paths]) => ({ phase, evidence_paths: [...paths].sort() })), evidence: migrationEvidence })).digest("hex");
+  if (fs.existsSync(finalRoot)) {
+    const abandoned = path.join(run, ".transactions", `abandoned-convergence-migration-${Date.now()}-${process.pid}`);
+    fs.mkdirSync(path.dirname(abandoned), { recursive: true });
+    fs.renameSync(finalRoot, abandoned);
+  }
+  const stagingRelative = `.transactions/convergence-migration-1.5.0-${process.pid}`;
+  const staging = path.join(run, stagingRelative);
+  fs.mkdirSync(path.dirname(staging), { recursive: true });
+  if (fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
+  fs.mkdirSync(staging, { recursive: false });
+  fs.copyFileSync(GATE_CHECKLIST_FILE, path.join(staging, "gate-checklists.json"), fs.constants.COPYFILE_EXCL);
+  const archivedMigrationEvidence = migrationEvidence.map((binding) => {
+    const objectName = `${createHash("sha256").update(binding.path).digest("hex").slice(0, 20)}-${path.basename(binding.path)}`;
+    const stagedObject = path.join(staging, "objects", objectName);
+    fs.mkdirSync(path.dirname(stagedObject), { recursive: true });
+    fs.cpSync(artifactPath(run, binding.path).target, stagedObject, { recursive: true, errorOnExist: true });
+    const archivedPath = `${finalRootRelative}/objects/${objectName}`;
+    return { source_path: binding.path, path: archivedPath, sha256: hashAt(stagedObject, archivedPath) };
+  });
+  const archivedBySource = new Map(archivedMigrationEvidence.map((binding) => [binding.source_path, binding]));
+  const frontierRelatives = [];
+  for (const [phase, phasePaths] of orderedFrontiers) {
+    const frontierName = `migration-frontier-${phase}.json`;
+    frontierRelatives.push(`${finalRootRelative}/${frontierName}`);
+    const sources = new Set([...commonEvidencePaths, ...phasePaths]);
+    const evidence = [...sources].sort().map((relative) => archivedBySource.get(relative)).filter(Boolean);
+    writeJson(path.join(staging, frontierName), { schema_version: 1, at: new Date().toISOString(), phase, failure_class: "checkpoint_rejected", logical_task_name: null, source_ledger_sha256: sourceLedgerSha256, summary: `Scientist1 1.5 migration frontier preserves the outstanding ${phase} evidence as one finite adjudication.`, evidence, required_action: `Adjudicate this frozen ${phase} migration frontier once, then dismiss it or use one finite exact-scope repair docket.` });
+  }
+  if (process.env.SCIENTIST1_TEST_INTERRUPT_MIGRATION === "after_stage") fail("Injected convergence migration interruption after staging");
+  fs.mkdirSync(path.dirname(finalRoot), { recursive: true });
+  fs.renameSync(staging, finalRoot);
+  const target = path.join(run, GATE_CHECKLIST_MIGRATION_PATH);
+  if (!fs.existsSync(target) || fileSha256(target) !== fileSha256(GATE_CHECKLIST_FILE)) fail("Published Scientist1 1.5 migration checklist is malformed");
+  for (const frontierRelative of frontierRelatives) if (!fs.existsSync(path.join(run, frontierRelative))) fail("Published Scientist1 1.5 migration frontier is missing");
+  const frontierAnchors = frontierRelatives.map((relative) => entry(run, relative));
+  record.convergence_control = { schema_version: 1, release: "1.5.0", checklist: entry(run, GATE_CHECKLIST_MIGRATION_PATH), migrated_from: config.schema_version, source_ledger_sha256: sourceLedgerSha256, frontier_queue: frontierAnchors.slice(1), superseded_frontiers: [] };
+  record.pending_adjudication = frontierAnchors[0] ?? null;
+  record.active_repair = null;
+  record.repair_closures = [];
+  record.sealed_review_frontier = null;
+  record.updated_at = new Date().toISOString();
+  writeJson(recordFile, record);
+  try {
+    if (process.env.SCIENTIST1_TEST_INTERRUPT_MIGRATION === "after_publish") fail("Injected convergence migration interruption after publish");
+    verifyRunRecord(run);
+  } catch (error) {
+    writeJson(recordFile, originalRecord);
+    if (fs.existsSync(finalRoot)) {
+      const abandoned = path.join(run, ".transactions", `abandoned-convergence-migration-${Date.now()}-${process.pid}`);
+      fs.mkdirSync(path.dirname(abandoned), { recursive: true });
+      fs.renameSync(finalRoot, abandoned);
+    }
+    throw error;
+  }
+  appendEvent(run, { event: "convergence_control_migrated", from_schema: config.schema_version, checklist: GATE_CHECKLIST_MIGRATION_PATH, pending_adjudication: record.pending_adjudication?.path ?? null });
+  process.stdout.write(`${target}\n`);
+}
+
+function advanceFrozenFrontier(record) {
+  const queue = record.convergence_control?.frontier_queue ?? [];
+  record.pending_adjudication = queue.shift() ?? null;
+  if (record.convergence_control) record.convergence_control.frontier_queue = queue;
+  record.state = record.pending_adjudication ? "repairing" : "running";
+}
+
 function recordRepair(runArg, failureArg) {
   const run = path.resolve(runArg || "");
   const record = verifyRunRecord(run);
   if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Run state ${record.state} or a pending checkpoint cannot accept a repair incident`);
   const relative = relativePath(failureArg || "");
   const value = readJson(artifactPath(run, relative).target);
-  exactKeys(value, ["schema_version", "failure_class", "logical_task_name", "summary", "evidence_paths", "required_action"], relative);
-  if (value.schema_version !== 1 || !REPAIR_CLASSES.has(value.failure_class) || (value.logical_task_name !== null && !nonemptyString(value.logical_task_name)) || !nonemptyString(value.summary) || !Array.isArray(value.evidence_paths) || value.evidence_paths.some((item) => !nonemptyString(item)) || !nonemptyString(value.required_action)) fail(`Invalid repair incident at ${relative}`);
-  for (const evidence of value.evidence_paths) hashArtifact(run, evidence);
-  const incident = saveRepairIncident(run, record, value);
-  process.stdout.write(`${path.join(run, incident)}\n`);
+  if (!record.convergence_control) {
+    exactKeys(value, ["schema_version", "failure_class", "logical_task_name", "summary", "evidence_paths", "required_action"], relative);
+    if (value.schema_version !== 1 || !REPAIR_CLASSES.has(value.failure_class) || (value.logical_task_name !== null && !nonemptyString(value.logical_task_name)) || !nonemptyString(value.summary) || !Array.isArray(value.evidence_paths) || value.evidence_paths.some((item) => !nonemptyString(item)) || !nonemptyString(value.required_action)) fail(`Invalid legacy repair incident at ${relative}`);
+    for (const evidence of value.evidence_paths) hashArtifact(run, evidence);
+    const incident = saveRepairIncident(run, record, value);
+    process.stdout.write(`${path.join(run, incident)}\n`);
+    return;
+  }
+  const checklist = checklistFor(record, run);
+  exactKeys(value, ["schema_version", "disposition", "target_phase", "source_review", "source_review_receipt", "adjudicator_receipt", "findings", "required_review_roles", "reviewed_check_ids", "strategy", "required_action"], relative);
+  const phaseOrder = phasesFor(record);
+  if (value.schema_version !== 2 || !CONVERGENCE_DISPOSITIONS.has(value.disposition) || !phaseOrder.includes(value.target_phase) || phaseOrder.indexOf(value.target_phase) > phaseOrder.indexOf(record.phase) || (!record.checkpoints[value.target_phase] && value.target_phase !== record.phase) || !nonemptyString(value.source_review) || !Array.isArray(value.required_review_roles) || value.required_review_roles.some((item) => !nonemptyString(item)) || !nonemptyString(value.required_action)) fail(`Invalid convergence proposal at ${relative}`);
+  if (!fs.lstatSync(artifactPath(run, value.source_review).target).isFile()) fail("A convergence proposal must bind one regular source-review artifact");
+  const adjudicator = verifyAdjudicator(run, relative, value.adjudicator_receipt);
+  const findings = normalizedFindings(run, record, checklist, value.target_phase, value.findings, value.disposition);
+  const findingRoles = [...new Set(findings.map((item) => item.review_role))].sort();
+  if (JSON.stringify([...new Set(value.required_review_roles)].sort()) !== JSON.stringify(findingRoles)) fail("required_review_roles must equal the finding roles exactly");
+  const reviewedCheckIds = normalizedReviewedCheckIds(checklist, findingRoles, value.reviewed_check_ids);
+  const strategy = strategyRecord(run, record, checklist, value.strategy, [...new Set(findings.flatMap((item) => item.repair_paths))], { allowControllerAbsence: value.disposition === "MECHANICAL_FAILURE" && findings.some((finding) => finding.artifact_state === "absent"), controllerChangedPaths: value.disposition === "REPAIR_REGRESSION" ? findings.flatMap((finding) => finding.introduced_by_paths) : [] });
+  const pending = record.pending_adjudication;
+  let pendingIncident = null;
+  let pendingSources = new Set();
+  let pendingSourceRoots = [];
+  if (pending) {
+    pendingIncident = readJson(path.join(run, pending.path));
+    pendingSources = new Set([pending.path, ...(Array.isArray(pendingIncident.evidence) ? pendingIncident.evidence.flatMap((item) => [item.path, item.source_path].filter(Boolean)) : [])]);
+    pendingSourceRoots = Array.isArray(pendingIncident.evidence) ? pendingIncident.evidence.filter((item) => item.source_path && fs.existsSync(path.join(run, item.path)) && fs.lstatSync(path.join(run, item.path)).isDirectory()).map((item) => item.source_path) : [];
+  }
+  const pendingCovers = (relative) => pendingSources.has(relative) || pendingSourceRoots.some((root) => relative.startsWith(`${root}/`));
+  let sourceReviewer = null;
+  if (value.source_review_receipt !== null) {
+    const receiptPath = relativePath(value.source_review_receipt || "");
+    sourceReviewer = { ...verifyRoleReceipt(run, receiptPath, { allowReviewFailure: true }), receipt_path: receiptPath };
+    if (!sourceReviewer.outputs.includes(relativePath(value.source_review))) fail(`Source reviewer ${receiptPath} does not own ${value.source_review}`);
+    if (!findingRoles.includes(sourceReviewer.role)) fail(`Source reviewer role ${sourceReviewer.role} does not match the adjudicated finding roles`);
+  }
+  if (!record.active_repair && pendingIncident?.schema_version === 3 && pendingIncident.authority_kind === "controller_checkpoint" && canonicalJson(findingRoles) !== canonicalJson(["checkpoint_reviewer"])) fail("A controller checkpoint authority must use only the phase-agnostic checkpoint_reviewer checklist");
+  const requiredAdjudicatorInputs = new Set([relativePath(value.source_review), ...findings.flatMap((finding) => finding.evidence.map((item) => item.path)), ...(strategy?.evidence.map((item) => item.path) ?? []), ...(strategy?.procedure.filter((item) => item.state === "present").map((item) => item.path) ?? []), ...(pending ? [pending.path] : []), ...(sourceReviewer ? [sourceReviewer.receipt_path] : [])]);
+  for (const input of requiredAdjudicatorInputs) if (!adjudicator.inputs.includes(input)) fail(`Repair Adjudicator did not declare required authority input ${input}`);
+  if (record.active_repair && value.disposition !== "REPAIR_REGRESSION") fail(`Repair docket ${record.active_repair.docket_id} is frozen; close it before adjudicating another review`);
+  if (!record.active_repair && value.disposition === "REPAIR_REGRESSION") fail("A repair regression can only attach to an active repair docket");
+  if (!record.active_repair) {
+    if (!pending || !pendingIncident) fail("A new repair docket requires one controller-issued pending reviewer or checkpoint record");
+    const derivedTarget = controllerRepairTarget(record, findings);
+    if (derivedTarget !== value.target_phase) fail(`Repair target ${value.target_phase} is caller-selected; the controller-derived earliest owning phase is ${derivedTarget}`);
+    if (phaseOrder.indexOf(value.target_phase) > phaseOrder.indexOf(pendingIncident.phase)) fail(`Repair target ${value.target_phase} cannot be later than its ${pendingIncident.phase} origin review`);
+    if (!pendingCovers(relativePath(value.source_review))) fail(`Source review ${value.source_review} is not bound to pending adjudication ${pending.path}`);
+    if (sourceReviewer && !pendingCovers(sourceReviewer.receipt_path)) fail(`Source reviewer ${sourceReviewer.receipt_path} is not bound to pending adjudication ${pending.path}`);
+    if (!sourceReviewer && relativePath(value.source_review) !== pending.path) fail("A reviewer-originated repair requires its hash-bound non-passing reviewer receipt");
+    if (pendingIncident.schema_version === 3 && pendingIncident.authority_kind === "controller_checkpoint" && value.disposition !== "MECHANICAL_FAILURE") fail("A controller checkpoint authority can authorize only a MECHANICAL_FAILURE disposition");
+    if (pendingIncident.schema_version === 3 && pendingIncident.authority_kind === "controller_checkpoint" && canonicalJson(findingRoles) !== canonicalJson(["checkpoint_reviewer"])) fail("A controller checkpoint authority must use only the phase-agnostic checkpoint_reviewer checklist");
+    if (pendingIncident.schema_version === 3 && pendingIncident.authority_kind === "nonpassing_reviewer" && (!sourceReviewer || canonicalJson(findingRoles) !== canonicalJson([sourceReviewer.role]))) fail("A non-passing reviewer authority can adjudicate findings only for its exact source-review role");
+    if (sourceReviewer && !reviewRoleMatchesPhase(sourceReviewer.role, pendingIncident.phase)) fail(`Origin reviewer ${sourceReviewer.role} is not release-bound to open phase ${pendingIncident.phase}`);
+    if (!sourceReviewer && pendingIncident.schema_version === 1) for (const role of findingRoles) if (!reviewRoleMatchesPhase(role, pendingIncident.phase)) fail(`Migrated finding role ${role} is not release-bound to frozen origin phase ${pendingIncident.phase}`);
+    const reviewerSources = new Set(sourceReviewer ? [...sourceReviewer.inputs, ...sourceReviewer.outputs] : []);
+    const authorizedAbsence = new Set(pendingIncident.absence_paths ?? []);
+    for (const finding of findings) {
+      if (finding.artifact_state === "absent" && !authorizedAbsence.has(finding.artifact_path)) fail(`Absent artifact ${finding.artifact_path} lacks a controller-signed gate absence binding`);
+      for (const binding of finding.evidence) if (!pendingCovers(binding.path) && !reviewerSources.has(binding.path)) fail(`Finding evidence ${binding.path} is outside the controller-frozen pending review authority`);
+      for (const repairPath of finding.repair_paths) if (repairPath !== finding.artifact_path && !finding.evidence.some((binding) => binding.path === repairPath)) fail(`Repair path ${repairPath} must be the finding artifact or an exact evidence-bound artifact`);
+    }
+  } else {
+    if (value.target_phase !== record.active_repair.target_phase) fail(`A repair regression must remain bound to active target phase ${record.active_repair.target_phase}`);
+    if (!sourceReviewer) fail("A repair regression requires its hash-bound non-passing closure-reviewer receipt");
+    const launch = readJson(path.join(run, `role-launches/${path.basename(sourceReviewer.receipt_path, ".json")}.json`));
+    if (launch.repair_binding?.docket_id !== record.active_repair.docket_id || launch.repair_binding?.semantic_digest !== record.active_repair.semantic_digest) fail("A repair regression must come from a reviewer bound to the active docket semantics");
+  }
+  if (strategy) {
+    const reviewerAuthority = new Set(sourceReviewer ? [...sourceReviewer.inputs, ...sourceReviewer.outputs] : []);
+    for (const binding of [...strategy.evidence, ...strategy.procedure.filter((item) => item.state === "present")]) if (!pendingCovers(binding.path) && !reviewerAuthority.has(binding.path)) fail(`Repair strategy authority ${binding.path} was not frozen by the pending or source-review input set`);
+  }
+  if (value.disposition === "MECHANICAL_FAILURE" && (pendingIncident?.schema_version !== 3 || pendingIncident?.authority_kind !== "controller_checkpoint" || pendingIncident?.failure_class !== "checkpoint_rejected" || sourceReviewer || findings.some((finding) => finding.blocker_class !== "deterministic_machine_failure"))) fail("MECHANICAL_FAILURE is limited to a schema-3 controller-produced deterministic checkpoint rejection");
+  const evidenceEpoch = repairEvidenceEpoch(run, record, value.target_phase);
+  const epochHistory = convergenceIncidents(run, record, value.target_phase, evidenceEpoch);
+  const allHistory = convergenceIncidents(run, record);
+  const allClosures = convergenceClosures(run, record);
+  const sealedRoles = new Set([
+    ...epochHistory.flatMap((incident) => Object.keys(incident.reviewed_check_ids)),
+    ...convergenceClosures(run, record, value.target_phase, evidenceEpoch).flatMap((closure) => Object.keys(closure.reviewed_check_ids)),
+  ]);
+  if (value.disposition !== "REPAIR_REGRESSION") {
+    for (const finding of findings) {
+      const same = epochHistory.filter((incident) => incident.findings.some((prior) => prior.fingerprint === finding.fingerprint));
+      if (same.some((incident) => incident.disposition === "REVIEWER_FALSE_POSITIVE")) fail(`Finding ${finding.fingerprint} was already dismissed on this evidence epoch`);
+      if (!same.length && sealedRoles.has(finding.review_role) && value.disposition !== "REVIEWER_FALSE_POSITIVE") fail(`The ${finding.review_role} review frontier is sealed for this evidence epoch; a pre-existing late finding cannot open another docket`);
+      const priorDismissal = allHistory.find((incident) => incident.disposition === "REVIEWER_FALSE_POSITIVE" && incident.findings.some((prior) => prior.fingerprint === finding.fingerprint && prior.state_fingerprint === finding.state_fingerprint));
+      if (priorDismissal) {
+        if (value.disposition === "REVIEWER_FALSE_POSITIVE") {
+          advanceFrozenFrontier(record);
+          record.updated_at = new Date().toISOString();
+          writeJson(path.join(run, "run.json"), record);
+          appendEvent(run, { event: "duplicate_review_dismissal_consumed", finding_fingerprint: finding.fingerprint, prior_evidence_epoch: priorDismissal.evidence_epoch });
+          process.stdout.write(`${path.join(run, pending.path)}\n`);
+          return;
+        }
+        if (!causalStrategyChangedSince(strategy, priorDismissal.scientific_state)) fail(`Finding ${finding.fingerprint} was already dismissed against the same artifact state and has no changed controller-authoritative causal evidence; unrelated state changes or input padding cannot reopen it`);
+      }
+      const roleSeals = [
+        ...allHistory.filter((incident) => Object.keys(incident.reviewed_check_ids ?? {}).includes(finding.review_role)).map((incident) => incident.scientific_state),
+        ...allClosures.filter((closure) => Object.keys(closure.reviewed_check_ids ?? {}).includes(finding.review_role)).map((closure) => closure.post_scientific_state),
+      ];
+      if (value.disposition !== "REVIEWER_FALSE_POSITIVE" && roleSeals.some((state) => !scientificStateChanged(run, finding, state) && !causalStrategyChangedSince(strategy, state))) fail(`The ${finding.review_role} checklist already sealed this artifact state and has no changed controller-authoritative causal evidence; unrelated state changes or input padding cannot open another docket`);
+    }
+  }
+  const recurring = value.disposition === "REVIEWER_FALSE_POSITIVE" ? [] : findings.filter((finding) => allHistory.some((incident) => incident.disposition !== "REVIEWER_FALSE_POSITIVE" && incident.findings.some((prior) => prior.fingerprint === finding.fingerprint)));
+  if (recurring.length) {
+    if (!strategy) fail(`Recurring defect ${recurring[0].fingerprint} requires a changed causal strategy; repeating the same repair is forbidden`);
+    for (const finding of recurring) {
+      const priorStrategies = allHistory.filter((incident) => incident.disposition !== "REVIEWER_FALSE_POSITIVE" && incident.strategy && incident.findings.some((candidate) => candidate.fingerprint === finding.fingerprint));
+      if (priorStrategies.some((incident) => incident.strategy.evidence_fingerprint === strategy.evidence_fingerprint)) fail(`Recurring defect ${finding.fingerprint} has no newly bound non-review causal evidence; relabeling action codes or cycling through an intermediate strategy is forbidden`);
+      if (value.disposition !== "REPAIR_REGRESSION" && value.disposition !== "MECHANICAL_FAILURE") {
+        const procedurePaths = new Set(strategy.procedure.map((binding) => binding.path));
+        const causalBindings = strategy.evidence.filter((binding) => !isControlPath(binding.path) && !isReviewOutputPath(binding.path) && !procedurePaths.has(binding.path));
+        const priorClosures = convergenceClosures(run, record).filter((closure) => closure.resolved_fingerprints.includes(finding.fingerprint));
+        for (const priorClosure of priorClosures) {
+          const priorBaseline = new Map(priorClosure.docket.baseline.map((item) => [item.path, item.sha256]));
+          if (!causalBindings.some((binding) => priorBaseline.get(binding.path) !== binding.sha256)) fail(`Recurring defect ${finding.fingerprint} cites only evidence states that already existed before a prior repair; evidence-set padding cannot mint a new strategy`);
+        }
+      }
+    }
+  }
+  if (value.disposition === "REPAIR_REGRESSION") {
+    const baseline = new Map(record.active_repair.baseline.map((item) => [item.path, item.sha256]));
+    const priorRegressions = record.active_repair.regression_incidents.map((binding) => readJson(path.join(run, binding.path)));
+    for (const finding of findings) {
+      if (!finding.introduced_by_paths.length) fail("A repair regression must identify the exact repair path that introduced it");
+      for (const introduced of finding.introduced_by_paths) {
+        if (!repairPathCovers(record.active_repair.repair_scope, introduced)) fail(`Claimed repair regression was introduced outside the frozen repair scope: ${introduced}`);
+        const before = baseline.get(introduced);
+        const after = fs.existsSync(path.join(run, introduced)) ? hashArtifact(run, introduced) : null;
+        if (before === after) fail(`Claimed repair regression is not tied to a changed repair artifact: ${introduced}`);
+        const priorFinding = [...priorRegressions].reverse().flatMap((incident) => incident.findings).find((candidate) => candidate.fingerprint === finding.fingerprint && candidate.introduced_by_paths.includes(introduced));
+        const priorState = priorFinding?.introduced_by.find((binding) => binding.source_path === introduced);
+        if (priorState) {
+          const liveState = liveArtifactState(run, introduced);
+          const unchanged = liveState.state === priorState.state && (liveState.state === "absent" || contentHash(path.join(run, liveState.path)) === contentHash(path.join(run, priorState.path)));
+          if (unchanged) fail(`Repair regression ${finding.fingerprint} repeats without an intervening change to ${introduced}`);
+        }
+      }
+      if (finding.repair_paths.some((item) => !repairPathCovers(record.active_repair.repair_scope, item))) fail("A repair regression cannot expand the frozen repair scope");
+    }
+  }
+  const originPhase = record.active_repair ? record.phase : pendingIncident.phase;
+  const saved = saveConvergenceIncident(run, record, relative, value, evidenceEpoch, reviewedCheckIds, findings, strategy, adjudicator, sourceReviewer, originPhase);
+  if (value.disposition === "CONFIRMED_DEFECT" || value.disposition === "MECHANICAL_FAILURE") {
+    const repairScope = [...new Set(findings.flatMap((item) => item.repair_paths))].sort();
+    const docketId = createHash("sha256").update(canonicalJson({ incident: saved.anchor, fingerprints: findings.map((item) => item.fingerprint), repair_scope: repairScope })).digest("hex");
+    const baseline = scientificManifest(run);
+    record.active_repair = { schema_version: 1, docket_id: docketId, semantic_digest: null, incident: saved.anchor, regression_incidents: [], target_phase: value.target_phase, requires_invalidation: Boolean(record.checkpoints[value.target_phase]), repair_mode: value.disposition === "MECHANICAL_FAILURE" ? "deterministic_delta" : "scientific_delta", finding_fingerprints: findings.map((item) => item.fingerprint).sort(), repair_scope: repairScope, scope_baseline: scopeBaseline(run, repairScope), controller_delta: [], dependent_regeneration: deriveDependentRegeneration(run, record, repairScope, value.target_phase), required_review_roles: findingRoles, baseline, baseline_at: new Date().toISOString() };
+    record.active_repair.semantic_digest = repairDocketSemantic(record.active_repair);
+    record.state = "repairing";
+  } else if (value.disposition === "REPAIR_REGRESSION") {
+    record.active_repair.regression_incidents.push(saved.anchor);
+    record.active_repair.finding_fingerprints = [...new Set([...record.active_repair.finding_fingerprints, ...findings.map((item) => item.fingerprint)])].sort();
+    record.active_repair.required_review_roles = [...new Set([...record.active_repair.required_review_roles, ...findingRoles])].sort();
+    record.active_repair.semantic_digest = repairDocketSemantic(record.active_repair);
+  } else {
+    advanceFrozenFrontier(record);
+  }
+  if (value.disposition !== "REVIEWER_FALSE_POSITIVE") record.pending_adjudication = null;
+  record.updated_at = new Date().toISOString();
+  writeJson(path.join(run, "run.json"), record);
+  appendEvent(run, { event: value.disposition === "REVIEWER_FALSE_POSITIVE" ? "review_finding_dismissed" : "repair_docket_updated", disposition: value.disposition, incident: saved.relative, docket_id: record.active_repair?.docket_id ?? null, fingerprints: findings.map((item) => item.fingerprint) });
+  process.stdout.write(`${path.join(run, saved.relative)}\n`);
+}
+
+function closeRepair(runArg, closureArg) {
+  const run = path.resolve(runArg || "");
+  const record = verifyRunRecord(run);
+  const docket = record.active_repair;
+  if (!docket) fail("No active repair docket is available to close");
+  if (docket.requires_invalidation && record.checkpoints[docket.target_phase]) fail(`Repair docket ${docket.docket_id} targets checkpointed phase ${docket.target_phase}; run the docket-bound invalidation or contract revision before editing or closure`);
+  const relative = relativePath(closureArg || "");
+  const value = readJson(artifactPath(run, relative).target);
+  exactKeys(value, ["schema_version", "docket_id", "resolved_fingerprints", "review_receipts", "adjudicator_receipt", "required_action"], relative);
+  if (value.schema_version !== 1 || value.docket_id !== docket.docket_id || !Array.isArray(value.resolved_fingerprints) || JSON.stringify([...new Set(value.resolved_fingerprints)].sort()) !== JSON.stringify([...docket.finding_fingerprints].sort()) || !Array.isArray(value.review_receipts) || !value.review_receipts.length || !nonemptyString(value.required_action)) fail(`Invalid repair closure at ${relative}`);
+  const adjudicator = verifyAdjudicator(run, relative, value.adjudicator_receipt);
+  const reviewedRoles = new Set();
+  const reviewExemptions = [];
+  const reviewAuthorities = [];
+  const absenceProof = repairAbsenceProof(run, docket);
+  for (const receiptRelative of value.review_receipts) {
+    const clean = relativePath(receiptRelative);
+    const verified = verifyRoleReceipt(run, clean);
+    if (!docket.required_review_roles.includes(verified.role)) fail(`Repair closure uses undeclared reviewer role ${verified.role}`);
+    const launch = readJson(path.join(run, "role-launches", `${path.basename(clean, ".json")}.json`));
+    if (launch.repair_binding?.docket_id !== docket.docket_id || launch.repair_binding?.incident_sha256 !== docket.incident.sha256 || launch.repair_binding?.semantic_digest !== docket.semantic_digest) fail(`Repair reviewer ${clean} was not launched against the active frozen docket semantics`);
+    for (const repairPath of docket.repair_scope) {
+      const target = path.join(run, repairPath);
+      if (fs.existsSync(target)) {
+        if (!fs.lstatSync(target).isFile() || fs.lstatSync(target).isSymbolicLink()) fail(`Repair scope artifact must remain an exact regular-file path at closure: ${repairPath}`);
+        if (!verified.inputs.includes(repairPath)) fail(`Repair reviewer ${clean} did not read repaired artifact ${repairPath}`);
+      } else {
+        if (!absenceProof || !verified.inputs.includes(absenceProof)) fail(`Repair reviewer ${clean} did not bind the controller-owned absence proof for ${repairPath}`);
+      }
+    }
+    reviewedRoles.add(verified.role);
+    const allowed = REVIEW_OUTPUTS[verified.role] ?? [];
+    if (!allowed.length || verified.outputs.some((output) => !reviewOutputAllowed(verified.role, output))) fail(`Repair reviewer ${clean} wrote outside the exact ${verified.role} review-output contract`);
+    for (const output of verified.outputs) {
+      if (reviewOutputAllowed(verified.role, output)) reviewExemptions.push(output);
+    }
+    reviewAuthorities.push({ receipt: clean, launch: `role-launches/${path.basename(clean, ".json")}.json`, attempt: verified.attempt_record, outputs: verified.outputs, frontier: reviewerFrontier(run, clean, verified) });
+  }
+  if (JSON.stringify([...reviewedRoles].sort()) !== JSON.stringify([...docket.required_review_roles].sort())) fail("Repair closure must include exactly one or more passing receipts covering every required review role");
+  const dependentAuthorities = [];
+  for (const dependent of docket.dependent_regeneration ?? []) {
+    const candidates = fs.readdirSync(path.join(run, "role-launches")).filter((name) => name.endsWith(".json")).sort().flatMap((name) => {
+      const launchRelative = `role-launches/${name}`;
+      const receiptRelative = `role-receipts/${name}`;
+      if (!fs.existsSync(path.join(run, receiptRelative))) return [];
+      const launch = readJson(path.join(run, launchRelative));
+      const receipt = readJson(path.join(run, receiptRelative));
+      if (receipt.execution_status !== "COMPLETE" || receipt.gate_verdict !== "PASS" || launch.role !== dependent.role || launch.logical_task_name !== dependent.logical_task_name || launch.repair_binding?.docket_id !== docket.docket_id || launch.repair_binding?.semantic_digest !== docket.semantic_digest || canonicalJson([...launch.declared_outputs].sort()) !== canonicalJson([...dependent.declared_outputs].sort())) return [];
+      return [{ launchRelative, receiptRelative, launch }];
+    });
+    if (candidates.length !== 1) fail(`Repair closure requires exactly one current PASS regeneration for dependent task ${dependent.logical_task_name}`);
+    const candidate = candidates[0];
+    const verified = verifyRoleReceipt(run, candidate.receiptRelative);
+    const deletedDependentInputs = dependent.declared_inputs.filter((relative) => !fs.existsSync(path.join(run, relative)));
+    if (deletedDependentInputs.some((relative) => !docket.repair_scope.includes(relative))) fail(`Dependent regeneration ${dependent.logical_task_name} lost a frozen input outside the exact repair scope`);
+    const expectedInputs = [...new Set([...dependent.declared_inputs.filter((relative) => fs.existsSync(path.join(run, relative))), docket.incident.path, record.convergence_control.checklist.path, ...(docket.required_review_roles.includes(dependent.role) ? docket.repair_scope.filter((relative) => fs.existsSync(path.join(run, relative))) : []), ...((deletedDependentInputs.length || docket.required_review_roles.includes(dependent.role)) && absenceProof ? [absenceProof] : [])])].sort();
+    const sourceAuthorityValid = docket.repair_mode === "deterministic_delta" ? candidate.launch.allowed_external_sources.length === 0 : canonicalJson([...candidate.launch.allowed_external_sources].sort()) === canonicalJson([...dependent.allowed_external_sources].sort());
+    if (canonicalJson([...candidate.launch.declared_inputs].sort()) !== canonicalJson(expectedInputs) || !sourceAuthorityValid) fail(`Dependent regeneration ${dependent.logical_task_name} expanded its frozen input authority`);
+    dependentAuthorities.push({ receipt: candidate.receiptRelative, launch: candidate.launchRelative, attempt: verified.attempt_record, outputs: verified.outputs });
+  }
+  const before = new Map(docket.baseline.map((item) => [item.path, item.sha256]));
+  const after = new Map(scientificManifest(run).map((item) => [item.path, item.sha256]));
+  const changed = [...new Set([...before.keys(), ...after.keys()])].filter((item) => before.get(item) !== after.get(item));
+  const controllerExemptions = (docket.controller_delta ?? []).map((item) => item.path);
+  const dependentExemptions = dependentAuthorities.flatMap((item) => item.outputs);
+  const outside = changed.filter((item) => !repairPathCovers(docket.repair_scope, item) && !pathCovered(item, reviewExemptions) && !pathCovered(item, dependentExemptions) && !repairPathCovers(controllerExemptions, item));
+  if (outside.length) fail(`Repair changed scientific artifacts outside its frozen exact scope: ${outside.join(", ")}`);
+  if (!changed.some((item) => repairPathCovers(docket.repair_scope, item))) fail(`Repair docket ${docket.docket_id} cannot close without a changed artifact inside its frozen scope`);
+  const docketIncidents = [docket.incident, ...(docket.regression_incidents ?? [])].map((binding) => readJson(path.join(run, binding.path)));
+  const evidenceEpoch = docketIncidents[0].evidence_epoch;
+  const strategyIdentity = docketIncidents[0].strategy?.fingerprint ?? null;
+  const deltaFingerprint = createHash("sha256").update(canonicalJson(docket.repair_scope.map((relative) => ({ path: relative, before_sha256: before.get(relative) ?? null, after_sha256: after.get(relative) ?? null })))).digest("hex");
+  const replay = convergenceClosures(run, record, docket.target_phase, evidenceEpoch).find((prior) => {
+    const priorIncident = readJson(path.join(run, prior.docket.incident.path));
+    return prior.delta_fingerprint === deltaFingerprint && (priorIncident.strategy?.fingerprint ?? null) === strategyIdentity && prior.resolved_fingerprints.some((fingerprint) => docket.finding_fingerprints.includes(fingerprint));
+  });
+  if (replay) fail(`Repair delta exactly replays closed docket ${replay.docket_id} under the same frozen evidence and causal procedure; bind a genuinely changed evidence-backed procedure instead of retrying it`);
+  const reviewedCheckIds = {};
+  for (const role of docket.required_review_roles) reviewedCheckIds[role] = [...new Set(docketIncidents.flatMap((incident) => incident.reviewed_check_ids[role] ?? []))].sort();
+  const closureRelative = `repairs/closures/${docket.docket_id}.json`;
+  if (fs.existsSync(path.join(run, closureRelative))) fail(`Repair docket ${docket.docket_id} already has an immutable closure`);
+  const snapshotRoot = `repairs/evidence/closure-${docket.docket_id}`;
+  if (fs.existsSync(path.join(run, snapshotRoot))) fs.rmSync(path.join(run, snapshotRoot), { recursive: true, force: true });
+  const copied = new Map();
+  const archive = (binding) => snapshotBinding(run, snapshotRoot, binding, copied);
+  const closure = {
+    schema_version: 2,
+    at: new Date().toISOString(),
+    docket_id: docket.docket_id,
+    semantic_digest: docket.semantic_digest,
+    target_phase: docket.target_phase,
+    evidence_epoch: evidenceEpoch,
+    post_evidence_epoch: repairEvidenceEpoch(run, record, docket.target_phase),
+    post_scientific_state: reviewEvidenceManifest(run),
+    post_scientific_state_sha256: manifestDigest(reviewEvidenceManifest(run)),
+    post_manifest_sha256: manifestDigest(scientificManifest(run)),
+    delta_fingerprint: deltaFingerprint,
+    incident: archive(entry(run, docket.incident.path)),
+    regression_incidents: (docket.regression_incidents ?? []).map((binding) => archive(entry(run, binding.path))),
+    resolved_fingerprints: [...docket.finding_fingerprints].sort(),
+    reviewed_check_ids: reviewedCheckIds,
+    review_frontiers: reviewAuthorities.map((item) => item.frontier),
+    repair_scope: docket.repair_scope,
+    changed_paths: changed.sort(),
+    review_receipts: reviewAuthorities.map((item) => archive(entry(run, item.receipt))),
+    review_launches: reviewAuthorities.map((item) => archive(entry(run, item.launch))),
+    review_attempts: reviewAuthorities.map((item) => archive(entry(run, item.attempt))),
+    review_outputs: [...new Set(reviewAuthorities.flatMap((item) => item.outputs))].map((item) => archive(entry(run, item))),
+    dependent_receipts: dependentAuthorities.map((item) => archive(entry(run, item.receipt))),
+    dependent_launches: dependentAuthorities.map((item) => archive(entry(run, item.launch))),
+    dependent_attempts: dependentAuthorities.map((item) => archive(entry(run, item.attempt))),
+    dependent_outputs: [...new Set(dependentAuthorities.flatMap((item) => item.outputs))].map((item) => archive(entry(run, item))),
+    repaired_artifacts: docket.repair_scope.map((item) => archivedArtifactState(run, snapshotRoot, liveArtifactState(run, item), copied)),
+    absence_proof: absenceProof ? archive(entry(run, absenceProof)) : null,
+    adjudicator_receipt: archive(entry(run, adjudicator.receipt_path)),
+    adjudicator_launch: archive(entry(run, adjudicator.launch_path)),
+    adjudicator_attempt: archive(entry(run, adjudicator.attempt_record)),
+    proposal: archive(entry(run, relative)),
+    docket: structuredClone(docket),
+    required_action: value.required_action,
+  };
+  writeJson(path.join(run, closureRelative), closure);
+  record.repair_closures.push({ path: closureRelative, sha256: hashArtifact(run, closureRelative) });
+  record.active_repair = null;
+  record.sealed_review_frontier = null;
+  advanceFrozenFrontier(record);
+  record.updated_at = new Date().toISOString();
+  writeJson(path.join(run, "run.json"), record);
+  appendEvent(run, { event: "repair_docket_closed", docket_id: closure.docket_id, changed_paths: closure.changed_paths, next: value.required_action });
+  process.stdout.write(`${path.join(run, closureRelative)}\n`);
 }
 
 function resumeLegacyRepair(runArg) {
   const run = path.resolve(runArg || "");
   const recordFile = path.join(run, "run.json");
   const record = readJson(recordFile);
+  const config = readJson(path.join(run, "contract", "run-config.json"));
+  if (config.schema_version !== 2 || record.convergence_control) fail("resume-repair is limited to a preserved Scientist1 1.3 run; 1.5 runs use their active convergence docket");
   const legacyState = ["blocked", "exhausted"].join("_");
   const legacyOutcome = ["in", "complete"].join("");
   const terminalRelative = `terminal/${legacyOutcome}.json`;
@@ -2631,7 +3833,10 @@ function usage() {
   coe.mjs checkpoint <run> <phase> --input <path>... --output <path>...
   coe.mjs invalidate <run> <phase> <reason-file>
   coe.mjs revise-contract <run> <contract-revision-reason.json> [researcher-approved-amended-plan.md]
-  coe.mjs record-repair <run> <repair-incident.json>
+  coe.mjs migrate-convergence <active-1.3-or-1.4-run>
+  coe.mjs queue-review-failure <run> <phase> <nonpassing-role-receipt.json>
+  coe.mjs record-repair <run> <adjudicated-repair-proposal.json>
+  coe.mjs close-repair <run> <repair-closure-proposal.json>
   coe.mjs resume-repair <legacy-1.3-run>
   coe.mjs set-outcome <run> <outcome>
   coe.mjs sanitize-feedback <run> <private-evaluation-json> <feedback-json>
@@ -2643,6 +3848,7 @@ function usage() {
 
 const [command, ...args] = process.argv.slice(2);
 const legacyCommands = new Set(["init", "preflight", "checkpoint", "invalidate", "revise-contract", "hash", "set-state", "set-attention", "clear-attention", "set-outcome", "sanitize-feedback", "manifest", "verify-role", "verify"]);
+const unmigratedSafeCommands = new Set(["migrate-convergence", "resume-repair", "bind-approval", "preflight", "hash", "verify-role", "verify"]);
 let delegatedLegacy = false;
 if ((legacyCommands.has(command) || command === "record-repair" || command === "resume-repair") && args[0]) {
   const configPath = path.join(path.resolve(args[0]), "contract", "run-config.json");
@@ -2661,6 +3867,16 @@ if ((legacyCommands.has(command) || command === "record-repair" || command === "
   }
 }
 try {
+  if (!delegatedLegacy && args[0] && !unmigratedSafeCommands.has(command)) {
+    const candidateRun = path.resolve(args[0]);
+    const configFile = path.join(candidateRun, "contract", "run-config.json");
+    const recordFile = path.join(candidateRun, "run.json");
+    if (fs.existsSync(configFile) && fs.existsSync(recordFile)) {
+      const config = readJson(configFile);
+      const record = readJson(recordFile);
+      if ([2, 3].includes(config.schema_version) && !record.convergence_control) fail("S1_CONVERGENCE_MIGRATION_REQUIRED: active Scientist1 1.3/1.4 runs must execute migrate-convergence before any further state-changing command");
+    }
+  }
   if (delegatedLegacy) {
     // The frozen 1.2 control plane owns existing schema-1 runs; 1.3 never
     // rewrites their scientific contract in place.
@@ -2672,7 +3888,10 @@ try {
   else if (command === "checkpoint") { memoizeHashes = true; checkpoint(args[0], args[1], args.slice(2)); }
   else if (command === "invalidate") invalidate(args[0], args[1], args[2]);
   else if (command === "revise-contract") reviseContract(args[0], args[1], args[2]);
+  else if (command === "migrate-convergence") migrateConvergence(args[0]);
+  else if (command === "queue-review-failure") queueReviewFailure(args[0], args[1], args[2]);
   else if (command === "record-repair") recordRepair(args[0], args[1]);
+  else if (command === "close-repair") closeRepair(args[0], args[1]);
   else if (command === "resume-repair") resumeLegacyRepair(args[0]);
   else if (command === "set-outcome") setOutcome(args[0], args[1]);
   else if (command === "sanitize-feedback") sanitizeFeedback(args[0], args[1], args[2]);
@@ -2691,7 +3910,7 @@ try {
     process.exitCode = 2;
   }
 } catch (error) {
-  if (!delegatedLegacy && command === "checkpoint") preserveCheckpointRejection(args[0], args[1], error.message);
+  if (!delegatedLegacy && command === "checkpoint") preserveCheckpointRejection(checkpointRejectionContext, error.message);
   if (!process.exitCode) {
     process.stderr.write(`${error.stack ?? error}\n`);
     process.exitCode = 1;

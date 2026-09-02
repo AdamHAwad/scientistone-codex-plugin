@@ -62,6 +62,8 @@ const phaseDescriptions = {
 };
 
 const roleLabels = {
+  repair_adjudicator: "Repair adjudicator",
+  checkpoint_reviewer: "Checkpoint repair reviewer",
   contract_auditor: "Study plan reviewer",
   literature_mapper: "Literature searcher",
   evidence_reader: "Paper reader",
@@ -93,6 +95,8 @@ const roleLabels = {
 };
 
 const roleDescriptions = {
+  repair_adjudicator: "Independently determines whether a review finding is a real closed-checklist defect, a repair regression, a machine failure, or a reviewer false positive, then freezes its exact repair scope.",
+  checkpoint_reviewer: "Rechecks only the deterministic machine failure cited by a controller-issued repair docket.",
   contract_auditor: "Checks whether the saved study plan matches the request and can be evaluated as written.",
   literature_mapper: "Searches for prior work that bears directly on the research question.",
   evidence_reader: "Reads selected papers and records the evidence that may affect the study.",

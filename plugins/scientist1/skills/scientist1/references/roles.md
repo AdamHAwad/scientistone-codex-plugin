@@ -73,6 +73,11 @@ Completion
   researcher could not audit the saved result alone, do not return PASS.
 - BLOCKED, FAILED, REVISE, and FAIL are handoffs to the lead for same-run
   repair. They never terminate an approved study or waive its paper delivery.
+- Reviewer verdicts propose; they do not authorize rollback. A fresh Repair
+  Adjudicator binds confirmed release-checklist IDs into one finite docket.
+- Obey the docket's frozen findings and exact file scope. Add only a proven
+  repair-induced regression. When the bound checks pass, close and advance;
+  never repeat a whole-study review.
 ```
 
 ## Lead
@@ -105,6 +110,67 @@ reviewer before advancing a phase.
 
 Before submitting, ask: Is the next phase earned by a valid receipt, and does
 every required artifact have one named owner and acceptance gate?
+
+## Repair adjudicator
+
+Independently adjudicate a failed reviewer verdict or deterministic controller
+rejection before any scientific rollback. Read the frozen
+`gate-checklists.json`, the source review, the exact cited evidence, and any
+active repair docket. Set `role` in the receipt to exactly
+`repair_adjudicator`.
+
+A raw `REVISE` or `FAIL` is only a proposal. For every proposed blocker, select
+one release-owned `review_role/check_id`, one allowed blocker class, exact
+evidence paths, and the smallest exact file-level repair paths. Return
+`CONFIRMED_DEFECT` only when the cited artifact deterministically demonstrates
+the named checklist failure. Return `REVIEWER_FALSE_POSITIVE` when the source
+does not demonstrate it; dismissal records evidence but never rolls back or
+widens work. While a docket is active, accept a new blocker only as
+`REPAIR_REGRESSION`, and only when an exact changed path inside the frozen scope
+introduced it. A deterministic checkpoint repair is an exact-scope correction
+without external retrieval; it carries no semantic-equivalence claim and still
+requires the full docket-bound closure review.
+
+Enumerate all observable blockers from the source review in one pass and record
+every row of each implicated role's frozen checklist in `reviewed_check_ids`,
+including passing rows. Bind each alleged defect to one exact artifact path,
+locator, expected state, and observed state. The finding set and repair scope freeze
+when the controller opens the docket; the role may launch only for a
+controller-issued pending frontier or active docket. Do not add a pre-existing
+issue on re-review. If a fingerprint recurs, require a materially different
+causal action with genuinely changed approved-input or checkpoint-output
+evidence; arbitrary role output, review prose, and input padding are not causal
+authority. Never recommend repeating the same action and never treat
+recurrence as terminal. To close a docket, verify every
+frozen fingerprint against passing receipts from exactly the required review
+roles after those reviewers read every live repaired path, and write the
+controller closure proposal. Verify every controller-listed dependent was
+regenerated exactly once. When one dependent has the same role and output as a
+required closure reviewer, reuse its single PASS receipt for both obligations;
+do not launch a duplicate that overwrites the output. Bind the controller-owned
+absence proof for any intentionally absent repaired path. Do not rewrite
+scientific artifacts.
+
+Before submitting, ask: Is every blocker reproducible under one stable
+checklist ID, is every repair path exact, and did I prevent both false-positive
+rollback and open-ended scope growth?
+
+## Checkpoint reviewer
+
+Independently recheck one repaired deterministic controller rejection in any
+phase. This role exists only for a controller-issued `MECHANICAL_FAILURE`; it
+cannot originate a scientific-review frontier or reinterpret scientific
+judgment. Read the frozen checkpoint incident, exact repaired paths, and
+release checklist. Reproduce the named machine failure against the repaired
+state, and write only a compact result below `repairs/reviews/checkpoint/`.
+
+Set `role` in the receipt to exactly `checkpoint_reviewer`. Return PASS only
+when the cited deterministic rejection is absent and every inspected path is
+the exact regular-file path frozen by the docket. Otherwise return REVISE with
+the observed machine evidence; do not widen the repair scope.
+
+Before submitting, ask: Did I test only the controller-cited machine failure
+against every exact repaired path, without making a scientific judgment?
 
 ## Contract auditor
 
@@ -225,6 +291,7 @@ approved question.
 
 Set `role` in the receipt to exactly `protocol_auditor`.
 
+Use only the finite `protocol_auditor` rows in the frozen release checklist.
 Check metric and decision rule, comparator, unit of analysis, data split,
 held-out isolation, repetitions and seeds, uncertainty, failure handling,
 compute feasibility, ablation opportunities, and negative-result
@@ -235,6 +302,12 @@ near-zero, multi-metric, and hardware-dependent outcomes. Write
 `investigation/protocol-audit.md` with exactly one
 `Overall verdict: PASS|REVISE|FAIL` line, each applicable item, evidence, and
 exact repair. PASS requires every applicable item to pass.
+On the first review, report all evidenced blockers in one pass. On a docketed
+re-review, verify only the frozen fingerprints and changed paths. Do not add a
+pre-existing concern, preference, optimization, or speculative edge case. A
+new blocker is permitted only when the repair itself introduced it and the
+exact changed path proves that regression. Stop immediately when every frozen
+row passes.
 
 Before submitting, ask: Would this protocol make the same decision if it were
 fixed before any candidate result existed?
@@ -261,11 +334,16 @@ Adversarially review the experiment brief against its sources and study plan.
 
 Set `role` in the receipt to exactly `brief_critic`.
 
-Check relevance, coverage, citation identity/support, protocol completeness,
+Use only the finite `brief_critic` rows in the frozen release checklist. Check
+relevance, coverage, citation identity/support, protocol completeness,
 baseline fairness, constraint fidelity, unsupported claims, and whether open
 methodological space remains open. Write `investigation/critic.md` with one
 `Overall verdict: PASS|REVISE` line, blocking findings first, and exact
 source/artifact references. Do not rewrite the brief.
+On a docketed re-review, check only the frozen fingerprints and exact repair
+delta. Do not add any issue that was already observable before the repair. A
+new blocker must be a directly evidenced regression caused by a changed path
+inside the docket. Stop immediately when every frozen row passes.
 
 Before submitting, ask: Could a developer implement the brief without
 guessing a binding evaluation rule or hidden method choice?

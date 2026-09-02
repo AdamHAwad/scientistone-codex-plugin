@@ -22,9 +22,11 @@ function catalog(strong = "gpt-6-astra", efficient = "gpt-6-luna", offset = 0) {
 function runRoot(t, name = "routing") {
   const run = fs.mkdtempSync(path.join(os.tmpdir(), `scientist1-${name}-`));
   t.after(() => fs.rmSync(run, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify({ state: "running", contract_revision: 1, charter_revision: 1, last_checkpoint: null, checkpoints: {}, approval_sha256: "a".repeat(64) })}\n`);
+  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify({ state: "running", contract_revision: 1, charter_revision: 1, last_checkpoint: null, checkpoints: {}, approval_sha256: "a".repeat(64), convergence_control: { schema_version: 1, release: "1.5.0", checklist: { path: "contract/control-plane/gate-checklists.json", sha256: "b".repeat(64) } }, pending_adjudication: null, active_repair: null })}\n`);
   fs.mkdirSync(path.join(run, "contract"), { recursive: true });
-  fs.writeFileSync(path.join(run, "contract", "run-config.json"), `${JSON.stringify({ schema_version: 3, orchestration: { task_attempt_policy: "repair_until_pass", repair_gate_policy: "invalidate_and_continue", completion_condition: "fresh_verified_delivery" } })}\n`);
+  fs.mkdirSync(path.join(run, "contract/control-plane"), { recursive: true });
+  fs.writeFileSync(path.join(run, "contract/control-plane/gate-checklists.json"), "{}\n");
+  fs.writeFileSync(path.join(run, "contract", "run-config.json"), `${JSON.stringify({ schema_version: 4, orchestration: { task_attempt_policy: "repair_until_pass", repair_gate_policy: "invalidate_and_continue", completion_condition: "fresh_verified_delivery", review_frontier_policy: "frozen_release_checklist", rollback_policy: "independent_adjudication_only", repair_scope_policy: "exact_delta", recurrence_policy: "causal_strategy_change" } })}\n`);
   fs.writeFileSync(path.join(run, "contract", "approval.json"), `${JSON.stringify({ schema_version: 1 })}\n`);
   fs.writeFileSync(path.join(run, "study-plan.md"), "# Test plan\n");
   fs.mkdirSync(path.join(run, "selection", "selected"), { recursive: true });
@@ -64,7 +66,7 @@ test("the bundled policy reserves deep reasoning for judgment and lowers mechani
 
 test("every frozen policy role resolves through the real launch prompt path", async (t) => {
   const run = runRoot(t, "all-role-prompts");
-  for (const role of Object.keys(loadModelPolicy().roles).sort()) {
+  for (const role of Object.keys(loadModelPolicy().roles).filter((name) => name !== "repair_adjudicator").sort()) {
     const prepared = await prepareRoleLaunch({
       run_path: run,
       task_name: `prompt_${role}`,
@@ -128,6 +130,112 @@ test("a mechanical efficient launch resolves to low effort", async (t) => {
   assert.equal(prepared.reasoning_effort, "low");
   const launch = JSON.parse(fs.readFileSync(path.join(run, prepared.launch_record), "utf8"));
   assert.equal(launch.reasoning_effort, "low");
+});
+
+test("the phase-agnostic checkpoint reviewer cannot retrieve new evidence", async (t) => {
+  const run = runRoot(t, "checkpoint-repair");
+  fs.mkdirSync(path.join(run, "repairs/incidents"), { recursive: true });
+  fs.mkdirSync(path.join(run, "repairs/control-plane"), { recursive: true });
+  fs.writeFileSync(path.join(run, "repairs/incidents/mechanical.json"), "{}\n");
+  fs.writeFileSync(path.join(run, "repairs/control-plane/gate-checklists-1.5.0.json"), "{}\n");
+  const record = JSON.parse(fs.readFileSync(path.join(run, "run.json"), "utf8"));
+  record.convergence_control = { checklist: { path: "repairs/control-plane/gate-checklists-1.5.0.json" } };
+  record.active_repair = { docket_id: "a".repeat(64), semantic_digest: "d".repeat(64), incident: { path: "repairs/incidents/mechanical.json", sha256: "b".repeat(64) }, target_phase: "ablation", requires_invalidation: false, repair_mode: "deterministic_delta", finding_fingerprints: ["c".repeat(64)], repair_scope: ["ablation/results.json"], scope_baseline: [], controller_delta: [], required_review_roles: ["checkpoint_reviewer"], baseline: [] };
+  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify(record)}\n`);
+  await assert.rejects(() => prepareRoleLaunch({ run_path: run, task_name: "schema_retry", role: "checkpoint_reviewer", declared_inputs: ["study-plan.md"], declared_outputs: ["repairs/reviews/checkpoint/ablation.json"], allowed_external_sources: ["web"], task_brief: brief() }, { catalog: catalog() }), /deterministic checkpoint repair cannot retrieve external evidence/i);
+});
+
+test("a legitimacy closure reviewer can use its exact node-parameterized output", async (t) => {
+  const run = runRoot(t, "legitimacy-repair");
+  fs.mkdirSync(path.join(run, "repairs/incidents"), { recursive: true });
+  fs.mkdirSync(path.join(run, "repairs/control-plane"), { recursive: true });
+  fs.mkdirSync(path.join(run, "discovery/nodes/n1"), { recursive: true });
+  fs.writeFileSync(path.join(run, "repairs/incidents/legitimacy.json"), "{}\n");
+  fs.writeFileSync(path.join(run, "repairs/control-plane/gate-checklists.json"), "{}\n");
+  fs.writeFileSync(path.join(run, "discovery/nodes/n1/method-report.md"), "repaired\n");
+  const record = JSON.parse(fs.readFileSync(path.join(run, "run.json"), "utf8"));
+  record.convergence_control = { checklist: { path: "repairs/control-plane/gate-checklists.json" } };
+  record.active_repair = { docket_id: "a".repeat(64), semantic_digest: "d".repeat(64), incident: { path: "repairs/incidents/legitimacy.json", sha256: "b".repeat(64) }, target_phase: "discovery", requires_invalidation: false, repair_mode: "scientific_delta", finding_fingerprints: ["c".repeat(64)], repair_scope: ["discovery/nodes/n1/method-report.md"], scope_baseline: [{ path: "discovery/nodes/n1/method-report.md", kind: "file", sha256: "e".repeat(64) }], controller_delta: [], dependent_regeneration: [{ role: "legitimacy_auditor", logical_task_name: "legitimacy_auditor", declared_inputs: ["study-plan.md"], declared_outputs: ["discovery/nodes/n1/legitimacy-audit.md"], allowed_external_sources: [] }], required_review_roles: ["legitimacy_auditor"], baseline: [] };
+  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify(record)}\n`);
+  await assert.rejects(() => prepareRoleLaunch({ run_path: run, task_name: "duplicate_legitimacy_closure", role: "legitimacy_auditor", declared_inputs: ["study-plan.md"], declared_outputs: ["discovery/nodes/n1/legitimacy-audit.md"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME }), /launch that frozen logical task once and reuse its PASS receipt/i);
+  const prepared = await prepareRoleLaunch({ run_path: run, task_name: "legitimacy_closure", logical_task_name: "legitimacy_auditor", role: "legitimacy_auditor", declared_inputs: ["study-plan.md"], declared_outputs: ["discovery/nodes/n1/legitimacy-audit.md"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME });
+  assert.equal(prepared.model, "gpt-6-astra");
+});
+
+test("a deleted dependent input is replaced by the exact controller absence proof", async (t) => {
+  const run = runRoot(t, "deleted-dependent-input");
+  fs.mkdirSync(path.join(run, "repairs/incidents"), { recursive: true });
+  fs.mkdirSync(path.join(run, "repairs/control-plane"), { recursive: true });
+  fs.mkdirSync(path.join(run, "discovery/nodes/n1"), { recursive: true });
+  fs.writeFileSync(path.join(run, "repairs/incidents/deletion.json"), "{}\n");
+  fs.writeFileSync(path.join(run, "repairs/control-plane/gate-checklists.json"), "{}\n");
+  const record = JSON.parse(fs.readFileSync(path.join(run, "run.json"), "utf8"));
+  record.convergence_control = { checklist: { path: "repairs/control-plane/gate-checklists.json" } };
+  record.active_repair = { docket_id: "a".repeat(64), semantic_digest: "d".repeat(64), incident: { path: "repairs/incidents/deletion.json", sha256: "b".repeat(64) }, target_phase: "discovery", requires_invalidation: false, repair_mode: "scientific_delta", finding_fingerprints: ["c".repeat(64)], repair_scope: ["discovery/nodes/n1/method-report.md"], scope_baseline: [{ path: "discovery/nodes/n1/method-report.md", kind: "file", sha256: "e".repeat(64) }], controller_delta: [], dependent_regeneration: [{ role: "legitimacy_auditor", logical_task_name: "legitimacy_auditor", declared_inputs: ["study-plan.md", "discovery/nodes/n1/method-report.md"], declared_outputs: ["discovery/nodes/n1/legitimacy-audit.md"], allowed_external_sources: [] }], required_review_roles: ["legitimacy_auditor"], baseline: [] };
+  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify(record)}\n`);
+  const prepared = await prepareRoleLaunch({ run_path: run, task_name: "deleted_input_closure", logical_task_name: "legitimacy_auditor", role: "legitimacy_auditor", declared_inputs: ["study-plan.md", "discovery/nodes/n1/method-report.md"], declared_outputs: ["discovery/nodes/n1/legitimacy-audit.md"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME });
+  const launch = JSON.parse(fs.readFileSync(path.join(run, prepared.launch_record), "utf8"));
+  const proofPath = `repairs/absence-proofs/${record.active_repair.semantic_digest}.json`;
+  assert.ok(launch.declared_inputs.includes(proofPath));
+  assert.equal(launch.declared_inputs.includes("discovery/nodes/n1/method-report.md"), false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(run, proofPath), "utf8")).absent_paths, ["discovery/nodes/n1/method-report.md"]);
+});
+
+test("a repair docket namespaces workers and closure reviewers from original output ownership", async (t) => {
+  const run = runRoot(t, "repair-output-namespace");
+  fs.mkdirSync(path.join(run, "contract"), { recursive: true });
+  fs.writeFileSync(path.join(run, "contract/audit.md"), "original audit\n");
+  fs.writeFileSync(path.join(run, "contract/generated.md"), "original generated artifact\n");
+  await prepareRoleLaunch({ run_path: run, task_name: "original_auditor", role: "contract_auditor", declared_inputs: ["study-plan.md"], declared_outputs: ["contract/audit.md"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME });
+  await prepareRoleLaunch({ run_path: run, task_name: "original_writer", role: "writer", declared_inputs: ["study-plan.md"], declared_outputs: ["contract/generated.md"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME });
+  fs.mkdirSync(path.join(run, "repairs/incidents"), { recursive: true });
+  fs.mkdirSync(path.join(run, "repairs/control-plane"), { recursive: true });
+  fs.writeFileSync(path.join(run, "repairs/incidents/docket.json"), "{}\n");
+  fs.writeFileSync(path.join(run, "repairs/control-plane/gate-checklists.json"), "{}\n");
+  const record = JSON.parse(fs.readFileSync(path.join(run, "run.json"), "utf8"));
+  record.convergence_control = { checklist: { path: "repairs/control-plane/gate-checklists.json" } };
+  record.active_repair = { docket_id: "a".repeat(64), semantic_digest: "d".repeat(64), incident: { path: "repairs/incidents/docket.json", sha256: "b".repeat(64) }, target_phase: "contract", requires_invalidation: false, repair_mode: "scientific_delta", finding_fingerprints: ["c".repeat(64)], repair_scope: ["contract/audit.md", "contract/generated.md"], scope_baseline: [], controller_delta: [], required_review_roles: ["contract_auditor"], baseline: [] };
+  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify(record)}\n`);
+  const worker = await prepareRoleLaunch({ run_path: run, task_name: "repair_generated", role: "writer", declared_inputs: ["study-plan.md"], declared_outputs: ["contract/generated.md"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME });
+  const reviewer = await prepareRoleLaunch({ run_path: run, task_name: "repair_closure_auditor", role: "contract_auditor", declared_inputs: ["study-plan.md"], declared_outputs: ["contract/audit.md"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(run, worker.launch_record), "utf8")).repair_binding.docket_id, record.active_repair.docket_id);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(run, reviewer.launch_record), "utf8")).repair_binding.docket_id, record.active_repair.docket_id);
+  consumeLaunchToken(worker.task_name, { stateHome: STATE_HOME });
+  fs.mkdirSync(path.join(run, "role-receipts"), { recursive: true });
+  fs.writeFileSync(path.join(run, "role-receipts/repair_generated.json"), `${JSON.stringify({ execution_status: "COMPLETE", gate_verdict: "PASS" })}\n`);
+  record.active_repair.semantic_digest = "e".repeat(64);
+  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify(record)}\n`);
+  const regenerated = await prepareRoleLaunch({ run_path: run, task_name: "repair_generated_after_regression", logical_task_name: "repair_generated", role: "writer", declared_inputs: ["study-plan.md"], declared_outputs: ["contract/generated.md"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(run, regenerated.launch_record), "utf8")).repair_binding.semantic_digest, record.active_repair.semantic_digest);
+});
+
+test("a Repair Adjudicator cannot create work without a controller frontier", async (t) => {
+  const run = runRoot(t, "no-spontaneous-adjudication");
+  fs.mkdirSync(path.join(run, "repairs/control-plane"), { recursive: true });
+  fs.writeFileSync(path.join(run, "repairs/control-plane/gate-checklists.json"), "{}\n");
+  const record = JSON.parse(fs.readFileSync(path.join(run, "run.json"), "utf8"));
+  record.convergence_control = { checklist: { path: "repairs/control-plane/gate-checklists.json" } };
+  record.pending_adjudication = null;
+  record.active_repair = null;
+  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify(record)}\n`);
+  await assert.rejects(() => prepareRoleLaunch({ run_path: run, task_name: "invent_repair", role: "repair_adjudicator", declared_inputs: ["study-plan.md"], declared_outputs: ["repairs/proposals/invented.json"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog() }), /only for a controller-issued pending adjudication or active repair docket/i);
+});
+
+test("unmigrated 1.3 and 1.4 runs cannot prepare or consume specialist launches", async (t) => {
+  const staleRun = runRoot(t, "migration-stale-grant");
+  const prepared = await prepareRoleLaunch({ run_path: staleRun, task_name: "prepared_before_downgrade", role: "literature_mapper", declared_inputs: ["study-plan.md"], declared_outputs: ["evidence/search-log.jsonl"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME });
+  const staleRecord = JSON.parse(fs.readFileSync(path.join(staleRun, "run.json"), "utf8"));
+  delete staleRecord.convergence_control;
+  fs.writeFileSync(path.join(staleRun, "run.json"), `${JSON.stringify(staleRecord)}\n`);
+  fs.writeFileSync(path.join(staleRun, "contract/run-config.json"), `${JSON.stringify({ schema_version: 3, orchestration: { task_attempt_policy: "repair_until_pass", repair_gate_policy: "invalidate_and_continue", completion_condition: "fresh_verified_delivery" } })}\n`);
+  assert.throws(() => consumeLaunchToken(prepared.task_name, { stateHome: STATE_HOME }), (error) => error.code === "S1_CONVERGENCE_MIGRATION_REQUIRED");
+
+  const blockedRun = runRoot(t, "migration-prepare-barrier");
+  const blockedRecord = JSON.parse(fs.readFileSync(path.join(blockedRun, "run.json"), "utf8"));
+  delete blockedRecord.convergence_control;
+  fs.writeFileSync(path.join(blockedRun, "run.json"), `${JSON.stringify(blockedRecord)}\n`);
+  fs.writeFileSync(path.join(blockedRun, "contract/run-config.json"), `${JSON.stringify({ schema_version: 2, orchestration: { max_task_attempts: 2, max_repair_waves_per_gate: 1 } })}\n`);
+  await assert.rejects(() => prepareRoleLaunch({ run_path: blockedRun, task_name: "blocked_before_migration", role: "literature_mapper", declared_inputs: ["study-plan.md"], declared_outputs: ["evidence/search-log.jsonl"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME }), (error) => error.code === "S1_CONVERGENCE_MIGRATION_REQUIRED");
 });
 
 test("a run freezes its resolution while a new run resolves a newer catalog", async (t) => {
@@ -279,6 +387,25 @@ test("expired grants have a stable recovery code and a fresh grant can reuse the
   assert.equal(launch.logical_task_name, "literature_map");
   assert.equal(launch.attempt, 1);
   assert.throws(() => consumeLaunchToken(second.task_name, { stateHome: STATE_HOME }), (error) => error.code === "S1_LAUNCH_GRANT_NOT_FOUND");
+});
+
+test("a grant minted before a repair frontier cannot run after the controller queues adjudication", async (t) => {
+  const run = runRoot(t, "stale-before-pending");
+  const prepared = await prepareRoleLaunch({
+    run_path: run,
+    task_name: "stale_literature_mapper",
+    role: "literature_mapper",
+    declared_inputs: ["study-plan.md"],
+    declared_outputs: ["evidence/search-log.jsonl"],
+    allowed_external_sources: ["scholarly_web"],
+    task_brief: brief(),
+  }, { catalog: catalog(), stateHome: STATE_HOME });
+  const record = JSON.parse(fs.readFileSync(path.join(run, "run.json"), "utf8"));
+  record.convergence_control = { schema_version: 1, release: "1.5.0", checklist: { path: "contract/gate-checklists.json", sha256: "b".repeat(64) } };
+  record.pending_adjudication = { path: "repairs/incidents/pending.json", sha256: "c".repeat(64) };
+  record.active_repair = null;
+  fs.writeFileSync(path.join(run, "run.json"), `${JSON.stringify(record)}\n`);
+  assert.throws(() => consumeLaunchToken(prepared.task_name, { stateHome: STATE_HOME }), (error) => error.code === "S1_REPAIR_ADJUDICATION_REQUIRED");
 });
 
 test("invalid spawn text does not burn a grant and accepted repairs can continue until PASS", async (t) => {

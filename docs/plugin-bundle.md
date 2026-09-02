@@ -36,6 +36,7 @@ skills/scientist1/agents/openai.yaml
 skills/scientist1/assets/logo.svg
 skills/scientist1/references/artifacts.md
 skills/scientist1/references/doctrine.md
+skills/scientist1/references/gate-checklists.json
 skills/scientist1/references/i1-verification-policy.schema.json
 skills/scientist1/references/i1-verification.md
 skills/scientist1/references/intake.md
@@ -78,5 +79,6 @@ tools, and `.DS_Store`. A narrow compatibility controller derived from the
 released 1.2 verifier is bundled only so in-progress 1.2 runs remain verifiable
 without rewriting their frozen scientific contract. The exact released role
 contract and model policy are also bundled so genuine in-progress 1.2 runs can
-launch remaining specialists without being reinterpreted by 1.4; every new run
-uses the 1.4 control plane.
+launch remaining specialists without being reinterpreted by later schemas;
+active 1.3/1.4 runs can add the separate 1.5 convergence docket without
+rewriting prior evidence, and every new run uses the 1.5 control plane.

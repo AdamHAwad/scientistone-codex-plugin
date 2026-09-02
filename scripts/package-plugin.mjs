@@ -40,6 +40,7 @@ const files = [
   "skills/scientist1/assets/logo.svg",
   "skills/scientist1/references/artifacts.md",
   "skills/scientist1/references/doctrine.md",
+  "skills/scientist1/references/gate-checklists.json",
   "skills/scientist1/references/i1-verification-policy.schema.json",
   "skills/scientist1/references/i1-verification.md",
   "skills/scientist1/references/intake.md",

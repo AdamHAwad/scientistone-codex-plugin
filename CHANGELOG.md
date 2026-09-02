@@ -2,6 +2,50 @@
 
 This project follows Semantic Versioning.
 
+## 1.5.0 - 2026-09-01
+
+- Added a release-owned finite checklist for every scientific review role and a
+  fresh Repair Adjudicator. Raw `REVISE`/`FAIL` prose can no longer authorize a
+  rollback; unsupported findings are preserved as false-positive dismissals.
+- Added controller-owned repair dockets with stable semantic fingerprints,
+  all-findings-at-once adjudication, exact file-level repair scope, bound
+  reviewer launches, and exact-delta closure before phase promotion.
+- Required a controller-issued failed-review/checkpoint frontier before any new
+  docket, archived adjudication authority immutably, sealed complete checklist
+  coverage per evidence epoch, and bound automatic contract revision to the
+  active incident.
+- Required closure reviewers to read every repaired artifact and rejected
+  zero-delta closure, out-of-scope repair launches, repeated causal strategies,
+  and unchecked deterministic-repair scope drift.
+- Prevented open-ended re-review: pre-existing late findings cannot grow an
+  active docket, while a genuine new blocker must be proven as a regression
+  caused by an exact changed in-scope artifact.
+- Added causal recurrence handling. Repeated fingerprints require an evidenced
+  change of strategy instead of another identical retry and can never become a
+  terminal study outcome.
+- Sealed findings against their exact artifact state, so unrelated file changes
+  and reviewer input padding cannot reopen dismissed or already-reviewed work.
+  Recurrence remains live only through a real artifact delta or genuinely
+  changed immutable approved-input/checkpoint-output authority, never ad hoc
+  role-produced files.
+- Froze target-phase dependent regeneration into each docket, required one
+  current PASS regeneration per dependent, and made a single receipt satisfy
+  overlapping dependent/reviewer obligations without overwriting the output.
+- Added explicit present/absent repaired-artifact state with controller-owned
+  absence proofs for scoped deletions, plus immutable pre/post scientific-state
+  seals.
+- Added a phase-agnostic Checkpoint Reviewer so deterministic controller
+  failures remain representable and closable in every phase, while review prose
+  cannot masquerade as new causal evidence.
+- Added in-place convergence migration for active 1.3/1.4 runs, preserving all
+  prior receipts, incidents, invalidation archives, and scientific artifacts.
+  Per-phase migration frontiers now form an exact finite queue; rollback records
+  later invalidated frontiers as immutable supersessions, and verification
+  requires exactly one disposition for every frontier.
+- Made Stop recovery state-specific: it now directs the lead to adjudicate,
+  execute, close, or checkpoint the exact active docket rather than repeat a
+  generic repair loop.
+
 ## 1.4.0 - 2026-08-31
 
 - Made one researcher approval a durable, one-way execution commitment through

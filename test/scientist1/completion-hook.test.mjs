@@ -74,6 +74,21 @@ test("Stop continues every noncomplete approved run even after a prior continuat
   }
 });
 
+test("Stop names the stable convergence transition instead of repeating a generic retry", (t) => {
+  const value = fixture(t, "repairing", "investigation");
+  const recordPath = path.join(value.run, "run.json");
+  fs.writeFileSync(recordPath, `${JSON.stringify({ state: "repairing", phase: "investigation", convergence_control: { release: "1.5.0" }, pending_adjudication: { path: "repairs/incidents/review.json", sha256: "a".repeat(64) }, active_repair: null })}\n`);
+  registerRun(value);
+  const adjudication = stop(value);
+  assert.match(adjudication.reason, /next causal transition is independent adjudication/i);
+  assert.match(adjudication.reason, /Do not rerun the same reviewer first/i);
+
+  fs.writeFileSync(recordPath, `${JSON.stringify({ state: "repairing", phase: "investigation", convergence_control: { release: "1.5.0" }, pending_adjudication: null, active_repair: { docket_id: "b".repeat(64), incident: { path: "repairs/incidents/review.json", sha256: "a".repeat(64) }, repair_scope: ["investigation/brief.md"], required_review_roles: ["brief_critic"], finding_fingerprints: ["c".repeat(64)], target_phase: "investigation" } })}\n`);
+  const docket = stop(value);
+  assert.match(docket.reason, /next causal transition is repair docket/i);
+  assert.match(docket.reason, /Do not add pre-existing concerns, duplicate an overlapping reviewer, or repeat a whole-phase review/i);
+});
+
 test("the approval wait closes the gap before run initialization", (t) => {
   const value = fixture(t);
   const draft = "12345678-1234-1234-1234-123456789abc";

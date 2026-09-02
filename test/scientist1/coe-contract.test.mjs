@@ -13,6 +13,7 @@ import { consumeLaunchToken, ensureRunRouting, prepareRoleLaunch } from "../../p
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../plugins/scientist1");
 const COE = path.join(ROOT, "skills", "scientist1", "scripts", "coe.mjs");
 const ROLE_CONTRACT = path.join(ROOT, "skills", "scientist1", "references", "roles.md");
+const GATE_CHECKLIST = JSON.parse(fs.readFileSync(path.join(ROOT, "skills", "scientist1", "references", "gate-checklists.json"), "utf8"));
 const BUDGETS = { idea_ceiling: 2, minimum_eligible_ideas: 1, candidate_node_ceiling: 1, minimum_evaluated_candidates: 1, evaluation_ceiling_per_node: 1, ablation_ceiling: 1, minimum_valid_ablations: 1, canonical_repetitions: 2, audit_panel_size: 3 };
 
 const run = (...args) => spawnSync(process.execPath, [COE, ...args], { encoding: "utf8" });
@@ -25,7 +26,7 @@ function hash(root, relative) { const result = run("hash", root, relative); asse
 function fileHash(file) { return createHash("sha256").update(fs.readFileSync(file)).digest("hex"); }
 function approve(root) { const result = run("bind-approval", root, "test-draft", "2026-08-31T00:00:00Z", "Synthetic researcher approval for the regression fixture."); assert.equal(result.status, 0, result.stderr); }
 function canonical(value) { if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`; return JSON.stringify(value); }
-function workKey(role, outputs, contractRevision, charterRevision) { return createHash("sha256").update(canonical({ contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...outputs].sort() })).digest("hex"); }
+function workKey(role, outputs, contractRevision, charterRevision, repairDocketId = null, repairSemanticDigest = null) { return createHash("sha256").update(canonical({ contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...outputs].sort(), ...(repairDocketId ? { repair_docket_id: repairDocketId, repair_semantic_digest: repairSemanticDigest } : {}) })).digest("hex"); }
 function bootstrap(root, mode, source = "existing") {
   let tools;
   if (source === "portable_official") {
@@ -49,19 +50,35 @@ function minimalPdf() {
   let pdf = "%PDF-1.4\n"; const offsets = []; for (const object of objects) { offsets.push(Buffer.byteLength(pdf, "latin1")); pdf += object; } const xref = Buffer.byteLength(pdf, "latin1"); return `${pdf}xref\n0 5\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
 }
 
-function role(root, { role: name, task = name, logical_task_name = task, attempt = 1, inputs = ["study-plan.md"], outputs, allowed_external_sources = [], receipt_allowed_external_sources = allowed_external_sources, external_results_used = [], environment_changes = [], omit_environment_changes = false, execution_status = "COMPLETE", gate_verdict = "PASS", model: modelOverride, reasoning_effort: effortOverride }) {
+function role(root, { role: name, task = name, logical_task_name = task, attempt = 1, inputs = ["study-plan.md"], outputs, allowed_external_sources = [], receipt_allowed_external_sources = allowed_external_sources, external_results_used = [], environment_changes = [], omit_environment_changes = false, omit_repair_scope_inputs = false, execution_status = "COMPLETE", gate_verdict = "PASS", model: modelOverride, reasoning_effort: effortOverride }) {
   const started_at = "2026-08-22T12:00:00Z";
   const record = read(root, "run.json");
+  const repairBinding = record.active_repair ? { docket_id: record.active_repair.docket_id, semantic_digest: record.active_repair.semantic_digest, incident_path: record.active_repair.incident.path, incident_sha256: record.active_repair.incident.sha256, repair_mode: record.active_repair.repair_mode, finding_fingerprints: record.active_repair.finding_fingerprints, repair_scope: record.active_repair.repair_scope, scope_baseline: record.active_repair.scope_baseline, controller_delta: record.active_repair.controller_delta, baseline: record.active_repair.baseline.filter((item) => record.active_repair.repair_scope.includes(item.path)) } : null;
+  if (repairBinding) {
+    inputs = [...new Set([...inputs, repairBinding.incident_path, record.convergence_control.checklist.path])];
+    const absentScope = record.active_repair.repair_scope.filter((relative) => !fs.existsSync(path.join(root, relative))).sort();
+    let absenceProof = null;
+    if (absentScope.length) {
+      absenceProof = `repairs/absence-proofs/${record.active_repair.semantic_digest}.json`;
+      json(root, absenceProof, { schema_version: 1, docket_id: record.active_repair.docket_id, semantic_digest: record.active_repair.semantic_digest, absent_paths: absentScope });
+    }
+    if (!omit_repair_scope_inputs && (record.active_repair.required_review_roles.includes(name) || name === "repair_adjudicator")) inputs = [...new Set([...inputs.filter((relative) => fs.existsSync(path.join(root, relative))), ...record.active_repair.repair_scope.filter((relative) => fs.existsSync(path.join(root, relative))), ...[absenceProof].filter(Boolean)])];
+  }
   const runtime = testRuntime(root, name);
   const launchPath = `role-launches/${task}.json`;
-  const seeded = fs.existsSync(path.join(root, launchPath)) && modelOverride == null && effortOverride == null ? read(root, launchPath) : null;
+  const seeded = fs.existsSync(path.join(root, launchPath)) && !repairBinding && modelOverride == null && effortOverride == null ? read(root, launchPath) : null;
   const model = modelOverride ?? seeded?.model ?? runtime.model;
   const reasoning_effort = effortOverride ?? seeded?.reasoning_effort ?? runtime.reasoning_effort;
   if (!seeded) {
     const task_brief = { acceptance_gate: "Produce the declared outputs", constraints: "Use only declared inputs", context: "Synthetic regression fixture", objective: `Complete ${task}`, upstream_summary: [] };
     const assignment = `Synthetic canonical assignment for ${task}`;
-    const key = workKey(name, outputs, record.contract_revision, record.charter_revision);
-    json(root, launchPath, { schema_version: 1, task_id: `native-${task}`, logical_task_name, work_key_sha256: key, attempt, contract_revision: record.contract_revision, charter_revision: record.charter_revision, predecessor: record.last_checkpoint === null ? null : { path: `receipts/${record.last_checkpoint}.json`, sha256: record.checkpoints[record.last_checkpoint].receipt_sha256 }, role: name, fork_turns: "none", model_tier: runtime.tier, model, reasoning_effort, model_routing_sha256: runtime.routing_sha256, role_contract_sha256: fileHash(ROLE_CONTRACT), gate_schema_version: 1, task_brief, task_brief_sha256: createHash("sha256").update(JSON.stringify(task_brief)).digest("hex"), assignment, assignment_sha256: createHash("sha256").update(assignment).digest("hex"), declared_inputs: inputs, input_artifacts: inputs.map((path) => ({ path, sha256: hash(root, path) })), allowed_external_sources, declared_outputs: outputs, started_at });
+    const key = workKey(name, outputs, record.contract_revision, record.charter_revision, repairBinding?.docket_id ?? null, repairBinding?.semantic_digest ?? null);
+    json(root, launchPath, { schema_version: 1, task_id: `native-${task}`, logical_task_name, work_key_sha256: key, attempt, contract_revision: record.contract_revision, charter_revision: record.charter_revision, predecessor: record.last_checkpoint === null ? null : { path: `receipts/${record.last_checkpoint}.json`, sha256: record.checkpoints[record.last_checkpoint].receipt_sha256 }, role: name, fork_turns: "none", model_tier: runtime.tier, model, reasoning_effort, model_routing_sha256: runtime.routing_sha256, role_contract_sha256: fileHash(ROLE_CONTRACT), gate_schema_version: repairBinding ? 2 : 1, ...(repairBinding ? { repair_binding: repairBinding } : {}), task_brief, task_brief_sha256: createHash("sha256").update(JSON.stringify(task_brief)).digest("hex"), assignment, assignment_sha256: createHash("sha256").update(assignment).digest("hex"), declared_inputs: inputs, input_artifacts: inputs.map((path) => ({ path, sha256: hash(root, path) })), allowed_external_sources, declared_outputs: outputs, started_at });
+    if (name === "i1_verifier_builder" && outputs.includes("contract/i1-verification-policy.json") && fs.existsSync(path.join(root, "contract/i1-verification-policy.json"))) {
+      const policy = read(root, "contract/i1-verification-policy.json");
+      policy.authored_by = { role: "i1_verifier_builder", launch_record_path: launchPath, launch_record_sha256: hash(root, launchPath) };
+      json(root, "contract/i1-verification-policy.json", policy);
+    }
   }
   const activeLaunch = read(root, launchPath);
   json(root, `role-attempts/${activeLaunch.logical_task_name}/${activeLaunch.work_key_sha256}/attempt-${activeLaunch.attempt}.json`, { schema_version: 2, logical_task_name: activeLaunch.logical_task_name, work_key_sha256: activeLaunch.work_key_sha256, attempt: activeLaunch.attempt, launch_record: launchPath, launch_record_sha256: hash(root, launchPath), accepted_at: "2026-08-22T12:00:00.500Z" });
@@ -70,17 +87,581 @@ function role(root, { role: name, task = name, logical_task_name = task, attempt
   json(root, `role-receipts/${task}.json`, receipt);
   return `role-receipts/${task}.json`;
 }
+const REVIEW_FIXTURES = {
+  contract: { role: "contract_auditor", output: "contract/audit.md", check_id: "contradictions" },
+  investigation: { role: "brief_critic", output: "investigation/critic.md", check_id: "unsupported_claims" },
+  discovery: { role: "idea_critic", output: "discovery/idea-critique.jsonl", check_id: "contract_fit" },
+  selection: { role: "selection_auditor", output: "selection/selection-audit.md", check_id: "lineage" },
+  writing: { role: "paper_critic", output: "paper/critic.md", check_id: "claim_grounding" },
+  verification: { role: "claim_verifier", output: "paper/verification.md", check_id: "provenance_completeness" },
+  audit: { role: "claim_provenance_auditor", output: "audit/claim-provenance.json", check_id: "coverage" },
+};
+
 function checkpointResult(root, phase, outputs, roles = [], childEnv = null) {
   const flags = ["--input", "study-plan.md"];
   if (phase === "contract") { for (const item of ["request.md", "environment/bootstrap.json", "contract/approval.json", "contract/run-config.json", "contract/input-manifest.json"]) flags.push("--input", item); if (fs.existsSync(path.join(root, "contract/source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json"); else for (const item of ["contract/evaluator-contract.md", "contract/evaluator-manifest.json"]) flags.push("--input", item); for (const item of ["contract/i1-verification-policy.json", "contract/control-plane/i1-interpreter.mjs"]) if (fs.existsSync(path.join(root, item))) flags.push("--input", item); }
-  for (const output of [...outputs, ...roles.map((item) => role(root, item))]) flags.push("--output", output);
+  const roleReceipts = roles.map((item) => role(root, item));
+  let record = read(root, "run.json");
+  if (record.active_repair?.target_phase === phase) {
+    const docket = record.active_repair;
+    const reviewReceipts = [];
+    for (const reviewRole of docket.required_review_roles) {
+      const existing = roleReceipts.find((relative) => read(root, relative).role === reviewRole);
+      if (existing) {
+        reviewReceipts.push(existing);
+        continue;
+      }
+      const fixture = Object.values(REVIEW_FIXTURES).find((item) => item.role === reviewRole);
+      assert.ok(fixture, `Missing test review fixture for ${reviewRole}`);
+      put(root, fixture.output, "Overall verdict: PASS\n");
+      reviewReceipts.push(role(root, { role: reviewRole, task: `${reviewRole}_repair_${docket.docket_id}`, inputs: ["study-plan.md"], outputs: [fixture.output] }));
+    }
+    const task = `auto_close_${docket.docket_id}`;
+    const proposal = `repairs/proposals/${task}.json`;
+    const adjudicatorReceipt = `role-receipts/${task}.json`;
+    json(root, proposal, { schema_version: 1, docket_id: docket.docket_id, resolved_fingerprints: docket.finding_fingerprints, review_receipts: reviewReceipts, adjudicator_receipt: adjudicatorReceipt, required_action: `Checkpoint ${phase} and advance.` });
+    role(root, { role: "repair_adjudicator", task, inputs: [docket.incident.path, ...reviewReceipts], outputs: [proposal] });
+    const closed = run("close-repair", root, proposal);
+    if (closed.status !== 0) return closed;
+    record = read(root, "run.json");
+    assert.equal(record.active_repair, null);
+  }
+  for (const output of [...outputs, ...roleReceipts]) flags.push("--output", output);
   const checked = run("preflight", root, phase, ...flags);
   return checked.status === 0 ? childEnv ? runWithEnv(childEnv, "checkpoint", root, phase, ...flags) : run("checkpoint", root, phase, ...flags) : checked;
 }
 function checkpoint(root, phase, outputs, roles = [], childEnv = null) { const result = checkpointResult(root, phase, outputs, roles, childEnv); assert.equal(result.status, 0, result.stderr); }
-function newRun(t, mode = "research", environmentSource = "existing") { const root = fs.mkdtempSync(path.join(os.tmpdir(), `scientist1-${mode}-`)); t.after(() => fs.rmSync(root, { recursive: true, force: true })); put(root, "request.md", "Approved request.\n"); put(root, "study-plan.md", "# Approved plan\n"); bootstrap(root, mode, environmentSource); json(root, "contract/custom-profile.json", BUDGETS); assert.equal(run("configure", root, "custom", mode, "contract/custom-profile.json").status, 0); assert.equal(run("init", root).status, 0); approve(root); installTestRouting(root); return root; }
+function freezeAs14(root) {
+  const config = read(root, "contract/run-config.json");
+  config.schema_version = 3;
+  config.orchestration = { task_attempt_policy: "repair_until_pass", repair_gate_policy: "invalidate_and_continue", completion_condition: "fresh_verified_delivery" };
+  json(root, "contract/run-config.json", config);
+  fs.rmSync(path.join(root, "contract/control-plane/gate-checklists.json"));
+  const record = read(root, "run.json");
+  record.orchestration = config.orchestration;
+  record.contract_parameters_sha256 = hash(root, "contract/run-config.json");
+  delete record.convergence_control;
+  delete record.pending_adjudication;
+  delete record.active_repair;
+  delete record.repair_closures;
+  json(root, "run.json", record);
+}
+function seedLegacyRepair(root, name, value) {
+  const record = read(root, "run.json");
+  const relative = `repairs/incidents/${name}.json`;
+  json(root, relative, { schema_version: 1, at: "2026-08-31T12:00:00Z", phase: record.phase, failure_class: value.failure_class, logical_task_name: value.logical_task_name, summary: value.summary, evidence: value.evidence_paths.map((item) => ({ path: item, sha256: hash(root, item) })), required_action: value.required_action });
+  record.repair_incidents.push({ path: relative, sha256: hash(root, relative) });
+  record.state = "repairing";
+  record.outcome = null;
+  json(root, "run.json", record);
+}
+function newRun(t, mode = "research", environmentSource = "existing", convergent = true) { const root = fs.mkdtempSync(path.join(os.tmpdir(), `scientist1-${mode}-`)); t.after(() => fs.rmSync(root, { recursive: true, force: true })); put(root, "request.md", "Approved request.\n"); put(root, "study-plan.md", "# Approved plan\n"); bootstrap(root, mode, environmentSource); json(root, "contract/custom-profile.json", BUDGETS); assert.equal(run("configure", root, "custom", mode, "contract/custom-profile.json").status, 0); assert.equal(run("init", root).status, 0); json(root, "contract/input-manifest.json", { schema_version: 1, files: [] }); approve(root); if (!convergent) freezeAs14(root); installTestRouting(root); return root; }
 
-function writeContractArtifacts(root, evaluatorText = "Metric score; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n", childEnv = null) {
+function pendingReviewReceipt(root, sourceReview, reviewRole) {
+  const pending = read(root, "run.json").pending_adjudication;
+  if (!pending) return null;
+  const incident = read(root, pending.path);
+  for (const binding of incident.evidence ?? []) {
+    const sourcePath = binding.source_path ?? binding.path;
+    if (!/^role-receipts\/[^/]+\.json$/.test(sourcePath)) continue;
+    const receipt = read(root, sourcePath);
+    if (receipt.role === reviewRole && receipt.outputs.includes(sourceReview)) return sourcePath;
+  }
+  return null;
+}
+
+function adjudicate(root, { task, disposition = "CONFIRMED_DEFECT", sourceReview, sourceReviewReceipt: explicitSourceReviewReceipt, reviewRole = "contract_auditor", checkId = "contradictions", blockerClass = "evidence_mismatch", repairPaths = ["contract/generated.md"], introducedByPaths = [], findingEvidencePaths = [], strategy = null, targetPhase = read(root, "run.json").phase, originPhase = read(root, "run.json").phase, artifactPath = repairPaths[0] ?? sourceReview, locator = "fixture:1", expectedState = "The frozen checklist row passes.", observedState = "The cited artifact violates the frozen checklist row." }) {
+  if (strategy) strategy = { cause_code: "incomplete_prior_repair", action_code: "repair_authoritative_source", procedure_paths: repairPaths, ...strategy };
+  let record = read(root, "run.json");
+  let sourceReviewReceipt = explicitSourceReviewReceipt ?? null;
+  if (record.active_repair) {
+    sourceReviewReceipt ??= role(root, { role: reviewRole, task: `${task}_source`, inputs: [...new Set([sourceReview, artifactPath, ...findingEvidencePaths, ...(strategy?.evidence_paths ?? []), ...(strategy?.procedure_paths ?? [])])], outputs: [sourceReview], gate_verdict: "REVISE" });
+  } else if (record.pending_adjudication) {
+    sourceReviewReceipt ??= pendingReviewReceipt(root, sourceReview, reviewRole);
+  } else {
+    sourceReviewReceipt ??= role(root, { role: reviewRole, task: `${task}_source`, inputs: [...new Set([sourceReview, artifactPath, ...findingEvidencePaths, ...(strategy?.evidence_paths ?? []), ...(strategy?.procedure_paths ?? [])])], outputs: [sourceReview], gate_verdict: "REVISE" });
+    const queued = run("queue-review-failure", root, originPhase, sourceReviewReceipt);
+    if (queued.status !== 0) return queued;
+    record = read(root, "run.json");
+    assert.ok(record.pending_adjudication, queued.stderr);
+  }
+  const pendingPath = record.pending_adjudication?.path ?? null;
+  const proposal = `repairs/proposals/${task}.json`;
+  const receipt = `role-receipts/${task}.json`;
+  const evidencePaths = [...new Set([sourceReview, artifactPath, ...findingEvidencePaths])];
+  json(root, proposal, { schema_version: 2, disposition, target_phase: targetPhase, source_review: sourceReview, source_review_receipt: sourceReviewReceipt, adjudicator_receipt: receipt, findings: [{ review_role: reviewRole, check_id: checkId, blocker_class: blockerClass, artifact_path: artifactPath, locator, expected_state: expectedState, observed_state: observedState, evidence_paths: evidencePaths, repair_paths: disposition === "REVIEWER_FALSE_POSITIVE" ? [] : repairPaths, introduced_by_paths: introducedByPaths }], required_review_roles: [reviewRole], reviewed_check_ids: { [reviewRole]: GATE_CHECKLIST.review_roles[reviewRole] }, strategy, required_action: disposition === "REVIEWER_FALSE_POSITIVE" ? "Dismiss the unsupported finding and continue the current phase." : "Repair only the frozen paths, run the named closure review, close the docket, and checkpoint the phase." });
+  role(root, { role: "repair_adjudicator", task, inputs: [...new Set([sourceReview, artifactPath, ...findingEvidencePaths, sourceReviewReceipt, pendingPath, ...(strategy?.evidence_paths ?? []), read(root, "run.json").convergence_control.checklist.path].filter(Boolean))], outputs: [proposal] });
+  return run("record-repair", root, proposal);
+}
+
+function openRepairDocket(root, { task, targetPhase, repairPaths, strategy = null, findingEvidencePaths = [] }) {
+  const originPhase = read(root, "run.json").phase;
+  const fixture = REVIEW_FIXTURES[originPhase];
+  assert.ok(fixture, `Missing review fixture for ${originPhase}`);
+  put(root, fixture.output, "Overall verdict: REVISE\nA controller-reviewable defect affects the exact repair scope.\n");
+  const opened = adjudicate(root, {
+    task,
+    sourceReview: fixture.output,
+    reviewRole: fixture.role,
+    checkId: fixture.check_id,
+    targetPhase,
+    originPhase,
+    artifactPath: repairPaths[0],
+    repairPaths,
+    findingEvidencePaths,
+    strategy,
+  });
+  assert.equal(opened.status, 0, opened.stderr);
+  return read(root, "run.json").active_repair;
+}
+
+function closeDocket(root, { task, reviewerTask, reviewRole = "contract_auditor", reviewOutput = "contract/audit.md", regenerateDependents = true }) {
+  const docket = read(root, "run.json").active_repair;
+  const overlap = (docket.dependent_regeneration ?? []).find((dependent) => dependent.role === reviewRole && canonical([...dependent.declared_outputs].sort()) === canonical([reviewOutput]));
+  const remaining = [...(docket.dependent_regeneration ?? [])];
+  const orderedDependents = [];
+  while (remaining.length) {
+    const readyIndex = remaining.findIndex((candidate, index) => !remaining.some((upstream, upstreamIndex) => upstreamIndex !== index && candidate.declared_inputs.some((input) => upstream.declared_outputs.some((output) => input === output || input.startsWith(`${output}/`)))));
+    orderedDependents.push(remaining.splice(readyIndex < 0 ? 0 : readyIndex, 1)[0]);
+  }
+  if (regenerateDependents) for (const dependent of orderedDependents) {
+    if (dependent === overlap) continue;
+    const absentInputs = dependent.declared_inputs.filter((relative) => !fs.existsSync(path.join(root, relative)));
+    const proof = absentInputs.length ? `repairs/absence-proofs/${docket.semantic_digest}.json` : null;
+    role(root, { role: dependent.role, task: `${dependent.logical_task_name}_${task}_dependent`, logical_task_name: dependent.logical_task_name, inputs: [...dependent.declared_inputs.filter((relative) => fs.existsSync(path.join(root, relative))), ...[proof].filter(Boolean)], outputs: dependent.declared_outputs, allowed_external_sources: docket.repair_mode === "deterministic_delta" ? [] : dependent.allowed_external_sources });
+  }
+  put(root, reviewOutput, "Overall verdict: PASS\n");
+  const reviewReceipt = role(root, { role: reviewRole, task: reviewerTask, logical_task_name: overlap?.logical_task_name ?? reviewerTask, inputs: overlap?.declared_inputs.filter((relative) => fs.existsSync(path.join(root, relative))) ?? ["study-plan.md"], outputs: [reviewOutput], allowed_external_sources: overlap ? (docket.repair_mode === "deterministic_delta" ? [] : overlap.allowed_external_sources) : [] });
+  const proposal = `repairs/proposals/${task}.json`;
+  const receipt = `role-receipts/${task}.json`;
+  json(root, proposal, { schema_version: 1, docket_id: docket.docket_id, resolved_fingerprints: docket.finding_fingerprints, review_receipts: [reviewReceipt], adjudicator_receipt: receipt, required_action: `Checkpoint ${docket.target_phase} and advance.` });
+  role(root, { role: "repair_adjudicator", task, inputs: [docket.incident.path, reviewReceipt], outputs: [proposal] });
+  return run("close-repair", root, proposal);
+}
+
+test("1.5 freezes a finite adjudicated repair docket and rejects raw or dismissed review findings", (t) => {
+  const root = newRun(t, "research", "existing", true);
+  put(root, "contract/generated.md", "original\n");
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nUnsupported contradiction claim.\n");
+  json(root, "repairs/proposals/unowned.json", { schema_version: 2, disposition: "CONFIRMED_DEFECT", target_phase: "contract", source_review: "contract/audit.md", source_review_receipt: null, adjudicator_receipt: "role-receipts/missing.json", findings: [{ review_role: "contract_auditor", check_id: "contradictions", blocker_class: "evidence_mismatch", artifact_path: "contract/generated.md", locator: "fixture:1", expected_state: "consistent", observed_state: "contradictory", evidence_paths: ["contract/audit.md", "contract/generated.md"], repair_paths: ["contract/generated.md"], introduced_by_paths: [] }], required_review_roles: ["contract_auditor"], reviewed_check_ids: { contract_auditor: GATE_CHECKLIST.review_roles.contract_auditor }, strategy: null, required_action: "Repair the exact file." });
+  assert.match(run("record-repair", root, "repairs/proposals/unowned.json").stderr, /repair_adjudicator|Missing artifact|Cannot read valid JSON/i);
+  assert.match(run("invalidate", root, "investigation", "contract/audit.md").stderr, /independently adjudicated active repair docket/i);
+  const dismissed = adjudicate(root, { task: "dismiss_false_positive", disposition: "REVIEWER_FALSE_POSITIVE", sourceReview: "contract/audit.md" });
+  assert.equal(dismissed.status, 0, dismissed.stderr);
+  assert.equal(read(root, "run.json").active_repair, null);
+  put(root, "contract/unrelated-state.md", "unrelated scientific state changed\n");
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nThe same unsupported contradiction claim.\n");
+  const paddedReceipt = role(root, { role: "contract_auditor", task: "padded_reopen_source", inputs: ["contract/audit.md", "contract/generated.md", "contract/unrelated-state.md"], outputs: ["contract/audit.md"], gate_verdict: "REVISE" });
+  const paddedReopen = adjudicate(root, { task: "padded_reopen", sourceReview: "contract/audit.md", sourceReviewReceipt: paddedReceipt });
+  assert.notEqual(paddedReopen.status, 0);
+  assert.match(paddedReopen.stderr, /same artifact state|input padding/i);
+  const duplicateDismissal = adjudicate(root, { task: "consume_padded_duplicate", disposition: "REVIEWER_FALSE_POSITIVE", sourceReview: "contract/audit.md" });
+  assert.equal(duplicateDismissal.status, 0, duplicateDismissal.stderr);
+  assert.equal(read(root, "run.json").pending_adjudication, null);
+  put(root, "contract/padding.json", '{"irrelevant":true}\n');
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nA new checklist label based only on padding.\n");
+  const paddedNewFinding = adjudicate(root, { task: "padded_new_finding", sourceReview: "contract/audit.md", checkId: "charter_fidelity", findingEvidencePaths: ["contract/padding.json"] });
+  assert.notEqual(paddedNewFinding.status, 0);
+  assert.match(paddedNewFinding.stderr, /no changed controller-authoritative causal evidence|input padding/i);
+  assert.equal(adjudicate(root, { task: "dismiss_padded_new_finding", disposition: "REVIEWER_FALSE_POSITIVE", sourceReview: "contract/audit.md", checkId: "charter_fidelity", findingEvidencePaths: ["contract/padding.json"] }).status, 0);
+  json(root, "repairs/raw-contract-revision.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "Raw reviewer prose.", repair: "Rollback without adjudication.", researcher_approval: null });
+  const beforeRollback = read(root, "run.json");
+  const rawRevision = run("revise-contract", root, "repairs/raw-contract-revision.json");
+  assert.notEqual(rawRevision.status, 0);
+  assert.match(rawRevision.stderr, /requires active docket incident/i);
+  assert.deepEqual(read(root, "run.json").invalidation_roots, beforeRollback.invalidation_roots);
+  const reopenDismissed = adjudicate(root, { task: "reopen_dismissed", sourceReview: "contract/audit.md" });
+  assert.notEqual(reopenDismissed.status, 0);
+  assert.match(reopenDismissed.stderr, /already closed|already dismissed|frontier is sealed|already sealed/i);
+
+  const confirmedRoot = newRun(t, "research", "existing", true);
+  put(confirmedRoot, "contract/generated.md", "original\n");
+  put(confirmedRoot, "contract/audit.md", "Overall verdict: REVISE\nSupported contradiction claim.\n");
+  const opened = adjudicate(confirmedRoot, { task: "confirm_contract_defect", sourceReview: "contract/audit.md" });
+  assert.equal(opened.status, 0, opened.stderr);
+  const docket = read(confirmedRoot, "run.json").active_repair;
+  assert.ok(docket);
+  assert.deepEqual(docket.repair_scope, ["contract/generated.md"]);
+
+  put(confirmedRoot, "contract/second-review.md", "Overall verdict: REVISE\nAnother pre-existing preference.\n");
+  const expansion = adjudicate(confirmedRoot, { task: "try_scope_expansion", sourceReview: "contract/second-review.md", checkId: "charter_fidelity", repairPaths: ["contract/another.md"], artifactPath: "contract/second-review.md" });
+  assert.notEqual(expansion.status, 0);
+  assert.match(expansion.stderr, /docket .* is frozen/i);
+});
+
+test("1.5 enforces exact repair delta and rejects unproven recurrence strategies", (t) => {
+  const root = newRun(t, "research", "existing", true);
+  put(root, "contract/generated.md", "incorrect\n");
+  put(root, "contract/audit.md", "Overall verdict: PASS\n");
+  role(root, { role: "contract_auditor", task: "original_contract_auditor", logical_task_name: "contract_auditor", inputs: ["contract/generated.md"], outputs: ["contract/audit.md"] });
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nThe generated binding contradicts its evidence.\n");
+  const opened = adjudicate(root, { task: "confirm_exact_defect", sourceReview: "contract/audit.md" });
+  assert.equal(opened.status, 0, opened.stderr);
+  put(root, "contract/generated.md", "corrected\n");
+  put(root, "contract/unrelated.md", "scope creep\n");
+  const outside = closeDocket(root, { task: "closure_exact_defect", reviewerTask: "contract_recheck_exact" });
+  assert.notEqual(outside.status, 0);
+  assert.match(outside.stderr, /outside its frozen exact scope.*contract\/unrelated\.md/i);
+  fs.rmSync(path.join(root, "contract/unrelated.md"));
+  const closed = run("close-repair", root, "repairs/proposals/closure_exact_defect.json");
+  assert.equal(closed.status, 0, closed.stderr);
+  assert.equal(read(root, "run.json").active_repair, null);
+  const closure = read(root, read(root, "run.json").repair_closures.at(-1).path);
+  assert.ok(closure.review_receipts.some((review) => closure.dependent_receipts.some((dependent) => dependent.source_path === review.source_path)), "one PASS receipt must satisfy overlapping dependent-regeneration and closure-review obligations");
+
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nThe same stable defect recurred.\n");
+  const repeated = adjudicate(root, { task: "repeat_same_action", sourceReview: "contract/audit.md" });
+  assert.notEqual(repeated.status, 0);
+  assert.match(repeated.stderr, /already closed|frontier is sealed|already sealed/i);
+  put(root, "contract/generated.md", "regressed after first closure\n");
+  const recovered = adjudicate(root, { task: "change_causal_strategy", sourceReview: "contract/audit.md", strategy: { cause: "The earlier edit corrected prose but not the generator binding.", changed_action: "Correct the generator binding and regenerate only the declared file.", evidence_paths: ["contract/input-manifest.json", "contract/audit.md"] } });
+  assert.notEqual(recovered.status, 0, recovered.stderr);
+  assert.match(recovered.stderr, /no immutable approved-input or checkpoint provenance/i);
+  assert.equal(adjudicate(root, { task: "dismiss_uncheckpointed_cause", disposition: "REVIEWER_FALSE_POSITIVE", sourceReview: "contract/audit.md" }).status, 0);
+  put(root, "contract/alternate-cause.json", '{"cause":"new-dependent-state"}\n');
+  role(root, { role: "brief_writer", task: "alternate_cause_producer", inputs: ["contract/input-manifest.json"], outputs: ["contract/alternate-cause.json"] });
+  const alternateStrategy = adjudicate(root, { task: "alternate_strategy", sourceReview: "contract/audit.md", strategy: { action_code: "reconcile_exact_dependents", cause: "New evidence shows one exact dependent remained stale.", changed_action: "Regenerate the exact dependent from the newly bound state.", evidence_paths: ["contract/audit.md", "contract/alternate-cause.json"] } });
+  assert.notEqual(alternateStrategy.status, 0);
+  assert.match(alternateStrategy.stderr, /no immutable approved-input or checkpoint provenance/i);
+  assert.equal(adjudicate(root, { task: "dismiss_unowned_cause", disposition: "REVIEWER_FALSE_POSITIVE", sourceReview: "contract/audit.md" }).status, 0);
+  assert.equal(read(root, "run.json").state, "running");
+});
+
+test("1.5 reopens and closes a recurring defect only with genuinely changed checkpoint authority", (t) => {
+  const root = newRun(t, "research", "existing", true);
+  put(root, "inputs/shared/data.csv", "x\n1\n");
+  put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
+  put(root, "contract/causal-evidence.json", '{"revision":1}\n');
+  json(root, "contract/input-manifest.json", { schema_version: 1, files: [{ source_path: "data.csv", frozen_path: "inputs/shared/data.csv", sha256: hash(root, "inputs/shared/data.csv"), classification: "shared" }, { source_path: "evaluate.mjs", frozen_path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), classification: "evaluator_only" }] });
+  writeContractArtifacts(root);
+  put(root, "investigation/critic.md", "Overall verdict: REVISE\nThe contract text conflicts with the bounded investigation requirement.\n");
+  const firstSource = role(root, { role: "brief_critic", task: "first_cross_phase_source", inputs: ["contract/evaluator-contract.md", "contract/causal-evidence.json"], outputs: ["investigation/critic.md"], gate_verdict: "REVISE" });
+  const first = adjudicate(root, { task: "first_cross_phase_defect", sourceReview: "investigation/critic.md", sourceReviewReceipt: firstSource, reviewRole: "brief_critic", checkId: "unsupported_claims", targetPhase: "contract", originPhase: "investigation", artifactPath: "contract/evaluator-contract.md", repairPaths: ["contract/evaluator-contract.md"], findingEvidencePaths: ["contract/causal-evidence.json"] });
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(run("revise-contract", root, read(root, "run.json").active_repair.incident.path).status, 0);
+  put(root, "contract/evaluator-contract.md", "Corrected contract revision two.\n");
+  const firstPolicy = read(root, "contract/i1-verification-policy.json");
+  firstPolicy.bindings.evaluator_contract.sha256 = hash(root, "contract/evaluator-contract.md");
+  json(root, "contract/i1-verification-policy.json", firstPolicy);
+  const firstClosed = closeDocket(root, { task: "close_first_cross_phase", reviewerTask: "review_first_cross_phase", reviewRole: "brief_critic", reviewOutput: "investigation/critic.md" });
+  assert.equal(firstClosed.status, 0, firstClosed.stderr);
+  const firstClosure = read(root, read(root, "run.json").repair_closures.at(-1).path);
+  const priorCausal = firstClosure.docket.baseline.find((binding) => binding.path === "contract/causal-evidence.json").sha256;
+  put(root, "contract/causal-evidence.json", '{"revision":2,"new_controller_fact":true}\n');
+  const checkpointArgs = ["--input", "study-plan.md", "--input", "request.md", "--input", "environment/bootstrap.json", "--input", "contract/approval.json", "--input", "contract/run-config.json", "--input", "contract/input-manifest.json", "--input", "contract/evaluator-contract.md", "--input", "contract/evaluator-manifest.json", "--input", "contract/i1-verification-policy.json", "--input", "contract/control-plane/i1-interpreter.mjs"];
+  for (const output of ["contract", ...firstClosure.dependent_receipts.map((binding) => binding.source_path)]) checkpointArgs.push("--output", output);
+  const promoted = run("checkpoint", root, "contract", ...checkpointArgs);
+  assert.equal(promoted.status, 0, promoted.stderr);
+  assert.notEqual(hash(root, "contract/causal-evidence.json"), priorCausal);
+  assert.ok(read(root, "receipts/contract.json").outputs.some((binding) => binding.path === "contract"));
+  put(root, "investigation/critic.md", "Overall verdict: REVISE\nThe same defect now recurs under changed checkpoint evidence.\n");
+  const recurring = adjudicate(root, { task: "reopen_with_checkpoint_authority", sourceReview: "investigation/critic.md", reviewRole: "brief_critic", checkId: "unsupported_claims", targetPhase: "contract", originPhase: "investigation", artifactPath: "contract/evaluator-contract.md", repairPaths: ["contract/evaluator-contract.md"], findingEvidencePaths: ["contract/causal-evidence.json"], strategy: { cause: "The replacement contract did not account for the newly checkpointed controller fact.", changed_action: "Reconcile the exact contract field with the new checkpoint authority.", evidence_paths: ["contract/causal-evidence.json"] } });
+  assert.equal(recurring.status, 0, recurring.stderr);
+  const recurringIncident = read(root, read(root, "run.json").active_repair.incident.path);
+  assert.equal(recurringIncident.strategy.evidence_provenance[0].kind, "checkpoint_output");
+  assert.ok(recurringIncident.strategy.evidence_provenance[0].authorities.some((binding) => binding.source_path === "receipts/contract.json"));
+  assert.equal(run("revise-contract", root, read(root, "run.json").active_repair.incident.path).status, 0);
+  put(root, "contract/evaluator-contract.md", "Corrected contract revision three under the new fact.\n");
+  const secondPolicy = read(root, "contract/i1-verification-policy.json");
+  secondPolicy.bindings.evaluator_contract.sha256 = hash(root, "contract/evaluator-contract.md");
+  json(root, "contract/i1-verification-policy.json", secondPolicy);
+  const recurringClosed = closeDocket(root, { task: "close_checkpoint_authorized_recurrence", reviewerTask: "review_checkpoint_authorized_recurrence", reviewRole: "brief_critic", reviewOutput: "investigation/critic.md" });
+  assert.equal(recurringClosed.status, 0, recurringClosed.stderr);
+  assert.equal(read(root, "run.json").active_repair, null);
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("1.5 closes an intentional deletion when its dependent is the same required reviewer", (t) => {
+  const root = newRun(t, "research", "existing", true);
+  put(root, "contract/generated.md", "obsolete generated field\n");
+  put(root, "contract/audit.md", "Overall verdict: PASS\n");
+  role(root, { role: "contract_auditor", task: "deletion_original_auditor", logical_task_name: "contract_auditor", inputs: ["contract/generated.md"], outputs: ["contract/audit.md"] });
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nThe generated field must be absent under the frozen contract.\n");
+  const opened = adjudicate(root, { task: "delete_obsolete_generated_field", sourceReview: "contract/audit.md" });
+  assert.equal(opened.status, 0, opened.stderr);
+  fs.rmSync(path.join(root, "contract/generated.md"));
+  const closed = closeDocket(root, { task: "close_deleted_generated_field", reviewerTask: "review_deleted_generated_field" });
+  assert.equal(closed.status, 0, closed.stderr);
+  const closure = read(root, read(root, "run.json").repair_closures.at(-1).path);
+  assert.deepEqual(closure.repaired_artifacts.map((binding) => ({ source_path: binding.source_path, state: binding.state })), [{ source_path: "contract/generated.md", state: "absent" }]);
+  assert.ok(closure.absence_proof);
+  assert.ok(closure.review_receipts.some((review) => closure.dependent_receipts.some((dependent) => dependent.source_path === review.source_path)));
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("1.5 rejects zero-delta closure, unbound closure review, and sequential late dockets", (t) => {
+  const root = newRun(t, "research", "existing", true);
+  put(root, "contract/generated.md", "incorrect\n");
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nA stable contract defect.\n");
+  assert.equal(adjudicate(root, { task: "open_closure_guards", sourceReview: "contract/audit.md" }).status, 0);
+  const docket = read(root, "run.json").active_repair;
+  put(root, "contract/audit.md", "Overall verdict: PASS\n");
+  const unboundReview = role(root, { role: "contract_auditor", task: "unbound_scope_review", inputs: ["study-plan.md"], outputs: ["contract/audit.md"], omit_repair_scope_inputs: true });
+  json(root, "repairs/proposals/unbound-closure.json", { schema_version: 1, docket_id: docket.docket_id, resolved_fingerprints: docket.finding_fingerprints, review_receipts: [unboundReview], adjudicator_receipt: "role-receipts/unbound_closure_adjudicator.json", required_action: "Checkpoint contract." });
+  role(root, { role: "repair_adjudicator", task: "unbound_closure_adjudicator", inputs: [docket.incident.path, unboundReview], outputs: ["repairs/proposals/unbound-closure.json"] });
+  const unbound = run("close-repair", root, "repairs/proposals/unbound-closure.json");
+  assert.notEqual(unbound.status, 0);
+  assert.match(unbound.stderr, /did not read repaired artifact/i);
+  const zeroDelta = closeDocket(root, { task: "zero_delta_closure", reviewerTask: "zero_delta_review" });
+  assert.notEqual(zeroDelta.status, 0);
+  assert.match(zeroDelta.stderr, /cannot close without a changed artifact/i);
+  put(root, "contract/generated.md", "corrected\n");
+  assert.equal(closeDocket(root, { task: "valid_guarded_closure", reviewerTask: "valid_guarded_review" }).status, 0);
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nA different pre-existing preference.\n");
+  const late = adjudicate(root, { task: "late_after_closure", sourceReview: "contract/audit.md", checkId: "charter_fidelity" });
+  assert.notEqual(late.status, 0);
+  assert.match(late.stderr, /already closed|frontier is sealed|already sealed/i);
+  assert.equal(read(root, "run.json").active_repair, null);
+});
+
+test("1.5 contract rollback requires and preserves one adjudicated exact-scope docket", (t) => {
+  const root = contract(t, "existing", true);
+  put(root, "investigation/critic.md", "Overall verdict: REVISE\nThe evaluator contract contradicts the current investigation brief's frozen metric.\n");
+  const sourceReceipt = role(root, { role: "brief_critic", task: "post_contract_source", inputs: ["contract/evaluator-contract.md"], outputs: ["investigation/critic.md"], gate_verdict: "REVISE" });
+  const rawReason = "repairs/raw-post-contract.json";
+  json(root, rawReason, { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "Raw rollback request.", repair: "Bypass adjudication.", researcher_approval: null });
+  const raw = run("revise-contract", root, rawReason);
+  assert.notEqual(raw.status, 0);
+  assert.match(raw.stderr, /requires active docket incident/i);
+  assert.equal(read(root, "run.json").checkpoints.contract.receipt_sha256.length, 64);
+
+  const opened = adjudicate(root, { task: "adjudicate_post_contract", sourceReview: "investigation/critic.md", sourceReviewReceipt: sourceReceipt, reviewRole: "brief_critic", checkId: "unsupported_claims", targetPhase: "contract", originPhase: "investigation", artifactPath: "contract/evaluator-contract.md", repairPaths: ["contract/evaluator-contract.md"] });
+  assert.equal(opened.status, 0, opened.stderr);
+  const docket = read(root, "run.json").active_repair;
+  const revised = run("revise-contract", root, docket.incident.path);
+  assert.equal(revised.status, 0, revised.stderr);
+  const rolled = read(root, "run.json");
+  assert.equal(rolled.phase, "contract");
+  assert.ok(rolled.active_repair);
+  assert.equal(fs.existsSync(path.join(root, "contract/evaluator-contract.md")), true, "target baseline must survive rollback for exact repair");
+  put(root, "contract/evaluator-contract.md", "Correct frozen metric contract.\n");
+  const closed = closeDocket(root, { task: "close_post_contract", reviewerTask: "contract_recheck_post_contract", reviewRole: "brief_critic", reviewOutput: "investigation/critic.md" });
+  assert.equal(closed.status, 0, closed.stderr);
+  assert.equal(read(root, "run.json").active_repair, null);
+  put(root, "investigation/critic.md", "Overall verdict: REVISE\nA late pre-existing preference.\n");
+  const late = adjudicate(root, { task: "late_after_contract_revision", sourceReview: "investigation/critic.md", reviewRole: "brief_critic", checkId: "unsupported_claims", targetPhase: "contract", artifactPath: "contract/evaluator-contract.md", repairPaths: ["contract/evaluator-contract.md"] });
+  assert.notEqual(late.status, 0);
+  assert.match(late.stderr, /already closed|frontier is sealed|already sealed|not the current open phase|cannot originate a contract/i);
+});
+
+test("1.5 accepts a late blocker only when the repair itself introduced it", (t) => {
+  const root = newRun(t, "research", "existing", true);
+  put(root, "contract/generated.md", "incorrect\n");
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nInitial binding mismatch.\n");
+  assert.equal(adjudicate(root, { task: "confirm_regression_fixture", sourceReview: "contract/audit.md" }).status, 0);
+  put(root, "contract/generated.md", "changed with a new deterministic error\n");
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nThe repair introduced a deterministic machine failure.\n");
+  const regression = adjudicate(root, { task: "confirm_repair_regression", disposition: "REPAIR_REGRESSION", sourceReview: "contract/audit.md", blockerClass: "repair_regression", repairPaths: ["contract/generated.md"], introducedByPaths: ["contract/generated.md"], strategy: { cause: "The first repair introduced a new deterministic defect.", changed_action: "Repair the introduced state before closure.", evidence_paths: ["contract/generated.md"] } });
+  assert.equal(regression.status, 0, regression.stderr);
+  const unchangedRegression = adjudicate(root, { task: "repeat_unchanged_regression", disposition: "REPAIR_REGRESSION", sourceReview: "contract/audit.md", blockerClass: "repair_regression", repairPaths: ["contract/generated.md"], introducedByPaths: ["contract/generated.md"], strategy: { action_code: "reconcile_exact_dependents", cause: "Claimed another regression without a new edit.", changed_action: "Attempt another correction.", evidence_paths: ["contract/generated.md"] } });
+  assert.notEqual(unchangedRegression.status, 0);
+  assert.match(unchangedRegression.stderr, /repeats without an intervening change|no newly bound non-review causal evidence/i);
+  const stale = adjudicate(root, { task: "invent_unrelated_regression", disposition: "REPAIR_REGRESSION", sourceReview: "contract/audit.md", blockerClass: "repair_regression", repairPaths: ["contract/generated.md"], introducedByPaths: ["contract/never-changed.md"], strategy: { action_code: "reconcile_exact_dependents", cause: "Claimed recurrence.", changed_action: "Try another action.", evidence_paths: ["contract/generated.md"] } });
+  assert.notEqual(stale.status, 0);
+  assert.match(stale.stderr, /outside the frozen repair scope|not tied to a changed repair artifact/i);
+  const expanded = read(root, "run.json").active_repair;
+  json(root, "repairs/proposals/incomplete-regression-closure.json", { schema_version: 1, docket_id: expanded.docket_id, resolved_fingerprints: [expanded.finding_fingerprints[0]], review_receipts: [], adjudicator_receipt: "role-receipts/missing.json", required_action: "Checkpoint contract." });
+  const incomplete = run("close-repair", root, "repairs/proposals/incomplete-regression-closure.json");
+  assert.notEqual(incomplete.status, 0);
+  assert.match(incomplete.stderr, /Invalid repair closure/i);
+  const closed = closeDocket(root, { task: "close_with_regression", reviewerTask: "contract_recheck_regression" });
+  assert.equal(closed.status, 0, closed.stderr);
+  assert.equal(read(root, "run.json").active_repair, null);
+});
+
+test("1.5 archives immutable adjudication authority and detects archive drift", (t) => {
+  const root = newRun(t, "research", "existing", true);
+  put(root, "contract/generated.md", "incorrect\n");
+  put(root, "contract/audit.md", "Overall verdict: REVISE\nA durable evidence mismatch.\n");
+  assert.equal(adjudicate(root, { task: "durable_authority", sourceReview: "contract/audit.md" }).status, 0);
+  const docket = read(root, "run.json").active_repair;
+  const incident = read(root, docket.incident.path);
+  put(root, "contract/audit.md", "Original live review path was reused.\n");
+  put(root, "contract/generated.md", "repair in progress\n");
+  fs.rmSync(path.join(root, "role-receipts/durable_authority.json"));
+  assert.equal(run("verify", root).status, 0, "immutable controller snapshots must preserve authority when live work paths advance");
+  fs.rmSync(path.join(root, incident.source_review.path));
+  const drifted = run("verify", root);
+  assert.notEqual(drifted.status, 0);
+  assert.match(drifted.stderr, /Archived convergence evidence drifted|Missing artifact/i);
+});
+
+test("1.5 migrates an active 1.4 repair without rewriting its evidence history", (t) => {
+  const root = newRun(t, "research", "existing", false);
+  json(root, "contract/input-manifest.json", { schema_version: 1, files: [] });
+  put(root, "contract/generated.md", "legacy defect\n");
+  put(root, "repairs/legacy-evidence.md", "Preserved 1.4 reviewer finding.\n");
+  const legacyIncident = { failure_class: "specialist_failure", logical_task_name: "protocol_auditor", summary: "The 1.4 run is in repair.", evidence_paths: ["repairs/legacy-evidence.md"], required_action: "Migrate and adjudicate the outstanding findings once." };
+  json(root, "repairs/legacy-incident.json", { schema_version: 1, ...legacyIncident });
+  assert.match(run("record-repair", root, "repairs/legacy-incident.json").stderr, /S1_CONVERGENCE_MIGRATION_REQUIRED/);
+  seedLegacyRepair(root, "legacy-seeded-14", legacyIncident);
+  const before = read(root, "run.json").repair_incidents;
+  const migrated = run("migrate-convergence", root);
+  assert.equal(migrated.status, 0, migrated.stderr);
+  const record = read(root, "run.json");
+  assert.equal(record.convergence_control.release, "1.5.0");
+  assert.deepEqual(record.repair_incidents, before);
+  assert.match(record.pending_adjudication.path, /migration-frontier-contract\.json$/);
+  assert.ok(read(root, record.pending_adjudication.path).evidence.some((item) => item.source_path === before.at(-1).path));
+  assert.equal(run("verify", root).status, 0);
+  const repeatedMigration = run("migrate-convergence", root);
+  assert.equal(repeatedMigration.status, 0, repeatedMigration.stderr);
+  assert.deepEqual(read(root, "run.json").convergence_control, record.convergence_control);
+  const opened = adjudicate(root, { task: "migrated_frontier_adjudication", sourceReview: record.pending_adjudication.path, artifactPath: "contract/generated.md" });
+  assert.equal(opened.status, 0, opened.stderr);
+  put(root, "contract/generated.md", "migrated repair\n");
+  const closed = closeDocket(root, { task: "migrated_frontier_closure", reviewerTask: "migrated_contract_recheck" });
+  assert.equal(closed.status, 0, closed.stderr);
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("1.5 migration supports active 1.3 ledgers and retries an interrupted stage atomically", (t) => {
+  const root = newRun(t, "research", "existing", false);
+  const config = read(root, "contract/run-config.json");
+  config.schema_version = 2;
+  config.orchestration = { max_task_attempts: 2, max_repair_waves_per_gate: 1 };
+  json(root, "contract/run-config.json", config);
+  const record = read(root, "run.json");
+  record.orchestration = config.orchestration;
+  record.contract_parameters_sha256 = hash(root, "contract/run-config.json");
+  json(root, "run.json", record);
+  put(root, "repairs/legacy-evidence.md", "Preserved 1.3 failure.\n");
+  const legacyIncident = { failure_class: "specialist_failure", logical_task_name: "protocol_auditor", summary: "The 1.3 run needs repair.", evidence_paths: ["repairs/legacy-evidence.md"], required_action: "Migrate the outstanding frontier." };
+  seedLegacyRepair(root, "legacy-seeded-13", legacyIncident);
+  const before = read(root, "run.json");
+  const interrupted = runWithEnv({ SCIENTIST1_TEST_INTERRUPT_MIGRATION: "after_stage" }, "migrate-convergence", root);
+  assert.notEqual(interrupted.status, 0);
+  assert.equal(read(root, "run.json").convergence_control, undefined);
+  assert.deepEqual(read(root, "run.json").repair_incidents, before.repair_incidents);
+  const retried = run("migrate-convergence", root);
+  assert.equal(retried.status, 0, retried.stderr);
+  assert.equal(read(root, "run.json").convergence_control.migrated_from, 2);
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("1.5 migration assigns every frontier one terminal disposition and supersedes invalidated successors", (t) => {
+  const root = contract(t, "existing", true);
+  freezeAs14(root);
+  put(root, "repairs/legacy-contract-evidence.md", "Legacy contract defect.\n");
+  put(root, "repairs/legacy-investigation-evidence.md", "Legacy investigation defect.\n");
+  seedLegacyRepair(root, "legacy-investigation-frontier", { failure_class: "specialist_failure", logical_task_name: "brief_critic", summary: "Investigation frontier.", evidence_paths: ["repairs/legacy-investigation-evidence.md"], required_action: "Adjudicate once." });
+  const record = read(root, "run.json");
+  const contractIncident = "repairs/incidents/legacy-contract-frontier.json";
+  json(root, contractIncident, { schema_version: 1, at: "2026-08-31T11:00:00Z", phase: "contract", failure_class: "specialist_failure", logical_task_name: "contract_auditor", summary: "Contract frontier.", evidence: [{ path: "repairs/legacy-contract-evidence.md", sha256: hash(root, "repairs/legacy-contract-evidence.md") }], required_action: "Adjudicate once." });
+  record.repair_incidents.push({ path: contractIncident, sha256: hash(root, contractIncident) });
+  json(root, "run.json", record);
+  const migrated = run("migrate-convergence", root);
+  assert.equal(migrated.status, 0, migrated.stderr);
+  let current = read(root, "run.json");
+  assert.match(current.pending_adjudication.path, /migration-frontier-contract\.json$/);
+  assert.equal(current.convergence_control.frontier_queue.length, 1);
+  assert.match(current.convergence_control.frontier_queue[0].path, /migration-frontier-investigation\.json$/);
+  const opened = adjudicate(root, { task: "migration_contract_supersession", sourceReview: current.pending_adjudication.path, reviewRole: "contract_auditor", checkId: "contradictions", targetPhase: "contract", artifactPath: "contract/evaluator-contract.md", repairPaths: ["contract/evaluator-contract.md"] });
+  assert.equal(opened.status, 0, opened.stderr);
+  const revised = run("revise-contract", root, read(root, "run.json").active_repair.incident.path);
+  assert.equal(revised.status, 0, revised.stderr);
+  current = read(root, "run.json");
+  assert.equal(current.convergence_control.frontier_queue.length, 0);
+  assert.equal(current.convergence_control.superseded_frontiers.length, 1);
+  assert.match(current.convergence_control.superseded_frontiers[0].frontier.path, /migration-frontier-investigation\.json$/);
+  assert.equal(run("verify", root).status, 0);
+  const tampered = read(root, "run.json");
+  tampered.convergence_control.superseded_frontiers[0].target_phase = "selection";
+  json(root, "run.json", tampered);
+  assert.match(run("verify", root).stderr, /Superseded migration frontier disposition is malformed|exactly one .* disposition/i);
+});
+
+test("1.5 rejects malformed checkpoint authority and repairs a controller-proven schema failure", (t) => {
+  const root = newRun(t, "research", "existing", true);
+  const wrongPhase = run("checkpoint", root, "investigation", "--input", "study-plan.md", "--output", "contract");
+  assert.notEqual(wrongPhase.status, 0);
+  assert.equal(read(root, "run.json").pending_adjudication, null, "a wrong-phase call must not mint repair authority");
+  const missingDeclaration = run("checkpoint", root, "contract", "--input", "study-plan.md", "--output", "contract/audit.md");
+  assert.notEqual(missingDeclaration.status, 0);
+  assert.equal(read(root, "run.json").pending_adjudication, null, "an incomplete checkpoint request must not mint repair authority");
+
+  put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
+  json(root, "contract/input-manifest.json", { schema_version: 1, files: [{ source_path: "evaluate.mjs", frozen_path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), classification: "evaluator_only" }] });
+  const rejected = writeContractArtifacts(root, undefined, null, true);
+  assert.notEqual(rejected.status, 0);
+  const pending = read(root, "run.json").pending_adjudication;
+  assert.ok(pending);
+  const authority = read(root, pending.path);
+  assert.equal(authority.authority_kind, "controller_checkpoint");
+  assert.deepEqual(authority.absence_paths, []);
+
+  const upgradedProposal = "repairs/proposals/upgrade-checkpoint-authority.json";
+  json(root, upgradedProposal, {
+    schema_version: 2,
+    disposition: "CONFIRMED_DEFECT",
+    target_phase: "contract",
+    source_review: pending.path,
+    source_review_receipt: null,
+    adjudicator_receipt: "role-receipts/upgrade_checkpoint_authority.json",
+    findings: [{ review_role: "contract_auditor", check_id: "i1_bindings_and_support", blocker_class: "evidence_mismatch", artifact_path: "contract/i1-verification-policy.json", locator: "schema_version", expected_state: "The frozen I1 policy has the release-supported schema.", observed_state: "The controller rejected its schema version.", evidence_paths: [pending.path, "contract/i1-verification-policy.json"], repair_paths: ["contract/i1-verification-policy.json"], introduced_by_paths: [] }],
+    required_review_roles: ["contract_auditor"],
+    reviewed_check_ids: { contract_auditor: GATE_CHECKLIST.review_roles.contract_auditor },
+    strategy: null,
+    required_action: "Do not upgrade machine authority into scientific authority.",
+  });
+  role(root, { role: "repair_adjudicator", task: "upgrade_checkpoint_authority", inputs: [pending.path, "contract/i1-verification-policy.json", read(root, "run.json").convergence_control.checklist.path], outputs: [upgradedProposal] });
+  const upgraded = run("record-repair", root, upgradedProposal);
+  assert.notEqual(upgraded.status, 0);
+  assert.match(upgraded.stderr, /controller checkpoint authority.*(?:MECHANICAL_FAILURE|checkpoint_reviewer)/i);
+
+  const crossPhaseProposal = "repairs/proposals/cross-phase-checkpoint-role.json";
+  json(root, crossPhaseProposal, {
+    schema_version: 2,
+    disposition: "MECHANICAL_FAILURE",
+    target_phase: "contract",
+    source_review: pending.path,
+    source_review_receipt: null,
+    adjudicator_receipt: "role-receipts/cross_phase_checkpoint_role.json",
+    findings: [{ review_role: "i4_judge", check_id: GATE_CHECKLIST.review_roles.i4_judge[0], blocker_class: "deterministic_machine_failure", artifact_path: "contract/i1-verification-policy.json", locator: "schema_version", expected_state: "The I1 policy schema is valid.", observed_state: "The I1 policy schema is invalid.", evidence_paths: [pending.path, "contract/i1-verification-policy.json"], repair_paths: ["contract/i1-verification-policy.json"], introduced_by_paths: [] }],
+    required_review_roles: ["i4_judge"],
+    reviewed_check_ids: { i4_judge: GATE_CHECKLIST.review_roles.i4_judge },
+    strategy: null,
+    required_action: "Do not borrow authority from a role bound to another phase.",
+  });
+  role(root, { role: "repair_adjudicator", task: "cross_phase_checkpoint_role", inputs: [pending.path, read(root, "run.json").convergence_control.checklist.path], outputs: [crossPhaseProposal] });
+  const crossPhase = run("record-repair", root, crossPhaseProposal);
+  assert.notEqual(crossPhase.status, 0);
+  assert.match(crossPhase.stderr, /controller checkpoint authority must use only.*checkpoint_reviewer/i);
+
+  const proposal = "repairs/proposals/repair-invalid-contract.json";
+  const adjudicatorReceipt = "role-receipts/repair_invalid_contract.json";
+  json(root, proposal, {
+    schema_version: 2,
+    disposition: "MECHANICAL_FAILURE",
+    target_phase: "contract",
+    source_review: pending.path,
+    source_review_receipt: null,
+    adjudicator_receipt: adjudicatorReceipt,
+    findings: [{ review_role: "checkpoint_reviewer", check_id: "deterministic_checkpoint_validation", blocker_class: "deterministic_machine_failure", artifact_path: "contract/i1-verification-policy.json", locator: "schema_version", expected_state: "The frozen I1 policy has the release-supported schema.", observed_state: "The controller rejected its schema version.", evidence_paths: [pending.path, "contract/i1-verification-policy.json"], repair_paths: ["contract/i1-verification-policy.json"], introduced_by_paths: [] }],
+    required_review_roles: ["checkpoint_reviewer"],
+    reviewed_check_ids: { checkpoint_reviewer: GATE_CHECKLIST.review_roles.checkpoint_reviewer },
+    strategy: null,
+    required_action: "Repair only contract/i1-verification-policy.json, validate the cited schema failure, and close the exact docket.",
+  });
+  role(root, { role: "repair_adjudicator", task: "repair_invalid_contract", inputs: [pending.path, "contract/i1-verification-policy.json", read(root, "run.json").convergence_control.checklist.path], outputs: [proposal] });
+  const opened = run("record-repair", root, proposal);
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.equal(read(root, "run.json").active_repair.scope_baseline[0].kind, "file");
+  const repairedPolicy = read(root, "contract/i1-verification-policy.json");
+  repairedPolicy.schema_version = 2;
+  json(root, "contract/i1-verification-policy.json", repairedPolicy);
+  const closed = closeDocket(root, { task: "close_invalid_contract", reviewerTask: "review_repaired_contract", reviewRole: "checkpoint_reviewer", reviewOutput: "repairs/reviews/checkpoint/review-repaired-contract.json" });
+  assert.equal(closed.status, 0, closed.stderr);
+  assert.equal(run("verify", root).status, 0);
+  const closedRecord = read(root, "run.json");
+  const contractRoles = closedRecord.repair_closures.length && closedRecord.last_checkpoint === null ? read(root, closedRecord.repair_closures.at(-1).path).dependent_receipts.map((binding) => binding.source_path) : [];
+  const checkpointArgs = ["--input", "study-plan.md", "--input", "request.md", "--input", "environment/bootstrap.json", "--input", "contract/approval.json", "--input", "contract/run-config.json", "--input", "contract/input-manifest.json", "--input", "contract/evaluator-contract.md", "--input", "contract/evaluator-manifest.json", "--input", "contract/i1-verification-policy.json", "--input", "contract/control-plane/i1-interpreter.mjs"];
+  for (const output of ["contract", ...contractRoles]) checkpointArgs.push("--output", output);
+  const promoted = run("checkpoint", root, "contract", ...checkpointArgs);
+  assert.equal(promoted.status, 0, promoted.stderr || "the repaired contract and its exact regenerated dependents must advance the original checkpoint");
+});
+
+function writeContractArtifacts(root, evaluatorText = "Metric score; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n", childEnv = null, returnFailure = false) {
   const contractRevision = read(root, "run.json").contract_revision;
   const contractAttempt = 1;
   const suffix = contractRevision === 1 ? "" : `_r${contractRevision}`;
@@ -90,23 +671,36 @@ function writeContractArtifacts(root, evaluatorText = "Metric score; unit points
   json(root, "contract/evaluator-manifest.json", { schema_version: 1, files: [{ path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), access_class: "evaluator_only" }] });
   put(root, "contract/audit.md", "Overall verdict: PASS\n");
   const i1Contract = seedI1Contract({ root, mode: "research", runtime: testRuntime(root, "i1_verifier_builder"), hash, fileHash, json, put, builderTask, builderAttempt: contractAttempt });
-  checkpoint(root, "contract", ["contract"], [
+  if (returnFailure) {
+    const invalidPolicy = read(root, "contract/i1-verification-policy.json");
+    invalidPolicy.schema_version = 999;
+    json(root, "contract/i1-verification-policy.json", invalidPolicy);
+  }
+  const outputs = ["contract"];
+  const roles = [
     { role: "i1_verifier_builder", task: builderTask, logical_task_name: "i1_verifier_builder", attempt: contractAttempt, inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs },
     { role: "contract_auditor", task: auditorTask, logical_task_name: "contract_auditor", attempt: contractAttempt, inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"] },
-  ], childEnv);
+  ];
+  if (returnFailure) {
+    const flags = ["--input", "study-plan.md"];
+    for (const item of ["request.md", "environment/bootstrap.json", "contract/approval.json", "contract/run-config.json", "contract/input-manifest.json", "contract/evaluator-contract.md", "contract/evaluator-manifest.json", "contract/i1-verification-policy.json", "contract/control-plane/i1-interpreter.mjs"]) flags.push("--input", item);
+    for (const output of [...outputs, ...roles.map((item) => role(root, item))]) flags.push("--output", output);
+    return childEnv ? runWithEnv(childEnv, "checkpoint", root, "contract", ...flags) : run("checkpoint", root, "contract", ...flags);
+  }
+  checkpoint(root, "contract", outputs, roles, childEnv);
 }
 
-function contract(t, environmentSource = "existing") {
-  const root = newRun(t, "research", environmentSource); put(root, "inputs/shared/data.csv", "x\n1\n"); put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
+function contract(t, environmentSource = "existing", convergent = true) {
+  const root = newRun(t, "research", environmentSource, convergent); put(root, "inputs/shared/data.csv", "x\n1\n"); put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
   json(root, "contract/input-manifest.json", { schema_version: 1, files: [{ source_path: "data.csv", frozen_path: "inputs/shared/data.csv", sha256: hash(root, "inputs/shared/data.csv"), classification: "shared" }, { source_path: "evaluate.mjs", frozen_path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), classification: "evaluator_only" }] });
   writeContractArtifacts(root);
   return root;
 }
 const evaluatorInputs = () => ["contract/evaluator-contract.md", "contract/evaluator-manifest.json", "private/evaluator/evaluate.mjs"];
 function evaluation(root, snapshot, destination, id, canonical = false, values = [1]) { const raw = `private/evaluator/raw/${id}.txt`; put(root, raw, `raw ${id}\n`); const repetitions = values.map((value, seed) => ({ seed, value })); const record = { schema_version: 1, snapshot_sha256: hash(root, snapshot), metric: { id: "score", name: "score", value: values.reduce((a, b) => a + b, 0) / values.length, unit: "points", direction: "maximize", estimand: "mean", estimand_parameters: {}, repetitions }, protocol: "approved", repetitions, command_or_procedure: "node evaluate.mjs", environment: { software: ["node"], hardware: "test" }, raw_output_ref: raw, raw_output_sha256: hash(root, raw), evaluated_at: "2026-08-22T12:00:00Z", status: "valid" }; record[canonical ? "snapshot_path" : "snapshot"] = snapshot; json(root, destination, record); return raw; }
-function investigate(root, attempt = 1) {
+function investigate(root, attempt = 1, briefText = null, protocolText = null, directionsText = null) {
   const retry = (logicalTaskName) => ({ task: attempt === 1 ? logicalTaskName : `${logicalTaskName}_a${attempt}`, logical_task_name: logicalTaskName, attempt });
-  put(root, "evidence/search-log.jsonl", '{"query":"q"}\n'); put(root, "evidence/sources.jsonl", '{"id":"s","bibkey":"smith2025"}\n'); put(root, "investigation/notes/s.md"); put(root, "investigation/directions/d.md"); put(root, "investigation/protocol-audit.md", "Overall verdict: PASS\n"); put(root, "investigation/brief.md"); put(root, "investigation/references.bib"); put(root, "investigation/critic.md", "Overall verdict: PASS\n");
+  put(root, "evidence/search-log.jsonl", '{"query":"q"}\n'); put(root, "evidence/sources.jsonl", '{"id":"s","bibkey":"smith2025"}\n'); put(root, "investigation/notes/s.md"); put(root, "investigation/directions/d.md", directionsText ?? "investigation/directions/d.md\n"); put(root, "investigation/protocol-audit.md", protocolText ?? "Overall verdict: PASS\n"); put(root, "investigation/brief.md", briefText ?? "investigation/brief.md\n"); put(root, "investigation/references.bib"); put(root, "investigation/critic.md", "Overall verdict: PASS\n");
   checkpoint(root, "investigation", ["evidence", "investigation"], [{ role: "literature_mapper", ...retry("literature_mapper"), inputs: ["study-plan.md"], outputs: ["evidence/search-log.jsonl", "evidence/sources.jsonl"] }, { role: "evidence_reader", ...retry("evidence_reader"), inputs: ["study-plan.md", "evidence/sources.jsonl"], outputs: ["investigation/notes/s.md"] }, { role: "evidence_synthesizer", ...retry("evidence_synthesizer"), inputs: ["study-plan.md", "investigation/notes"], outputs: ["investigation/directions/d.md"] }, { role: "protocol_auditor", ...retry("protocol_auditor"), inputs: ["study-plan.md", "investigation/directions"], outputs: ["investigation/protocol-audit.md"] }, { role: "brief_writer", ...retry("brief_writer"), inputs: ["study-plan.md", "investigation/directions", "investigation/protocol-audit.md", "evidence/sources.jsonl"], outputs: ["investigation/brief.md", "investigation/references.bib"] }, { role: "brief_critic", ...retry("brief_critic"), inputs: ["study-plan.md", "investigation/brief.md"], outputs: ["investigation/critic.md"] }]);
 }
 function discover(root, change = null, receipt = {}) {
@@ -213,14 +807,15 @@ test("checkpoint retries recover journal-only and journal-plus-receipt interrupt
 
 test("an interrupted invalidation rolls forward exactly once on retry", (t) => {
   const root = through(t, "investigation");
-  put(root, "repairs/interrupted-invalidation.md", "The investigation gate needs its one bounded repair.\n");
-  const interrupted = runWithEnv({ SCIENTIST1_TEST_INTERRUPT_INVALIDATION: "after_journal" }, "invalidate", root, "investigation", "repairs/interrupted-invalidation.md");
+  put(root, "investigation/brief.md", "The investigation brief has a bounded defect.\n");
+  const docket = openRepairDocket(root, { task: "interruptible_investigation_repair", targetPhase: "investigation", repairPaths: ["investigation/brief.md"] });
+  const interrupted = runWithEnv({ SCIENTIST1_TEST_INTERRUPT_INVALIDATION: "after_journal" }, "invalidate", root, "investigation", docket.incident.path);
   assert.notEqual(interrupted.status, 0);
   assert.match(interrupted.stderr, /Injected invalidation interruption/);
   assert.equal(read(root, "run.json").pending_invalidation.kind, "invalidate");
   assert.match(run("verify", root).stderr, /interrupted invalidate/i);
 
-  const recovered = run("invalidate", root, "investigation", "repairs/interrupted-invalidation.md");
+  const recovered = run("invalidate", root, "investigation", docket.incident.path);
   assert.equal(recovered.status, 0, recovered.stderr);
   const record = read(root, "run.json");
   assert.equal(record.pending_invalidation, null);
@@ -420,9 +1015,9 @@ test("native launch records produce hash-bound reusable receipts and reject drif
 });
 test("invalidation preserves evidence and detects every archived-tree mutation class", (t) => {
   const root = through(t, "investigation");
-  put(root, "reason.md", "repair\n");
   fs.appendFileSync(path.join(root, "investigation/brief.md"), "drift\n");
-  assert.equal(run("invalidate", root, "investigation", "reason.md").status, 0);
+  const docket = openRepairDocket(root, { task: "archive_investigation_repair", targetPhase: "investigation", repairPaths: ["investigation/brief.md"] });
+  assert.equal(run("invalidate", root, "investigation", docket.incident.path).status, 0);
   assert.equal(read(root, "run.json").phase, "investigation");
   assert.equal(JSON.parse(run("verify", root).stdout).last_checkpoint, "contract");
   const [archive] = fs.readdirSync(path.join(root, "receipts/superseded"));
@@ -466,12 +1061,20 @@ test("invalidation preserves evidence and detects every archived-tree mutation c
 
 test("repeated downstream repair archives every affected chain and continues the same run", (t) => {
   const root = through(t, "investigation");
-  put(root, "repairs/investigation-r1.md", "The first investigation gate defect requires one bounded repair.\n");
-  const repaired = run("invalidate", root, "investigation", "repairs/investigation-r1.md");
+  put(root, "investigation/directions/d.md", "The first investigation gate defect requires one bounded repair.\n");
+  const firstDocket = openRepairDocket(root, { task: "first_investigation_repair", targetPhase: "investigation", repairPaths: ["investigation/directions/d.md"] });
+  const repaired = run("invalidate", root, "investigation", firstDocket.incident.path);
   assert.equal(repaired.status, 0, repaired.stderr);
-  investigate(root, 2);
-  put(root, "repairs/investigation-limit.md", "The investigation gate remains invalid.\n");
-  const secondRepair = run("invalidate", root, "investigation", "repairs/investigation-limit.md");
+  investigate(root, 2, "Corrected investigation brief revision two.\n", null, "Corrected investigation direction revision two.\n");
+  const discovery = discover(root);
+  assert.equal(discovery.status, 0, discovery.stderr);
+  const secondDocket = openRepairDocket(root, {
+    task: "second_investigation_repair",
+    targetPhase: "investigation",
+    repairPaths: ["investigation/directions/d.md"],
+    findingEvidencePaths: ["discovery/index.json"],
+  });
+  const secondRepair = run("invalidate", root, "investigation", secondDocket.incident.path);
   assert.equal(secondRepair.status, 0, secondRepair.stderr);
   const repairingRecord = read(root, "run.json");
   assert.equal(repairingRecord.state, "repairing");
@@ -482,7 +1085,7 @@ test("repeated downstream repair archives every affected chain and continues the
   assert.equal(fs.existsSync(path.join(root, "receipts/investigation.json")), false);
   assert.equal(fs.existsSync(path.join(root, "terminal")), false);
   assert.equal(run("verify", root).status, 0);
-  investigate(root, 3);
+  investigate(root, 3, "Corrected investigation brief revision three.\n", null, "Corrected investigation direction revision three.\n");
   assert.equal(read(root, "run.json").phase, "discovery");
   assert.equal(run("verify", root).status, 0);
 });
@@ -504,8 +1107,8 @@ test("a result-blind contract defect repairs and re-audits inside the same run",
   const root = contract(t);
   const requestBefore = read(root, "run.json").request_sha256;
   const planBefore = read(root, "run.json").study_plan_sha256;
-  json(root, "repairs/contract-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The generated evaluator added an unapproved readiness score.", repair: "Remove the invented score and retain the approved primary outcome.", researcher_approval: null });
-  const revised = run("revise-contract", root, "repairs/contract-r1.json");
+  const docket = openRepairDocket(root, { task: "adjudicate_contract_r1", targetPhase: "contract", repairPaths: ["contract/evaluator-contract.md"] });
+  const revised = run("revise-contract", root, docket.incident.path);
   assert.equal(revised.status, 0, revised.stderr);
   const record = read(root, "run.json");
   assert.equal(record.contract_revision, 2);
@@ -515,7 +1118,6 @@ test("a result-blind contract defect repairs and re-audits inside the same run",
   assert.equal(record.study_plan_sha256, planBefore);
   assert.equal(fs.existsSync(path.join(root, "contract/run-config.json")), true);
   assert.equal(fs.existsSync(path.join(root, "contract/input-manifest.json")), true);
-  assert.equal(fs.existsSync(path.join(root, "contract/evaluator-contract.md")), false);
   assert.equal(fs.existsSync(path.join(root, "private/evaluator/evaluate.mjs")), true);
   assert.equal(run("verify", root).status, 0);
 
@@ -539,16 +1141,13 @@ test("a rejected pre-checkpoint contract is repaired without restarting the stud
   json(root, "contract/evaluator-manifest.json", { schema_version: 1, files: [{ path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), access_class: "evaluator_only" }] });
   put(root, "contract/audit.md", "Overall verdict: REVISE\nFinding classification: AUTOMATIC_REPAIR\nRemove the invented score.\n");
   role(root, { role: "contract_auditor", inputs: ["request.md", "study-plan.md", "contract/evaluator-contract.md", "contract/evaluator-manifest.json"], outputs: ["contract/audit.md"], gate_verdict: "REVISE" });
-  json(root, "repairs/pre-checkpoint.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The generated evaluator added an unapproved readiness score.", repair: "Remove the invented score and keep the approved evaluation intent.", researcher_approval: null });
-
-  const revised = run("revise-contract", root, "repairs/pre-checkpoint.json");
+  const docket = openRepairDocket(root, { task: "adjudicate_pre_checkpoint_contract", targetPhase: "contract", repairPaths: ["contract/evaluator-contract.md"] });
+  const revised = run("revise-contract", root, docket.incident.path);
   assert.equal(revised.status, 0, revised.stderr);
   const record = read(root, "run.json");
   assert.equal(record.contract_revision, 2);
   assert.equal(record.phase, "contract");
   assert.equal(record.last_checkpoint, null);
-  assert.equal(fs.existsSync(path.join(root, "contract/audit.md")), false);
-  assert.equal(fs.existsSync(path.join(root, "role-receipts/contract_auditor.json")), false);
   assert.equal(fs.existsSync(path.join(root, "role-launches/contract_auditor.json")), true, "accepted launch evidence is immutable across repair");
   assert.equal(fs.existsSync(path.join(root, "private/evaluator/evaluate.mjs")), true, "frozen evaluator-only input must survive generated-contract repair");
   const archive = path.join(root, record.invalidation_roots.at(-1).path);
@@ -557,6 +1156,9 @@ test("a rejected pre-checkpoint contract is repaired without restarting the stud
   assert.equal(fs.existsSync(path.join(archive, "artifacts/role-launches/contract_auditor.json")), true);
   assert.equal(run("verify", root).status, 0);
 
+  put(root, "contract/evaluator-contract.md", "Approved primary metric; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n");
+  const closed = closeDocket(root, { task: "close_pre_checkpoint_contract", reviewerTask: "review_pre_checkpoint_contract" });
+  assert.equal(closed.status, 0, closed.stderr);
   installTestRouting(root);
   writeContractArtifacts(root, "Approved primary metric; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n");
   assert.equal(read(root, "run.json").contract_revision, 2);
@@ -568,15 +1170,31 @@ test("pre-result contract stabilization can make multiple minimal revisions with
   const requestBefore = read(root, "run.json").request_sha256;
   const planBefore = read(root, "run.json").study_plan_sha256;
 
-  json(root, "repairs/contract-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The generated evaluator invented an unapproved readiness score.", repair: "Remove only the invented score and retain the approved primary outcome.", researcher_approval: null });
-  const first = run("revise-contract", root, "repairs/contract-r1.json");
+  const firstDocket = openRepairDocket(root, { task: "adjudicate_contract_stabilization_r1", targetPhase: "contract", repairPaths: ["contract/evaluator-contract.md"] });
+  const first = run("revise-contract", root, firstDocket.incident.path);
   assert.equal(first.status, 0, first.stderr);
   assert.deepEqual(read(root, "run.json").repair_waves, {});
 
-  installTestRouting(root);
-  writeContractArtifacts(root, "Corrected primary metric; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n");
-  json(root, "repairs/contract-r2.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The corrected policy still binds the wrong evaluator argv.", repair: "Correct only the argv binding and refresh its dependent hashes.", researcher_approval: null });
-  const second = run("revise-contract", root, "repairs/contract-r2.json");
+  put(root, "contract/evaluator-contract.md", "Corrected primary metric; unit points; maximize; held-out split; two repetitions; failures invalid; public metric feedback.\n");
+  const firstPolicy = read(root, "contract/i1-verification-policy.json");
+  firstPolicy.bindings.evaluator_contract.sha256 = hash(root, "contract/evaluator-contract.md");
+  json(root, "contract/i1-verification-policy.json", firstPolicy);
+  const firstClosed = closeDocket(root, { task: "close_contract_stabilization_r1", reviewerTask: "review_contract_stabilization_r1", reviewRole: "brief_critic", reviewOutput: "investigation/critic.md" });
+  assert.equal(firstClosed.status, 0, firstClosed.stderr);
+  put(root, "contract/causal-evidence.json", '{"checkpoint_revision":2}\n');
+  const closure = read(root, read(root, "run.json").repair_closures.at(-1).path);
+  const checkpointArgs = ["--input", "study-plan.md", "--input", "request.md", "--input", "environment/bootstrap.json", "--input", "contract/approval.json", "--input", "contract/run-config.json", "--input", "contract/input-manifest.json", "--input", "contract/evaluator-contract.md", "--input", "contract/evaluator-manifest.json", "--input", "contract/i1-verification-policy.json", "--input", "contract/control-plane/i1-interpreter.mjs"];
+  for (const output of ["contract", ...closure.dependent_receipts.map((binding) => binding.source_path)]) checkpointArgs.push("--output", output);
+  const promoted = run("checkpoint", root, "contract", ...checkpointArgs);
+  assert.equal(promoted.status, 0, promoted.stderr);
+  const secondDocket = openRepairDocket(root, {
+    task: "adjudicate_contract_stabilization_r2",
+    targetPhase: "contract",
+    repairPaths: ["contract/evaluator-contract.md"],
+    findingEvidencePaths: ["contract/causal-evidence.json"],
+    strategy: { cause: "The newly checkpointed contract exposes a distinct argv binding defect.", changed_action: "Correct the exact binding under the new checkpoint authority.", evidence_paths: ["contract/causal-evidence.json"] },
+  });
+  const second = run("revise-contract", root, secondDocket.incident.path);
   assert.equal(second.status, 0, second.stderr);
 
   const record = read(root, "run.json");
@@ -599,31 +1217,25 @@ test("contract result-awareness is derived from saved evidence instead of an age
   ] });
   put(root, "contract/evaluator-contract.md", "Approved deterministic evaluation.\n");
   json(root, "contract/evaluator-manifest.json", { schema_version: 1, files: [{ path: "private/evaluator/generated-evaluator.mjs", sha256: hash(root, "private/evaluator/generated-evaluator.mjs"), access_class: "evaluator_only" }] });
-  json(root, "repairs/misclassified.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "The generated policy uses the wrong input hash.", repair: "Correct the hash before candidate work.", researcher_approval: null });
-  const rejected = run("revise-contract", root, "repairs/misclassified.json");
-  assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /must declare result_aware false because no candidate or downstream evidence exists/);
-  const record = read(root, "run.json");
-  assert.equal(record.contract_revision, 1);
-  assert.deepEqual(record.repair_waves, {});
-  assert.equal(record.state, "running");
-  assert.equal(run("verify", root).status, 0);
-
-  json(root, "repairs/correctly-classified.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The generated evaluator contract uses the wrong input hash.", repair: "Correct only the hash before candidate work.", researcher_approval: null });
-  const repaired = run("revise-contract", root, "repairs/correctly-classified.json");
+  json(root, "repairs/agent-claimed-awareness.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "The generated policy uses the wrong input hash.", repair: "Correct the hash before candidate work.", researcher_approval: null });
+  assert.match(run("revise-contract", root, "repairs/agent-claimed-awareness.json").stderr, /requires active docket incident/i);
+  const docket = openRepairDocket(root, { task: "derive_contract_result_awareness", targetPhase: "contract", repairPaths: ["contract/evaluator-contract.md"] });
+  const repaired = run("revise-contract", root, docket.incident.path);
   assert.equal(repaired.status, 0, repaired.stderr);
   const repairedRecord = read(root, "run.json");
   assert.equal(repairedRecord.contract_revision, 2);
   assert.deepEqual(repairedRecord.repair_waves, {});
   assert.equal(repairedRecord.state, "repairing");
   assert.equal(fs.existsSync(path.join(root, "terminal/incomplete.json")), false);
+  const revisionEvent = fs.readFileSync(path.join(root, "events.jsonl"), "utf8").trim().split(/\r?\n/).map(JSON.parse).findLast((event) => event.event === "contract_revision_started");
+  assert.equal(revisionEvent.result_aware, false, "the controller must derive result awareness from saved evidence");
   assert.equal(run("verify", root).status, 0);
 });
 
-test("a result-blind repair after investigation archives prior work without asking for approval", (t) => {
+test("a late contract repair after investigation is controller-classified and archives prior work", (t) => {
   const root = through(t, "investigation");
-  json(root, "repairs/pre-candidate.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "The frozen evaluator contract omitted a valid input shape before candidate work began.", repair: "Correct the result-blind evaluator contract and rerun contract review.", researcher_approval: null });
-  const revised = run("revise-contract", root, "repairs/pre-candidate.json");
+  const docket = openRepairDocket(root, { task: "late_contract_repair_after_investigation", targetPhase: "contract", repairPaths: ["contract/evaluator-contract.md"] });
+  const revised = run("revise-contract", root, docket.incident.path);
   assert.equal(revised.status, 0, revised.stderr);
   const record = read(root, "run.json");
   assert.equal(record.contract_revision, 2);
@@ -636,9 +1248,10 @@ test("a result-blind repair after investigation archives prior work without aski
 
 test("a result-aware evaluator repair archives every successor and reruns from contract", (t) => {
   const root = through(t, "selection");
+  ablate(root);
   const selectedBefore = fileHash(path.join(root, "selection/canonical-evaluation.json"));
-  json(root, "repairs/contract-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "The frozen I1 policy mishandles a valid supported result shape.", repair: "Correct the policy without changing the approved metric or decision rule, then rerun all affected work.", researcher_approval: null });
-  const revised = run("revise-contract", root, "repairs/contract-r1.json");
+  const docket = openRepairDocket(root, { task: "result_aware_contract_repair", targetPhase: "contract", repairPaths: ["contract/i1-verification-policy.json"] });
+  const revised = run("revise-contract", root, docket.incident.path);
   assert.equal(revised.status, 0, revised.stderr);
   const record = read(root, "run.json");
   assert.equal(record.contract_revision, 2);
@@ -656,22 +1269,21 @@ test("a result-aware evaluator repair archives every successor and reruns from c
 
 test("post-result contract revisions preserve every repair cycle without a terminal ceiling", (t) => {
   const root = through(t, "selection");
-  json(root, "repairs/result-aware-r1.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "The frozen policy mishandles one supported result shape.", repair: "Correct that result shape without changing the approved metric, then rerun affected work.", researcher_approval: null });
-  const first = run("revise-contract", root, "repairs/result-aware-r1.json");
+  ablate(root);
+  const firstDocket = openRepairDocket(root, { task: "result_aware_contract_r1", targetPhase: "contract", repairPaths: ["contract/i1-verification-policy.json"] });
+  const first = run("revise-contract", root, firstDocket.incident.path);
   assert.equal(first.status, 0, first.stderr);
   assert.equal(read(root, "run.json").repair_waves.contract, 1);
 
-  put(root, "contract/evaluator-contract.md", "A second result-aware contract defect remains.\n");
-  json(root, "repairs/result-aware-r2.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "A second result-aware policy defect remains.", repair: "Correct the remaining defect and rerun affected work.", researcher_approval: null });
-  const second = run("revise-contract", root, "repairs/result-aware-r2.json");
-  assert.equal(second.status, 0, second.stderr);
   const record = read(root, "run.json");
   assert.equal(record.state, "repairing");
   assert.equal(record.phase, "contract");
-  assert.equal(record.contract_revision, 3);
-  assert.equal(record.repair_waves.contract, 2);
+  assert.equal(record.contract_revision, 2);
+  assert.equal(record.repair_waves.contract, 1);
+  put(root, "contract/evaluator-contract.md", "An unadjudicated second edit cannot manufacture another repair cycle.\n");
+  json(root, "repairs/result-aware-r2.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "A second result-aware policy defect remains.", repair: "Correct the remaining defect and rerun affected work.", researcher_approval: null });
+  assert.match(run("revise-contract", root, "repairs/result-aware-r2.json").stderr, /requires active docket incident|controller-owned active incident/i);
   assert.equal(fs.existsSync(path.join(root, "terminal")), false);
-  assert.equal(run("verify", root).status, 0);
 });
 
 test("automatic repair cannot relax the researcher charter or skip result-aware rollback", (t) => {
@@ -687,11 +1299,8 @@ test("partial uncheckpointed candidate work cannot survive a contract revision",
   const root = contract(t);
   put(root, "discovery/nodes/partial/snapshots/v1/method.txt", "partial candidate\n");
   put(root, "private/evaluator/raw/partial.txt", "observed result\n");
-  json(root, "repairs/incorrectly-blind.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: false, post_result_guard: null, finding: "Evaluator-contract defect discovered during partial evaluation.", repair: "Correct the evaluator contract and rerun the partial candidate.", researcher_approval: null });
-  assert.match(run("revise-contract", root, "repairs/incorrectly-blind.json").stderr, /must declare result_aware true/);
-
-  json(root, "repairs/result-aware.json", { schema_version: 1, classification: "AUTOMATIC_REPAIR", charter_changed: false, result_aware: true, post_result_guard: "invalidate_and_rerun", finding: "Evaluator-contract defect discovered during partial evaluation.", repair: "Correct the evaluator contract and rerun the partial candidate without using the observed value to set the rule.", researcher_approval: null });
-  const revised = run("revise-contract", root, "repairs/result-aware.json");
+  const docket = openRepairDocket(root, { task: "partial_candidate_contract_repair", targetPhase: "contract", repairPaths: ["contract/evaluator-contract.md"] });
+  const revised = run("revise-contract", root, docket.incident.path);
   assert.equal(revised.status, 0, revised.stderr);
   const record = read(root, "run.json");
   assert.equal(fs.existsSync(path.join(root, "discovery")), false);
@@ -702,21 +1311,17 @@ test("partial uncheckpointed candidate work cannot survive a contract revision",
   assert.equal(run("verify", root).status, 0);
 });
 
-test("an explicit researcher approval can amend the charter without losing the original", (t) => {
+test("agent-authored amendment evidence cannot rewrite the approved charter", (t) => {
   const root = contract(t);
-  const originalApproval = read(root, "contract/approval.json");
+  const originalApproval = canonical(read(root, "contract/approval.json"));
+  const originalPlan = fs.readFileSync(path.join(root, "study-plan.md"), "utf8");
   put(root, "repairs/researcher-approval.md", "Approved in the Scientist1 study review.\n");
   put(root, "repairs/amended-study-plan.md", "# Approved amended plan\n\nThe same question uses a researcher-approved primary outcome.\n");
   json(root, "repairs/approved-amendment.json", { schema_version: 1, classification: "RESEARCHER_APPROVED_AMENDMENT", charter_changed: true, result_aware: false, post_result_guard: null, finding: "The researcher approved a clearer primary outcome before results.", repair: "Replace the active plan and rebuild the generated contract.", researcher_approval: { path: "repairs/researcher-approval.md", sha256: hash(root, "repairs/researcher-approval.md") } });
   const revised = run("revise-contract", root, "repairs/approved-amendment.json", "repairs/amended-study-plan.md");
-  assert.equal(revised.status, 0, revised.stderr);
-  const record = read(root, "run.json");
-  assert.equal(record.charter_revision, 2);
-  assert.equal(record.contract_revision, 2);
-  assert.match(fs.readFileSync(path.join(root, "study-plan.md"), "utf8"), /Approved amended plan/);
-  const archive = path.join(root, record.invalidation_roots.at(-1).path);
-  assert.equal(fs.readFileSync(path.join(archive, "artifacts/study-plan.md"), "utf8"), "# Approved plan\n");
-  assert.deepEqual(read(archive, "artifacts/contract/approval.json"), originalApproval);
-  assert.equal(read(root, "contract/approval.json").study_plan_sha256, record.study_plan_sha256);
-  assert.equal(run("verify", root).status, 0);
+  assert.notEqual(revised.status, 0);
+  assert.match(revised.stderr, /cannot accept agent-authored amendment authority/i);
+  assert.equal(fs.readFileSync(path.join(root, "study-plan.md"), "utf8"), originalPlan);
+  assert.equal(canonical(read(root, "contract/approval.json")), originalApproval);
+  assert.equal(read(root, "run.json").charter_revision, 1);
 });

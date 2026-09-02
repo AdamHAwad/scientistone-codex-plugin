@@ -9,7 +9,7 @@ Scientist1 asks for the access needed to run a local research workflow.
 - Start the bundled loopback MCP and open its local browser interface.
 - Use research sources when the task, Codex permissions, and role contract allow them.
 - Run experiments, validation, local environments, and document builds in the active project.
-- Assign evidence-scoped work and repairs to native Codex subagents until verified delivery.
+- Assign evidence-scoped work and exact-delta, controller-docketed repairs to native Codex subagents until verified delivery.
 - Before intake, read Codex's parallel-agent capacity and, only after explicit
   opt-in, back up and update that one local setting to 16.
 
@@ -17,7 +17,7 @@ Scientist1 asks for the access needed to run a local research workflow.
 
 Installation does not allow Scientist1 to publish results, use paid services, accept licenses, expose secrets, access unrelated projects, make destructive system changes, or bypass Codex approval rules.
 
-Selecting **Approve and start study** grants durable authority for safe, reversible, project-local execution and every causal contract or operational repair required for verified deliverables, including a project-local dependency when the approved method needs it. Scientist1 does not ask for another study approval or stop on an operational blocker. This authority does not allow a global install, hidden prerequisite, publication, paid service, license acceptance, private-data export, destructive change, or bypass of Codex-enforced safety rules. When one of those boundaries prevents the direct path, the run uses the strongest safe in-scope design, documents the limitation, and continues to the verified paper.
+Selecting **Approve and start study** grants durable authority for safe, reversible, project-local execution and every causal contract or operational repair required for verified deliverables, including a project-local dependency when the approved method needs it. It does not authorize speculative reviewer preferences: a fresh adjudicator and the frozen release checklist must confirm a blocker before rollback, and the controller limits repair to the exact declared files. Scientist1 does not ask for another study approval or stop on an operational blocker. This authority does not allow a global install, hidden prerequisite, publication, paid service, license acceptance, private-data export, destructive change, or bypass of Codex-enforced safety rules. When one of those boundaries prevents the direct path, the run uses the strongest safe in-scope design, documents the limitation, and continues to the verified paper.
 
 ## Writable paths
 

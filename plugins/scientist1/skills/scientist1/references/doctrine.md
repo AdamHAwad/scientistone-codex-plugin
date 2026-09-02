@@ -38,6 +38,7 @@ Unsupported claims are removed or weakened; they are not repaired from model mem
 - The paper describes the science, not the internal workflow.
 - A negative, null, or limited conclusion is a valid scientific outcome when the approved protocol completed honestly.
 - Approval commits the lead to a freshly verified delivery. Operational failures, repeated REVISE/FAIL decisions, unavailable routes, and scheduler drains remain anchored same-run repair work. Attempts and repair cycles are immutable evidence counters, never stopping budgets. Pre-result contract stabilization remains narrow: it applies only concrete minimal corrections from the closed checklist and cannot add optional work on re-audit. Result-aware repair archives and invalidates every dependent successor before rerunning it. Only fresh final verification can complete the run or release the lead turn.
+- Review does not authorize rollback. A release-owned checklist and fresh adjudication convert all demonstrated blockers into one finite, fingerprinted repair docket. Its finding set and exact file scope cannot grow for pre-existing concerns. Only a repair-induced regression may enter; closure requires the bound reviewers and an exact-delta check. Repeated fingerprints change causal strategy rather than repeat work.
 - Build only what the current frozen study and gate require. Speculative hardening, duplicate ledgers, bespoke per-study verification frameworks, and future-proofing are non-goals unless a concrete evidence-backed failure makes them necessary.
 
 ## Integrity audit
