@@ -521,13 +521,81 @@ function acquireIdentityLock(file) {
   throw Object.assign(new Error("Scientist1 work identity is being bound by another live launch; retry this grant preparation."), { code: "S1_IDENTITY_BIND_BUSY" });
 }
 
+function outputWorkRebound(message) {
+  return Object.assign(new Error(message), { code: "S1_OUTPUT_WORK_REBOUND" });
+}
+
+function isSha256(value) {
+  return typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
+}
+
+function validateHistoricalLaunchEnvelope(run, launch, launchRelative, repairDocketId) {
+  assertObject(launch, "accepted launch");
+  const required = ["allowed_external_sources", "assignment", "assignment_sha256", "attempt", "charter_revision", "contract_revision", "declared_inputs", "declared_outputs", "fork_turns", "gate_schema_version", "input_artifacts", "logical_task_name", "model", "model_routing_sha256", "model_tier", "predecessor", "reasoning_effort", "role", "role_contract_sha256", "schema_version", "started_at", "task_brief", "task_brief_sha256", "task_id", "work_key_sha256"];
+  if (required.some((field) => !Object.hasOwn(launch, field))) throw new Error("accepted launch is missing a required field");
+  const inputs = stringArray(launch.declared_inputs, "accepted launch declared_inputs");
+  const outputs = stringArray(launch.declared_outputs, "accepted launch declared_outputs");
+  stringArray(launch.allowed_external_sources, "accepted launch allowed_external_sources");
+  if (inputs.some((value) => normalizeRolePath(run, value, "accepted launch declared_inputs") !== value) || outputs.some((value) => normalizeRolePath(run, value, "accepted launch declared_outputs") !== value)) throw new Error("accepted launch paths are not canonical");
+  if (!Array.isArray(launch.input_artifacts) || launch.input_artifacts.length !== inputs.length || launch.input_artifacts.some((artifact, index) => !artifact || typeof artifact !== "object" || Array.isArray(artifact) || Object.keys(artifact).sort().join() !== "path,sha256" || artifact.path !== inputs[index] || !isSha256(artifact.sha256))) throw new Error("accepted launch input bindings are malformed");
+  const normalizedBrief = taskBrief(launch.task_brief, inputs);
+  if (canonical(normalizedBrief) !== canonical(launch.task_brief) || !isSha256(launch.task_brief_sha256) || launch.task_brief_sha256 !== sha256(launch.task_brief) || !nonemptyAssignment(launch.assignment, launch.assignment_sha256)) throw new Error("accepted launch brief or assignment binding is malformed");
+  if (launch.predecessor !== null) {
+    const predecessor = assertObject(launch.predecessor, "accepted launch predecessor");
+    if (Object.keys(predecessor).sort().join() !== "path,sha256" || normalizeRolePath(run, predecessor.path, "accepted launch predecessor") !== predecessor.path || !isSha256(predecessor.sha256)) throw new Error("accepted launch predecessor is malformed");
+  }
+  if (launch.schema_version !== 1 || ![1, 2].includes(launch.gate_schema_version) || launch.fork_turns !== "none" || !TIERS.has(launch.model_tier) || typeof launch.model !== "string" || !launch.model || typeof launch.reasoning_effort !== "string" || !launch.reasoning_effort || !isSha256(launch.model_routing_sha256) || !isSha256(launch.role_contract_sha256) || typeof launch.started_at !== "string" || !Number.isFinite(Date.parse(launch.started_at))) throw new Error("accepted launch envelope is malformed");
+  if (repairDocketId !== null) {
+    const binding = assertObject(launch.repair_binding, "accepted launch repair_binding");
+    const repairFields = ["baseline", "controller_delta", "dependent_regeneration", "docket_id", "finding_fingerprints", "incident_path", "incident_sha256", "repair_mode", "repair_scope", "scope_baseline", "semantic_digest"];
+    if (repairFields.some((field) => !Object.hasOwn(binding, field)) || !isSha256(binding.docket_id) || !isSha256(binding.semantic_digest) || normalizeRolePath(run, binding.incident_path, "accepted launch repair incident") !== binding.incident_path || !isSha256(binding.incident_sha256) || !["scientific_delta", "deterministic_delta"].includes(binding.repair_mode) || stringArray(binding.finding_fingerprints, "accepted launch finding_fingerprints").some((value) => !isSha256(value)) || stringArray(binding.repair_scope, "accepted launch repair_scope").some((value) => normalizeRolePath(run, value, "accepted launch repair_scope") !== value) || !Array.isArray(binding.scope_baseline) || !Array.isArray(binding.controller_delta) || !Array.isArray(binding.dependent_regeneration) || !Array.isArray(binding.baseline)) throw new Error("accepted launch repair binding is malformed");
+  }
+}
+
+function hasAcceptedHistoricalOverlapBinding(run, logicalTaskName, workKey, role, declaredOutputs, contractRevision, charterRevision, repairDocketId, repairSemanticDigest) {
+  const acceptedRoot = path.join(run, "role-attempts", logicalTaskName, workKey);
+  if (!fs.existsSync(acceptedRoot)) return false;
+  try {
+    const rootStat = fs.lstatSync(acceptedRoot);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) throw new Error("accepted-attempt root is not a regular directory");
+    const attemptNames = fs.readdirSync(acceptedRoot).filter((name) => /^attempt-\d+\.json$/.test(name)).sort();
+    if (!attemptNames.length) return false;
+    for (const name of attemptNames) {
+      const recordFile = path.join(acceptedRoot, name);
+      const recordStat = fs.lstatSync(recordFile);
+      if (!recordStat.isFile() || recordStat.isSymbolicLink()) throw new Error("accepted-attempt metadata is not a regular file");
+      const record = readJson(recordFile);
+      const expectedKeys = ["accepted_at", "attempt", "launch_record", "launch_record_sha256", "logical_task_name", "schema_version", "work_key_sha256"];
+      if (!record || Object.keys(record).sort().join() !== expectedKeys.sort().join() || record.schema_version !== 2 || record.logical_task_name !== logicalTaskName || record.work_key_sha256 !== workKey || !Number.isInteger(record.attempt) || record.attempt < 1 || name !== `attempt-${record.attempt}.json` || typeof record.accepted_at !== "string" || !Number.isFinite(Date.parse(record.accepted_at)) || typeof record.launch_record_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(record.launch_record_sha256)) throw new Error("accepted-attempt metadata is malformed");
+      const launchRelative = normalizeRolePath(run, record.launch_record, "launch_record");
+      if (record.launch_record !== launchRelative) throw new Error("accepted launch path is not canonical");
+      if (!/^role-launches\/[^/]+\.json$/.test(launchRelative)) throw new Error("accepted launch is outside the immutable launch registry");
+      const launchFile = path.join(run, launchRelative);
+      if (!fs.existsSync(launchFile)) throw new Error("accepted launch is missing");
+      const launchStat = fs.lstatSync(launchFile);
+      if (!launchStat.isFile() || launchStat.isSymbolicLink() || record.launch_record_sha256 !== hashAt(launchFile, launchRelative)) throw new Error("accepted launch binding is stale");
+      const launch = readJson(launchFile);
+      validateHistoricalLaunchEnvelope(run, launch, launchRelative, repairDocketId);
+      const launchTaskName = path.basename(launchRelative, ".json");
+      const exactRepairBinding = repairDocketId === null
+        ? launch.repair_binding === undefined
+        : launch.repair_binding?.docket_id === repairDocketId && launch.repair_binding?.semantic_digest === repairSemanticDigest;
+      if (launch.schema_version !== 1 || launch.task_id !== `native-${launchTaskName}` || launchWorkKey(launch) !== workKey || launch.work_key_sha256 !== workKey || launch.logical_task_name !== logicalTaskName || launch.attempt !== record.attempt || launch.role !== role || launch.contract_revision !== contractRevision || launch.charter_revision !== charterRevision || !exactRepairBinding || canonical([...launch.declared_outputs].sort()) !== canonical([...declaredOutputs].sort())) throw new Error("accepted launch does not match the requested historical work package");
+    }
+    return true;
+  } catch {
+    throw outputWorkRebound("Historical accepted overlap authority is malformed, stale, or does not match the requested work package.");
+  }
+}
+
 function bindWorkIdentity(run, logicalTaskName, workKey, role, declaredOutputs, contractRevision, charterRevision, repairDocketId = null, repairSemanticDigest = null) {
   const revisionBase = path.join(run, "role-attempts", `_revision-${contractRevision}-${charterRevision}`);
   const base = repairDocketId ? path.join(revisionBase, `_repair-${repairDocketId}-${repairSemanticDigest}`) : revisionBase;
   const common = { schema_version: 1, contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...declaredOutputs].sort(), work_key_sha256: workKey };
   const outputs = [...declaredOutputs].sort();
   const overlaps = (left, right) => left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
-  if (outputs.some((output, index) => outputs.slice(index + 1).some((other) => overlaps(output, other)))) throw Object.assign(new Error("One work package cannot declare ancestor/descendant output paths."), { code: "S1_OUTPUT_WORK_REBOUND" });
+  const hasInternalOverlap = outputs.some((output, index) => outputs.slice(index + 1).some((other) => overlaps(output, other)));
+  if (hasInternalOverlap && !hasAcceptedHistoricalOverlapBinding(run, logicalTaskName, workKey, role, outputs, contractRevision, charterRevision, repairDocketId, repairSemanticDigest)) throw outputWorkRebound("One work package cannot declare ancestor/descendant output paths unless the exact same work has a valid immutable accepted-attempt history.");
   fs.mkdirSync(base, { recursive: true, mode: 0o700 });
   const lock = path.join(base, ".identity.lock");
   acquireIdentityLock(lock);

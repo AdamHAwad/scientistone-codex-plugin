@@ -2,6 +2,18 @@
 
 This project follows Semantic Versioning.
 
+## 1.5.1 - 2026-09-02
+
+- Restored retry and recovery compatibility for accepted Scientist1 1.5.0 work
+  whose immutable launch declared both an output directory and a descendant
+  file. The exclusive-output controller now recognizes only the exact same
+  historical work identity; newly overlapping packages remain rejected.
+- Bound that compatibility path to a valid schema-2 accepted-attempt record,
+  its hash-matching immutable launch under `role-launches/`, and exact logical
+  task, native task, role, revision, repair docket, work-key, attempt, and output
+  identity. Missing, stale, aliased, malformed, or partially corrupt authority
+  fails closed with the controlled output-rebound error.
+
 ## 1.5.0 - 2026-09-01
 
 - Added a release-owned finite checklist for every scientific review role and a

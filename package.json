@@ -1,6 +1,6 @@
 {
   "name": "scientist1-codex-plugin",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "description": "Public source for the complete local-first Scientist1 Codex plugin.",
   "type": "module",

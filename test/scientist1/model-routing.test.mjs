@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -36,6 +37,80 @@ function runRoot(t, name = "routing") {
 
 function brief(input = "study-plan.md") {
   return { objective: "Complete the assigned gate.", context: "This task advances the current Scientist1 phase.", acceptance_gate: "Return only validated declared outputs.", constraints: "Preserve the frozen study plan and CoE requirements; do not add speculative work.", upstream_summary: [{ input_path: input, summary: "Binding approved study context." }] };
+}
+
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
+  return JSON.stringify(value);
+}
+
+function workKey(role, declaredOutputs, contractRevision = 1, charterRevision = 1, repairDocketId = null, repairSemanticDigest = null) {
+  return createHash("sha256").update(canonical({ contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...declaredOutputs].sort(), ...(repairDocketId ? { repair_docket_id: repairDocketId, repair_semantic_digest: repairSemanticDigest } : {}) })).digest("hex");
+}
+
+function valueHash(value) {
+  return createHash("sha256").update(typeof value === "string" ? value : canonical(value)).digest("hex");
+}
+
+function boundFileHash(file, logicalPath) {
+  const digest = createHash("sha256");
+  const addField = (tag, value) => {
+    const data = Buffer.from(String(value));
+    const length = Buffer.alloc(8);
+    length.writeBigUInt64BE(BigInt(data.length));
+    digest.update(tag);
+    digest.update(length);
+    digest.update(data);
+  };
+  addField("F", logicalPath);
+  addField("S", fs.statSync(file).size);
+  digest.update(fs.readFileSync(file));
+  return digest.digest("hex");
+}
+
+function seedHistoricalOverlap(run, { logicalTaskName = "historical_evaluator", role = "evaluator", outputs = ["private/evaluator/package", "private/evaluator/package/result.json"], mutateLaunch = null, mutateRecord = null } = {}) {
+  const key = workKey(role, outputs);
+  const launchRelative = "role-launches/historical_evaluator_a1.json";
+  const launchFile = path.join(run, launchRelative);
+  fs.mkdirSync(path.dirname(launchFile), { recursive: true });
+  const launchBrief = brief("selection/selected");
+  const assignment = "Immutable historical assignment.";
+  const launch = {
+    schema_version: 1,
+    task_id: "native-historical_evaluator_a1",
+    logical_task_name: logicalTaskName,
+    work_key_sha256: key,
+    attempt: 1,
+    contract_revision: 1,
+    charter_revision: 1,
+    predecessor: null,
+    role,
+    fork_turns: "none",
+    model_tier: "efficient",
+    model: "test-efficient",
+    reasoning_effort: "low",
+    model_routing_sha256: "a".repeat(64),
+    role_contract_sha256: "b".repeat(64),
+    gate_schema_version: 1,
+    task_brief: launchBrief,
+    task_brief_sha256: valueHash(launchBrief),
+    assignment,
+    assignment_sha256: valueHash(assignment),
+    declared_inputs: ["selection/selected"],
+    input_artifacts: [{ path: "selection/selected", sha256: "c".repeat(64) }],
+    allowed_external_sources: [],
+    declared_outputs: outputs,
+    started_at: "2026-09-02T12:00:00.000Z",
+  };
+  mutateLaunch?.(launch);
+  fs.writeFileSync(launchFile, `${JSON.stringify(launch)}\n`);
+  const record = { schema_version: 2, logical_task_name: logicalTaskName, work_key_sha256: key, attempt: 1, launch_record: launchRelative, launch_record_sha256: boundFileHash(launchFile, launchRelative), accepted_at: "2026-09-02T12:00:00.000Z" };
+  mutateRecord?.(record, { launchFile, key });
+  const attemptRoot = path.join(run, "role-attempts", logicalTaskName, key);
+  fs.mkdirSync(attemptRoot, { recursive: true });
+  fs.writeFileSync(path.join(attemptRoot, "attempt-1.json"), `${JSON.stringify(record)}\n`);
+  return { key, launchFile, attemptRoot, logicalTaskName, role, outputs };
 }
 
 function runHook(input, env = {}) {
@@ -571,6 +646,128 @@ test("exclusive work identity rejects self-overlap, cross-task prefixes, and lat
     declared_outputs: ["contract/independent.md"],
   }, { catalog: catalog(), stateHome: STATE_HOME });
   assert.equal(consumeLaunchToken(clean.task_name, { stateHome: STATE_HOME }).attempt, 1, "the rejected multi-output bind must not poison an unrelated output");
+});
+
+test("an immutable accepted historical overlap can continue only as the exact same work", async (t) => {
+  const run = runRoot(t, "historical-output-overlap");
+  const historical = seedHistoricalOverlap(run);
+  const args = {
+    run_path: run,
+    logical_task_name: historical.logicalTaskName,
+    role: historical.role,
+    declared_inputs: ["selection/selected"],
+    declared_outputs: historical.outputs,
+    allowed_external_sources: [],
+    task_brief: brief("selection/selected"),
+  };
+  const retry = await prepareRoleLaunch({ ...args, task_name: "historical_evaluator_a2", attempt: 2 }, { catalog: catalog(), stateHome: STATE_HOME });
+  assert.equal(retry.attempt, 2);
+  assert.equal(consumeLaunchToken(retry.task_name, { stateHome: STATE_HOME }).attempt, 2);
+  const recovery = await prepareRoleLaunch({ ...args, task_name: "historical_evaluator_a3", attempt: 3 }, { catalog: catalog(), stateHome: STATE_HOME });
+  assert.equal(recovery.attempt, 3, "a second recovery must remain bound to the same accepted logical work package");
+});
+
+test("the historical-overlap exception rejects aliases, rebound packages, and corrupt authority", async (t) => {
+  const cases = [
+    {
+      name: "logical alias",
+      seed: (run) => seedHistoricalOverlap(run, { mutateRecord: (record) => { record.logical_task_name = "historical_alias"; } }),
+    },
+    {
+      name: "cross-role rebound",
+      seed: (run) => seedHistoricalOverlap(run, { mutateLaunch: (launch) => { launch.role = "writer"; } }),
+    },
+    {
+      name: "cross-revision rebound",
+      seed: (run) => seedHistoricalOverlap(run, { mutateLaunch: (launch) => { launch.contract_revision = 2; } }),
+    },
+    {
+      name: "cross-docket rebound",
+      seed: (run) => seedHistoricalOverlap(run, { mutateLaunch: (launch) => { launch.repair_binding = { docket_id: "a".repeat(64), semantic_digest: "b".repeat(64) }; } }),
+    },
+    {
+      name: "mismatched output package",
+      seed: (run) => seedHistoricalOverlap(run, { mutateLaunch: (launch) => { launch.declared_outputs = ["private/evaluator/package", "private/evaluator/package/other.json"]; } }),
+    },
+    {
+      name: "mismatched work-key metadata",
+      seed: (run) => seedHistoricalOverlap(run, { mutateRecord: (record) => { record.work_key_sha256 = "f".repeat(64); } }),
+    },
+    {
+      name: "legacy schema without work identity",
+      seed: (run) => seedHistoricalOverlap(run, { mutateRecord: (record) => { record.schema_version = 1; delete record.work_key_sha256; } }),
+    },
+    {
+      name: "non-string acceptance timestamp",
+      seed: (run) => seedHistoricalOverlap(run, { mutateRecord: (record) => { record.accepted_at = 0; } }),
+    },
+    {
+      name: "stale immutable-launch hash",
+      seed: (run) => seedHistoricalOverlap(run, { mutateRecord: (record) => { record.launch_record_sha256 = "0".repeat(64); } }),
+    },
+    {
+      name: "missing immutable launch",
+      seed: (run) => seedHistoricalOverlap(run, { mutateRecord: (_record, context) => { fs.unlinkSync(context.launchFile); } }),
+    },
+    {
+      name: "launch outside immutable registry",
+      seed: (run) => seedHistoricalOverlap(run, { mutateRecord: (record, context) => {
+        const alternateRelative = "repairs/forged-launch.json";
+        const alternateFile = path.join(run, alternateRelative);
+        fs.mkdirSync(path.dirname(alternateFile), { recursive: true });
+        fs.copyFileSync(context.launchFile, alternateFile);
+        record.launch_record = alternateRelative;
+        record.launch_record_sha256 = boundFileHash(alternateFile, alternateRelative);
+      } }),
+    },
+    {
+      name: "noncanonical launch path alias",
+      seed: (run) => seedHistoricalOverlap(run, { mutateRecord: (record) => { record.launch_record = "role-launches/../role-launches/historical_evaluator_a1.json"; } }),
+    },
+    {
+      name: "unsupported launch schema",
+      seed: (run) => seedHistoricalOverlap(run, { mutateLaunch: (launch) => { launch.schema_version = 2; } }),
+    },
+    {
+      name: "mismatched native task identity",
+      seed: (run) => seedHistoricalOverlap(run, { mutateLaunch: (launch) => { launch.task_id = "native-another_task"; } }),
+    },
+    {
+      name: "truncated launch envelope",
+      seed: (run) => seedHistoricalOverlap(run, { mutateLaunch: (launch) => { delete launch.assignment; } }),
+    },
+    {
+      name: "malformed accepted metadata",
+      seed: (run) => {
+        const seeded = seedHistoricalOverlap(run);
+        fs.writeFileSync(path.join(seeded.attemptRoot, "attempt-1.json"), "{not-json\n");
+        return seeded;
+      },
+    },
+    {
+      name: "corrupt sibling attempt beside valid authority",
+      seed: (run) => {
+        const seeded = seedHistoricalOverlap(run);
+        fs.writeFileSync(path.join(seeded.attemptRoot, "attempt-2.json"), "{}\n");
+        return seeded;
+      },
+    },
+  ];
+  for (const scenario of cases) await t.test(scenario.name, async (caseTest) => {
+    const run = runRoot(caseTest, `historical-overlap-${scenario.name.replaceAll(/[^a-z0-9]+/gi, "-")}`);
+    const historical = scenario.seed(run);
+    await assert.rejects(prepareRoleLaunch({
+      run_path: run,
+      task_name: "historical_evaluator_retry",
+      logical_task_name: historical.logicalTaskName,
+      attempt: 2,
+      role: historical.role,
+      declared_inputs: ["selection/selected"],
+      declared_outputs: historical.outputs,
+      allowed_external_sources: [],
+      task_brief: brief("selection/selected"),
+    }, { catalog: catalog(), stateHome: STATE_HOME }), (error) => error.code === "S1_OUTPUT_WORK_REBOUND" && /historical accepted overlap authority/i.test(error.message));
+  });
 });
 
 test("work identity recovers a lock left by a dead launch process", async (t) => {
