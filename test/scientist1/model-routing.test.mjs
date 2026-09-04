@@ -35,6 +35,34 @@ function runRoot(t, name = "routing") {
   return run;
 }
 
+function styleRun(t, name) {
+  const run = runRoot(t, name);
+  fs.mkdirSync(path.join(run, "inputs", "style"), { recursive: true });
+  fs.mkdirSync(path.join(run, "paper", "style-drafts"), { recursive: true });
+  fs.writeFileSync(path.join(run, "inputs", "style", "01-example.txt"), "Example style\n");
+  fs.writeFileSync(path.join(run, "paper", "style-drafts", "draft-01-tagged.tex"), "Draft one\n");
+  const exampleSha256 = createHash("sha256").update(fs.readFileSync(path.join(run, "inputs", "style", "01-example.txt"))).digest("hex");
+  const policy = {
+    schema_version: 1,
+    source_draft_id: "00000000-0000-4000-8000-000000000001",
+    max_reviews: 3,
+    writing_review_limit: 2,
+    notes: "Use compact sections.",
+    examples: [{ upload_id: "upload-1", original_name: "example.txt", media_type: "text/plain", frozen_path: "inputs/style/01-example.txt", source_sha256: exampleSha256, frozen_sha256: exampleSha256 }],
+    criteria: ["ai_tells", "prose", "structure", "formatting", "visual_fidelity"],
+    evidence_rule: "Use examples only for prose, structure, and formatting. Never copy their text or treat them as scientific evidence.",
+  };
+  const policyPath = path.join(run, "contract", "paper-style-policy.json");
+  fs.writeFileSync(policyPath, `${JSON.stringify(policy, null, 2)}\n`);
+  const policySha256 = createHash("sha256").update(fs.readFileSync(policyPath)).digest("hex");
+  fs.writeFileSync(path.join(run, "contract", "approval.json"), `${JSON.stringify({ schema_version: 2, paper_style_policy_sha256: policySha256 })}\n`);
+  return run;
+}
+
+function styleInputs(draft = "paper/style-drafts/draft-01-tagged.tex") {
+  return ["contract/paper-style-policy.json", "inputs/style/01-example.txt", draft];
+}
+
 function brief(input = "study-plan.md") {
   return { objective: "Complete the assigned gate.", context: "This task advances the current Scientist1 phase.", acceptance_gate: "Return only validated declared outputs.", constraints: "Preserve the frozen study plan and CoE requirements; do not add speculative work.", upstream_summary: [{ input_path: input, summary: "Binding approved study context." }] };
 }
@@ -139,9 +167,9 @@ test("the bundled policy reserves deep reasoning for judgment and lowers mechani
   assert.doesNotThrow(() => createRoutingRecord(catalog(), policy));
 });
 
-test("every frozen policy role resolves through the real launch prompt path", async (t) => {
+test("every ordinary frozen policy role resolves through the real launch prompt path", async (t) => {
   const run = runRoot(t, "all-role-prompts");
-  for (const role of Object.keys(loadModelPolicy().roles).filter((name) => name !== "repair_adjudicator").sort()) {
+  for (const role of Object.keys(loadModelPolicy().roles).filter((name) => !["repair_adjudicator", "paper_style_auditor"].includes(name)).sort()) {
     const prepared = await prepareRoleLaunch({
       run_path: run,
       task_name: `prompt_${role}`,
@@ -153,6 +181,40 @@ test("every frozen policy role resolves through the real launch prompt path", as
     }, { catalog: catalog(), stateHome: STATE_HOME });
     assert.match(prepared.assignment, /Role card\n/);
   }
+});
+
+test("Writer, Paper Critic, and Paper Style Auditor receive the exact academic Unslop text", async (t) => {
+  const unslop = fs.readFileSync(path.join(ROOT, "skills", "scientist1", "references", "paper-unslop.md"), "utf8").trim();
+  const run = styleRun(t, "paper-unslop-prompts");
+  for (const role of ["writer", "paper_critic"]) {
+    const prepared = await prepareRoleLaunch({ run_path: run, task_name: `unslop_${role}`, role, declared_inputs: ["study-plan.md"], declared_outputs: [`role-output/${role}.json`], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME });
+    assert.ok(prepared.assignment.includes(unslop));
+  }
+  const stylePrepared = await prepareRoleLaunch({ run_path: run, task_name: "unslop_paper_style", role: "paper_style_auditor", declared_inputs: styleInputs(), declared_outputs: ["paper/style-reviews/review-01.json"], allowed_external_sources: [], task_brief: brief("contract/paper-style-policy.json") }, { catalog: catalog(), stateHome: STATE_HOME });
+  assert.ok(stylePrepared.assignment.includes(unslop));
+  const evaluator = await prepareRoleLaunch({ run_path: run, task_name: "no_unslop_evaluator", role: "evaluator", declared_inputs: ["selection/selected"], declared_outputs: ["private/evaluator/no-unslop.json"], allowed_external_sources: [], task_brief: brief("selection/selected") }, { catalog: catalog(), stateHome: STATE_HOME });
+  assert.equal(evaluator.assignment.includes(unslop), false);
+});
+
+test("paper-style launch authorization enforces the two-stage three-review limit", async (t) => {
+  const run = styleRun(t, "paper-style-limit");
+  await assert.rejects(() => prepareRoleLaunch({ run_path: run, task_name: "style_input_leak", role: "evaluator", declared_inputs: ["inputs/style/01-example.txt"], declared_outputs: ["private/evaluator/style-leak.json"], allowed_external_sources: [], task_brief: brief("inputs/style/01-example.txt") }, { catalog: catalog(), stateHome: STATE_HOME }), /cannot read paper-style inputs/);
+  await prepareRoleLaunch({ run_path: run, task_name: "style_review_01", role: "paper_style_auditor", declared_inputs: styleInputs(), declared_outputs: ["paper/style-reviews/review-01.json"], allowed_external_sources: [], task_brief: brief("contract/paper-style-policy.json") }, { catalog: catalog(), stateHome: STATE_HOME });
+  fs.mkdirSync(path.join(run, "paper", "style-reviews"), { recursive: true });
+  fs.writeFileSync(path.join(run, "paper", "style-reviews", "review-01.json"), `${JSON.stringify({ round: 1, stage: "writing", style_status: "NONCONFORMANT" })}\n`);
+  fs.writeFileSync(path.join(run, "paper", "style-drafts", "draft-02-tagged.tex"), "Draft two\n");
+  fs.writeFileSync(path.join(run, "paper", "paper.tex"), "Delivered paper\n");
+  await assert.rejects(() => prepareRoleLaunch({ run_path: run, task_name: "premature_delivery_review", role: "paper_style_auditor", declared_inputs: ["contract/paper-style-policy.json", "inputs/style/01-example.txt", "paper/paper.tex"], declared_outputs: ["paper/style-reviews/review-02.json"], allowed_external_sources: [], task_brief: brief("contract/paper-style-policy.json") }, { catalog: catalog(), stateHome: STATE_HOME }), /remaining writing-stage review/);
+  await prepareRoleLaunch({ run_path: run, task_name: "style_review_02", role: "paper_style_auditor", declared_inputs: [...styleInputs("paper/style-drafts/draft-02-tagged.tex"), "paper/style-reviews/review-01.json"], declared_outputs: ["paper/style-reviews/review-02.json"], allowed_external_sources: [], task_brief: brief("contract/paper-style-policy.json") }, { catalog: catalog(), stateHome: STATE_HOME });
+  fs.writeFileSync(path.join(run, "paper", "style-reviews", "review-02.json"), `${JSON.stringify({ round: 2, stage: "writing", style_status: "CONFORMANT" })}\n`);
+  await prepareRoleLaunch({ run_path: run, task_name: "style_review_03", role: "paper_style_auditor", declared_inputs: ["contract/paper-style-policy.json", "inputs/style/01-example.txt", "paper/paper.tex"], declared_outputs: ["paper/style-reviews/review-03.json"], allowed_external_sources: [], task_brief: brief("contract/paper-style-policy.json") }, { catalog: catalog(), stateHome: STATE_HOME });
+  await assert.rejects(() => prepareRoleLaunch({ run_path: run, task_name: "style_review_04", role: "paper_style_auditor", declared_inputs: ["contract/paper-style-policy.json", "inputs/style/01-example.txt", "paper/paper.tex"], declared_outputs: ["paper/style-reviews/review-04.json"], allowed_external_sources: [], task_brief: brief("contract/paper-style-policy.json") }, { catalog: catalog(), stateHome: STATE_HOME }), /review-01\.json through review-03\.json/);
+
+  const stopped = styleRun(t, "paper-style-early-stop");
+  fs.mkdirSync(path.join(stopped, "paper", "style-reviews"), { recursive: true });
+  fs.writeFileSync(path.join(stopped, "paper", "style-reviews", "review-01.json"), `${JSON.stringify({ round: 1, stage: "writing", style_status: "CONFORMANT" })}\n`);
+  fs.writeFileSync(path.join(stopped, "paper", "style-drafts", "draft-02-tagged.tex"), "Unneeded draft\n");
+  await assert.rejects(() => prepareRoleLaunch({ run_path: stopped, task_name: "style_review_after_pass", role: "paper_style_auditor", declared_inputs: styleInputs("paper/style-drafts/draft-02-tagged.tex"), declared_outputs: ["paper/style-reviews/review-02.json"], allowed_external_sources: [], task_brief: brief("contract/paper-style-policy.json") }, { catalog: catalog(), stateHome: STATE_HOME }), /already reached its stop condition/);
 });
 
 test("every frozen 1.2 policy role resolves without changing the released role asset", async (t) => {

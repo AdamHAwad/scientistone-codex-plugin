@@ -49,6 +49,7 @@ const GATE_CHECKLIST_FILE = new URL("../references/gate-checklists.json", import
 const GATE_CHECKLIST_CONTRACT_PATH = "contract/control-plane/gate-checklists.json";
 const GATE_CHECKLIST_MIGRATION_PATH = "repairs/control-plane/convergence-1.5.0/gate-checklists.json";
 const LEGACY_1_4_ROLE_CONTRACT_SHA256 = "9ebf3da43adcf5e7eaadb9ea4c32579ba6fc173472feb56ca8fd61188dc805ea";
+const LEGACY_1_5_1_ROLE_CONTRACT_SHA256 = "86225dbd5291f424841dfb3ac1d3009503d5de04a66ba067f3e64090a789249e";
 const CONVERGENCE_DISPOSITIONS = new Set(["CONFIRMED_DEFECT", "REVIEWER_FALSE_POSITIVE", "REPAIR_REGRESSION", "MECHANICAL_FAILURE"]);
 const CONVERGENCE_BLOCKER_CLASSES = new Set(readJson(GATE_CHECKLIST_FILE).blocker_classes);
 const CONTROL_PLANE_ROOTS = ["repairs", "role-launches", "role-receipts", "role-attempts", "receipts", ".transactions"];
@@ -91,6 +92,7 @@ const CONTRACT_SUCCESSOR_ROOTS = ["evidence", "investigation", "discovery", "sel
 const RESULT_AWARE_ROOTS = ["discovery", "selection", "ablation", "paper", "audit", "delivery", "deliverables"];
 const RESULT_AWARE_PRIVATE_ROOTS = ["private/evaluator/raw", "private/evaluator/i1-runs"];
 const PRIVATE_ROLES = new Set(["evaluator", "i1_verifier_builder", "i1_score_auditor", "i2_judge"]);
+const PAPER_STYLE_INPUT_ROLES = new Set(["contract_auditor", "writer", "paper_style_auditor"]);
 const REQUIRED_OUTPUTS = {
   contract: ["contract/approval.json", "contract/run-config.json", "contract/input-manifest.json", I1_INTERPRETER_PATH, "contract/i1-verification-policy.json", "contract/audit.md"],
   investigation: ["evidence/search-log.jsonl", "evidence/sources.jsonl", "investigation/notes", "investigation/directions", "investigation/protocol-audit.md", "investigation/brief.md", "investigation/references.bib", "investigation/critic.md"],
@@ -833,6 +835,12 @@ function requiredOutputs(run, record, phase) {
     for (const optional of ["paper/paper.pdf", "delivery/visual-inspection.json"]) outputs.splice(outputs.indexOf(optional), 1);
   }
   if (phase === "contract" && record.mode === "research") outputs.push("contract/evaluator-contract.md", "contract/evaluator-manifest.json");
+  if (phase === "contract" && paperStylePolicy(run)) outputs.push("contract/paper-style-policy.json");
+  if (record.mode === "research" && paperStylePolicy(run) && phase === "writing") {
+    const style = verifyPaperStyleState(run, record.phase === "writing" ? "writing" : "writing-history");
+    outputs.push(...style.writingDrafts, ...style.writingReviews);
+  }
+  if (record.mode === "research" && paperStylePolicy(run) && phase === "verification") outputs.push(verifyPaperStyleState(run, "delivery").deliveryReview);
   if (phase === "contract" && record.convergence_control?.checklist?.path === GATE_CHECKLIST_CONTRACT_PATH) outputs.push(GATE_CHECKLIST_CONTRACT_PATH);
   return outputs;
 }
@@ -1121,8 +1129,20 @@ function verifyRunRecord(run, { allowReceiptDrift = false } = {}) {
   if (record.study_plan_sha256 !== studyHash) fail("study-plan.md no longer matches the frozen run contract");
   if (!validSha256(record.approval_sha256) || record.approval_sha256 !== hashArtifact(run, "contract/approval.json")) fail("The approved run is not bound to its durable approval record");
   const approval = readJson(path.join(run, "contract", "approval.json"));
-  exactKeys(approval, ["schema_version", "draft_id", "approved_at", "execution_authority", "request_sha256", "study_plan_sha256"], "contract/approval.json");
-  if (approval.schema_version !== 1 || !nonemptyString(approval.draft_id) || !Number.isFinite(Date.parse(approval.approved_at)) || !nonemptyString(approval.execution_authority) || approval.request_sha256 !== record.request_sha256 || approval.study_plan_sha256 !== record.study_plan_sha256) fail("Durable approval does not match the approved request and study plan");
+  const approvalV1 = ["schema_version", "draft_id", "approved_at", "execution_authority", "request_sha256", "study_plan_sha256"];
+  const approvalV2 = [...approvalV1, "paper_style_policy_sha256"];
+  if (canonicalJson(Object.keys(approval).sort()) !== canonicalJson((approval.schema_version === 1 ? approvalV1 : approvalV2).sort())) fail("contract/approval.json has unexpected fields");
+  if (![1, 2].includes(approval.schema_version) || !nonemptyString(approval.draft_id) || !Number.isFinite(Date.parse(approval.approved_at)) || !nonemptyString(approval.execution_authority) || approval.request_sha256 !== record.request_sha256 || approval.study_plan_sha256 !== record.study_plan_sha256) fail("Durable approval does not match the approved request and study plan");
+  const policyFile = path.join(run, "contract", "paper-style-policy.json");
+  const styleDirectory = path.join(run, "inputs", "style");
+  if (approval.schema_version === 1) {
+    if (fs.existsSync(policyFile) || fs.existsSync(styleDirectory)) fail("A Scientist1 1.5.1 approval cannot acquire paper-style inputs after approval");
+  } else if (approval.paper_style_policy_sha256 === null) {
+    if (fs.existsSync(policyFile) || fs.existsSync(styleDirectory)) fail("Paper-style inputs exist even though the durable approval records no paper-style request");
+  } else {
+    if (!validSha256(approval.paper_style_policy_sha256) || !fs.existsSync(policyFile) || fileSha256(policyFile) !== approval.paper_style_policy_sha256) fail("The paper-style policy differs from the durable approval");
+    paperStylePolicy(run, true);
+  }
   if (record.attention !== null) fail(`Scientist1 1.3 runs cannot pause for post-approval attention at ${file}#/attention`);
   return record;
 }
@@ -1142,6 +1162,115 @@ function verifyInputManifest(run) {
     if (hashArtifact(run, frozen) !== item.sha256) fail(`Frozen input hash mismatch: ${frozen}`);
   }
   return manifest;
+}
+
+function paperStylePolicy(run, required = false) {
+  const relative = "contract/paper-style-policy.json";
+  const file = path.join(run, relative);
+  if (!fs.existsSync(file)) {
+    if (required) fail(`Missing artifact: ${relative}`);
+    return null;
+  }
+  const policy = readJson(file);
+  exactKeys(policy, ["schema_version", "source_draft_id", "max_reviews", "writing_review_limit", "notes", "examples", "criteria", "evidence_rule"], relative);
+  if (policy.schema_version !== 1 || !nonemptyString(policy.source_draft_id) || policy.max_reviews !== 3 || policy.writing_review_limit !== 2 || typeof policy.notes !== "string" || !Array.isArray(policy.examples) || (!policy.notes.trim() && !policy.examples.length)) fail("Malformed paper-style policy");
+  const expectedCriteria = ["ai_tells", "prose", "structure", "formatting", "visual_fidelity"];
+  if (canonicalJson(policy.criteria) !== canonicalJson(expectedCriteria) || policy.evidence_rule !== "Use examples only for prose, structure, and formatting. Never copy their text or treat them as scientific evidence.") fail("Paper-style policy criteria or evidence rule changed");
+  const frozenPaths = [];
+  for (const [index, example] of policy.examples.entries()) {
+    const location = `${relative}#/examples/${index}`;
+    exactKeys(example, ["upload_id", "original_name", "media_type", "frozen_path", "source_sha256", "frozen_sha256"], location);
+    if (!nonemptyString(example.upload_id) || !nonemptyString(example.original_name) || !nonemptyString(example.media_type) || !validSha256(example.source_sha256) || !validSha256(example.frozen_sha256) || example.source_sha256 !== example.frozen_sha256) fail(`Malformed paper-style example at ${location}`);
+    const frozen = relativePath(example.frozen_path);
+    if (!frozen.startsWith("inputs/style/") || frozenPaths.includes(frozen)) fail(`Invalid paper-style example path at ${location}: ${frozen}`);
+    const target = artifactPath(run, frozen).target;
+    if (!fs.lstatSync(target).isFile() || fileSha256(target) !== example.frozen_sha256) fail(`Paper-style example bytes changed: ${frozen}`);
+    frozenPaths.push(frozen);
+  }
+  const styleDirectory = path.join(run, "inputs", "style");
+  const actual = fs.existsSync(styleDirectory) ? fs.readdirSync(styleDirectory, { withFileTypes: true }).map((entry) => {
+    if (!entry.isFile() || entry.isSymbolicLink()) fail(`Paper-style input must be a regular file: inputs/style/${entry.name}`);
+    return `inputs/style/${entry.name}`;
+  }).sort() : [];
+  if (canonicalJson([...frozenPaths].sort()) !== canonicalJson(actual)) fail("Paper-style policy does not bind every file under inputs/style");
+  return policy;
+}
+
+function verifyPaperStyleReview(run, policy, relative, expectedRound, expectedStage, expectedPaper) {
+  const review = readJson(path.join(run, relative));
+  exactKeys(review, ["schema_version", "round", "stage", "style_status", "policy_sha256", "paper_path", "paper_sha256", "criteria", "findings"], relative);
+  if (review.schema_version !== 1 || review.round !== expectedRound || review.stage !== expectedStage || !["CONFORMANT", "NONCONFORMANT"].includes(review.style_status)) fail(`Malformed paper-style review metadata: ${relative}`);
+  if (review.policy_sha256 !== hashArtifact(run, "contract/paper-style-policy.json")) fail(`Paper-style review uses the wrong approved policy: ${relative}`);
+  const paperPath = relativePath(review.paper_path);
+  if (paperPath !== expectedPaper || review.paper_sha256 !== hashArtifact(run, paperPath)) fail(`Paper-style review is not bound to ${expectedPaper}: ${relative}`);
+  if (!review.criteria || Array.isArray(review.criteria) || canonicalJson(Object.keys(review.criteria).sort()) !== canonicalJson([...policy.criteria].sort())) fail(`Paper-style review has the wrong criteria: ${relative}`);
+  const renderedPaperRequired = expectedStage === "delivery" && pdfRequired(run, readJson(path.join(run, "run.json")));
+  const revised = new Set();
+  for (const criterion of policy.criteria) {
+    const result = review.criteria[criterion];
+    if (!result || canonicalJson(Object.keys(result).sort()) !== canonicalJson(["evidence", "status"]) || !["PASS", "REVISE", "NOT_ASSESSED"].includes(result.status) || !Array.isArray(result.evidence) || !result.evidence.length || result.evidence.some((item) => !nonemptyString(item))) fail(`Malformed ${criterion} criterion in ${relative}`);
+    if (criterion !== "visual_fidelity" && result.status === "NOT_ASSESSED") fail(`Only visual_fidelity may be NOT_ASSESSED in ${relative}`);
+    if (criterion === "visual_fidelity" && renderedPaperRequired && result.status === "NOT_ASSESSED") fail(`Delivery paper-style review must assess visual_fidelity in ${relative}`);
+    if (result.status === "REVISE") revised.add(criterion);
+  }
+  if (!Array.isArray(review.findings)) fail(`Paper-style findings must be an array: ${relative}`);
+  const findingCriteria = new Set();
+  for (const [index, finding] of review.findings.entries()) {
+    const location = `${relative}#/findings/${index}`;
+    exactKeys(finding, ["criterion", "paper_locator", "reference_locator", "observed", "requested_edit"], location);
+    if (!policy.criteria.includes(finding.criterion) || ["paper_locator", "reference_locator", "observed", "requested_edit"].some((field) => !nonemptyString(finding[field]))) fail(`Malformed paper-style finding at ${location}`);
+    findingCriteria.add(finding.criterion);
+  }
+  const conformant = revised.size === 0;
+  if ((review.style_status === "CONFORMANT") !== conformant || (conformant && review.findings.length) || [...revised].some((criterion) => !findingCriteria.has(criterion))) fail(`Paper-style status and findings disagree: ${relative}`);
+  return review;
+}
+
+function verifyPaperStyleState(run, stage) {
+  const policy = paperStylePolicy(run, true);
+  const reviewDirectory = path.join(run, "paper", "style-reviews");
+  if (!fs.existsSync(reviewDirectory)) fail("Paper-style review directory is missing");
+  const reviewNames = fs.readdirSync(reviewDirectory, { withFileTypes: true }).map((entry) => {
+    if (!entry.isFile() || entry.isSymbolicLink() || !/^review-0[1-3]\.json$/.test(entry.name)) fail(`Unexpected paper-style review entry: ${entry.name}`);
+    return entry.name;
+  }).sort();
+  if (!reviewNames.length || reviewNames.length > policy.max_reviews || reviewNames.some((name, index) => name !== `review-${String(index + 1).padStart(2, "0")}.json`)) fail("Paper-style reviews must be contiguous from review-01 through review-03");
+  const rawReviews = reviewNames.map((name) => readJson(path.join(reviewDirectory, name)));
+  const deliveryIndex = rawReviews.findIndex((review) => review.stage === "delivery");
+  const writingCount = deliveryIndex === -1 ? rawReviews.length : deliveryIndex;
+  if (writingCount < 1 || writingCount > policy.writing_review_limit || rawReviews.slice(0, writingCount).some((review) => review.stage !== "writing") || rawReviews.slice(writingCount).some((review) => review.stage !== "delivery")) fail("Paper-style review stages are out of order");
+  const writingReviews = [];
+  const writingDrafts = [];
+  const parsedWriting = [];
+  for (let index = 0; index < writingCount; index += 1) {
+    const round = index + 1;
+    const draft = `paper/style-drafts/draft-${String(round).padStart(2, "0")}-tagged.tex`;
+    const reviewPath = `paper/style-reviews/${reviewNames[index]}`;
+    writingDrafts.push(draft);
+    writingReviews.push(reviewPath);
+    parsedWriting.push(verifyPaperStyleReview(run, policy, reviewPath, round, "writing", draft));
+  }
+  if (!writingReviews.length || writingReviews.length > policy.writing_review_limit) fail("Paper style needs one or two writing-stage reviews");
+  if (parsedWriting.length === 2 && parsedWriting[0].style_status !== "NONCONFORMANT") fail("Paper-style review 2 may run only after review 1 requests revision");
+  if (parsedWriting.at(-1).style_status === "NONCONFORMANT" && parsedWriting.length < policy.writing_review_limit) fail("A nonconformant writing review must use the remaining writing-stage review");
+  const draftDirectory = path.join(run, "paper", "style-drafts");
+  const actualDrafts = fs.existsSync(draftDirectory) ? fs.readdirSync(draftDirectory, { withFileTypes: true }).map((entry) => {
+    if (!entry.isFile() || entry.isSymbolicLink() || !/^draft-0[1-2]-tagged\.tex$/.test(entry.name)) fail(`Unexpected paper-style draft entry: ${entry.name}`);
+    return `paper/style-drafts/${entry.name}`;
+  }).sort() : [];
+  if (canonicalJson(actualDrafts) !== canonicalJson(writingDrafts)) fail("Paper-style drafts and writing reviews are not one-to-one");
+  if (fileSha256(path.join(run, writingDrafts.at(-1))) !== fileSha256(path.join(run, "paper", "paper-tagged.tex"))) fail("Canonical paper/paper-tagged.tex must be byte-identical to the selected style draft");
+  const state = { writingDrafts, writingReviews, deliveryReview: null };
+  if (stage === "writing" || stage === "writing-history") {
+    if (stage === "writing" && deliveryIndex !== -1) fail("Delivery-stage paper-style review cannot exist before the writing checkpoint");
+    return state;
+  }
+  const deliveryRound = writingReviews.length + 1;
+  if (deliveryRound > policy.max_reviews || deliveryIndex !== writingCount || reviewNames.length !== deliveryRound) fail("The delivered paper needs exactly one final style review within the three-review limit");
+  const deliveryReview = `paper/style-reviews/review-${String(deliveryRound).padStart(2, "0")}.json`;
+  verifyPaperStyleReview(run, policy, deliveryReview, deliveryRound, "delivery", "paper/paper.tex");
+  state.deliveryReview = deliveryReview;
+  return state;
 }
 
 function nonemptyString(value) {
@@ -1313,6 +1442,7 @@ function externalInputsFor(bundle, check) {
 }
 
 function roleMayRead(run, role, input) {
+  if ((input === "contract/paper-style-policy.json" || input.startsWith("inputs/style/")) && !PAPER_STYLE_INPUT_ROLES.has(role)) return false;
   if (PRIVATE_ROLES.has(role)) return true;
   if (input.startsWith("private/")) return false;
   const inputManifest = verifyInputManifest(run);
@@ -1426,7 +1556,7 @@ function verifyRoleReceipt(run, relative, options = {}) {
     if (!outputs.includes(lock)) fail(`Environment change lock or manifest must be an explicit role output at ${location}: ${lock}`);
     environmentArtifacts.add(lock);
   }
-  for (const input of inputs) if (!roleMayRead(run, receipt.role, input)) fail(`${task} declares evaluator-only input ${input}; role ${receipt.role} is not allowed to read it`);
+  for (const input of inputs) if (!roleMayRead(run, receipt.role, input)) fail(`${task} declares restricted or evaluator-only input ${input}; role ${receipt.role} is not allowed to read it`);
   if (receipt.role === "candidate_developer" && inputs.some((input) => input.includes("/evaluations/") || input.endsWith("/evaluations") || input === "selection/canonical-evaluation.json" || input.startsWith("private/"))) fail(`${task} declares raw evaluator evidence; candidate developers may receive only sanitized feedback files`);
   const launchRelative = `role-launches/${task}.json`;
   const launch = readJson(artifactPath(run, launchRelative).target);
@@ -1450,7 +1580,7 @@ function verifyRoleReceipt(run, relative, options = {}) {
   const expectedLogicalTask = launch.logical_task_name;
   const expectedAttempt = launch.attempt;
   const currentRoleHash = fileSha256(ROLE_CONTRACT_FILE);
-  const validRoleContract = (launch.role_contract_sha256 === currentRoleHash && [1, 2].includes(launch.gate_schema_version)) || (launch.role_contract_sha256 === LEGACY_1_4_ROLE_CONTRACT_SHA256 && launch.gate_schema_version === 1);
+  const validRoleContract = (launch.role_contract_sha256 === currentRoleHash && [1, 2].includes(launch.gate_schema_version)) || (launch.role_contract_sha256 === LEGACY_1_5_1_ROLE_CONTRACT_SHA256 && [1, 2].includes(launch.gate_schema_version)) || (launch.role_contract_sha256 === LEGACY_1_4_ROLE_CONTRACT_SHA256 && launch.gate_schema_version === 1);
   if (!nonemptyString(expectedLogicalTask) || !Number.isInteger(expectedAttempt) || expectedAttempt < 1 || launch.contract_revision !== record.contract_revision || launch.charter_revision !== record.charter_revision || !validRoleContract) fail(`Hash-bound launch metadata is invalid or uses an unsupported role contract at ${launchRelative}`);
   if (launch.repair_binding) {
     const binding = launch.repair_binding;
@@ -1510,7 +1640,10 @@ function i1BuilderInputs(record) {
 }
 
 function requiredContractInputs(run, record) {
-  return [...i1BuilderInputs(record), "contract/i1-verification-policy.json"];
+  const inputs = [...i1BuilderInputs(record), "contract/i1-verification-policy.json"];
+  const style = paperStylePolicy(run);
+  if (style) inputs.push("contract/paper-style-policy.json", ...style.examples.map((example) => example.frozen_path));
+  return inputs;
 }
 
 const DOWNSTREAM_INPUT_ROOTS = Object.freeze({
@@ -1603,6 +1736,18 @@ function verifyRoleCoverage(run, phase, roles) {
     for (const output of ["paper/representation.md", "paper/paper-tagged.tex", "paper/references.bib"]) requireRole(roleRecords, "writer", output, ["study-plan.md", "investigation/brief.md", "selection/canonical-evaluation.json", "ablation/results.json"]);
     requireRole(roleRecords, "paper_critic", "paper/grounding-report.json", ["study-plan.md", "paper/representation.md"]);
     requireRole(roleRecords, "paper_critic", "paper/critic.md", ["study-plan.md", "paper/paper-tagged.tex"]);
+    const policy = paperStylePolicy(run);
+    if (policy) {
+      const record = readJson(path.join(run, "run.json"));
+      const style = verifyPaperStyleState(run, record.phase === "writing" ? "writing" : "writing-history");
+      const styleInputs = ["contract/paper-style-policy.json", ...policy.examples.map((example) => example.frozen_path)];
+      for (const [index, draft] of style.writingDrafts.entries()) {
+        const priorReview = index ? [style.writingReviews[index - 1]] : [];
+        requireRole(roleRecords, "writer", draft, ["study-plan.md", ...styleInputs, ...priorReview], true);
+        requireRole(roleRecords, "paper_style_auditor", style.writingReviews[index], [...styleInputs, draft], true);
+      }
+      requireRole(roleRecords, "writer", "paper/paper-tagged.tex", [style.writingDrafts.at(-1), style.writingReviews.at(-1)], true);
+    }
   }
   if (phase === "verification") {
     requireRole(roleRecords, "claim_verifier", "paper/claims.jsonl", ["study-plan.md", "paper/paper-tagged.tex"]);
@@ -1611,6 +1756,12 @@ function verifyRoleCoverage(run, phase, roles) {
     const outputs = ["paper/paper-verified-tagged.tex", "paper/provenance.jsonl", "paper/paper.tex"];
     if (pdfRequired(run, record)) outputs.push("paper/paper.pdf");
     for (const output of outputs) requireRole(roleRecords, "writer", output, ["paper/claims.jsonl", "paper/verification.md"]);
+    const policy = paperStylePolicy(run);
+    if (policy) {
+      const style = verifyPaperStyleState(run, "delivery");
+      const styleInputs = ["contract/paper-style-policy.json", ...policy.examples.map((example) => example.frozen_path), "paper/paper.tex", ...(pdfRequired(run, record) ? ["paper/paper.pdf"] : [])];
+      requireRole(roleRecords, "paper_style_auditor", style.deliveryReview, styleInputs, true);
+    }
   }
   if (phase === "audit") {
     const record = readJson(path.join(run, "run.json"));
@@ -2487,7 +2638,21 @@ function listFiles(root, current = root) {
 function canonicalSource(record, deliverablePath) {
   const relative = deliverablePath.replace(/^deliverables\//, "");
   if (record.mode === "research" && relative.startsWith("selected-method/")) return `selection/selected/${relative.slice("selected-method/".length)}`;
+  if (record.mode === "research" && relative === "paper-style-review.json") return "paper-style-review";
   return CORE_DELIVERABLE_SOURCES[record.mode][relative] ?? null;
+}
+
+function requiredDeliverablesFor(run, record) {
+  const required = [...REQUIRED_DELIVERABLES[record.mode]];
+  if (record.mode === "research" && paperStylePolicy(run)) required.push("paper-style-review.json");
+  if (record.mode === "research" && !pdfRequired(run, record)) return required.filter((item) => !["paper.pdf", "visual-inspection.json"].includes(item));
+  return required;
+}
+
+function canonicalDeliverableSource(run, record, deliverablePath) {
+  const source = canonicalSource(record, deliverablePath);
+  if (source !== "paper-style-review") return source;
+  return verifyPaperStyleState(run, "delivery").deliveryReview;
 }
 
 function verifyManifest(run, record) {
@@ -2502,7 +2667,7 @@ function verifyManifest(run, record) {
     if (hashArtifact(run, item.path) !== item.sha256) fail(`Deliverable hash mismatch: ${item.path}`);
     const target = artifactPath(run, item.path).target;
     if (item.content_sha256 !== contentHash(target)) fail(`Deliverable content hash mismatch: ${item.path}`);
-    const expectedSource = canonicalSource(record, item.path);
+    const expectedSource = canonicalDeliverableSource(run, record, item.path);
     if (expectedSource) {
       if (item.source !== expectedSource || typeof item.source_content_sha256 !== "string") fail(`Deliverable lacks canonical source binding: ${item.path}`);
       const source = artifactPath(run, expectedSource).target;
@@ -2510,8 +2675,7 @@ function verifyManifest(run, record) {
       if (item.source_content_sha256 !== sourceHash || item.content_sha256 !== sourceHash) fail(`Deliverable differs from canonical source: ${item.path}`);
     }
   }
-  const requiredDeliverables = [...REQUIRED_DELIVERABLES[record.mode]];
-  if (record.mode === "research" && !pdfRequired(run, record)) for (const optional of ["paper.pdf", "visual-inspection.json"]) requiredDeliverables.splice(requiredDeliverables.indexOf(optional), 1);
+  const requiredDeliverables = requiredDeliverablesFor(run, record);
   for (const required of requiredDeliverables) {
     if (!declared.includes(`deliverables/${required}`)) fail(`Missing required deliverable: ${required}`);
   }
@@ -2593,18 +2757,29 @@ function init(runArg) {
   process.stdout.write(`${run}\n`);
 }
 
-function bindApproval(runArg, draftId, approvedAt, executionAuthority) {
+function bindApproval(runArg, draftId, approvedAt, executionAuthority, paperStylePolicySha256 = "-") {
   const run = path.resolve(runArg || "");
   if (!runArg || !fs.existsSync(path.join(run, "run.json"))) fail("bind-approval requires an initialized Scientist1 run");
   const record = readJson(path.join(run, "run.json"));
   if (!nonemptyString(draftId) || !Number.isFinite(Date.parse(approvedAt)) || !nonemptyString(executionAuthority)) fail("bind-approval requires a draft id, approval timestamp, and execution authority");
+  const styleRelative = "contract/paper-style-policy.json";
+  const styleFile = path.join(run, styleRelative);
+  const styleDirectory = path.join(run, "inputs", "style");
+  const styleSha256 = paperStylePolicySha256 === "-" ? null : paperStylePolicySha256;
+  if (styleSha256 === null) {
+    if (fs.existsSync(styleFile) || fs.existsSync(styleDirectory)) fail("bind-approval received no paper-style policy, but paper-style inputs exist");
+  } else {
+    if (!validSha256(styleSha256) || !fs.existsSync(styleFile) || fileSha256(styleFile) !== styleSha256) fail("bind-approval paper-style policy hash is invalid");
+    paperStylePolicy(run, true);
+  }
   const approval = {
-    schema_version: 1,
+    schema_version: 2,
     draft_id: draftId,
     approved_at: approvedAt,
     execution_authority: executionAuthority,
     request_sha256: record.request_sha256,
     study_plan_sha256: record.study_plan_sha256,
+    paper_style_policy_sha256: styleSha256,
   };
   const relative = "contract/approval.json";
   const target = path.join(run, relative);
@@ -3194,12 +3369,11 @@ function manifest(runArg) {
   if (!["running", "repairing"].includes(record.state) || record.pending_checkpoint) fail(`Cannot rewrite delivery manifest while run state is ${record.state} or a checkpoint is pending`);
   const deliverables = path.join(run, "deliverables");
   if (!fs.existsSync(deliverables) || !fs.statSync(deliverables).isDirectory()) fail("manifest requires a deliverables directory");
-  const requiredDeliverables = [...REQUIRED_DELIVERABLES[record.mode]];
-  if (record.mode === "research" && !pdfRequired(run, record)) for (const optional of ["paper.pdf", "visual-inspection.json"]) requiredDeliverables.splice(requiredDeliverables.indexOf(optional), 1);
+  const requiredDeliverables = requiredDeliverablesFor(run, record);
   for (const required of requiredDeliverables) hashArtifact(run, `deliverables/${required}`);
   const files = listFiles(deliverables).map((file) => {
     const item = { ...entry(run, file), content_sha256: contentHash(artifactPath(run, file).target) };
-    const source = canonicalSource(record, file);
+    const source = canonicalDeliverableSource(run, record, file);
     if (source) {
       const sourceHash = contentHash(artifactPath(run, source).target);
       if (sourceHash !== item.content_sha256) fail(`Deliverable is not an exact copy of canonical source: ${file}`);
@@ -3828,7 +4002,7 @@ function usage() {
   return `Usage:
   coe.mjs configure <run> <standard|pilot|custom> <research|external_audit> [custom-profile-json]
   coe.mjs init <run>
-  coe.mjs bind-approval <run> <draft-id> <approved-at> <execution-authority>
+  coe.mjs bind-approval <run> <draft-id> <approved-at> <execution-authority> [paper-style-policy-raw-sha256|-]
   coe.mjs preflight <run> <phase> --input <path>... --output <path>...
   coe.mjs checkpoint <run> <phase> --input <path>... --output <path>...
   coe.mjs invalidate <run> <phase> <reason-file>
@@ -3883,7 +4057,7 @@ try {
   }
   else if (command === "configure") configure(args[0], args[1], args[2], args[3]);
   else if (command === "init") init(args[0]);
-  else if (command === "bind-approval") bindApproval(args[0], args[1], args[2], args[3]);
+  else if (command === "bind-approval") bindApproval(args[0], args[1], args[2], args[3], args[4] ?? "-");
   else if (command === "preflight") { memoizeHashes = true; preflight(args[0], args[1], args.slice(2)); }
   else if (command === "checkpoint") { memoizeHashes = true; checkpoint(args[0], args[1], args.slice(2)); }
   else if (command === "invalidate") invalidate(args[0], args[1], args[2]);

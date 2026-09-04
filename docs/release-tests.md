@@ -27,7 +27,7 @@ trace, and result. Save a screen recording when visual behavior matters.
    above 16 is never lowered.
 3. In Codex desktop, `Scientist1` starts the bundled MCP and opens the full-page setup guide in the built-in browser, with no inline form or remote page.
 4. Upload a file with the large drop field. Verify its bytes and SHA-256 under the active project's `.scientist1/intake/` tree.
-5. Submit the seven-step intake. Verify that the same tab shows the editable study plan and that no run exists before approval.
+5. Submit the eight-step research intake. Verify that writing notes and style-only uploads appear in the editable study plan, that no run exists before approval, and that external-audit mode omits this step.
 6. Approve a smoke-test plan, initialize its run, and attach it. Verify that `contract/approval.json` is hash-bound before any specialist launch and that the same tab becomes the interactive flowchart and reads status from local `run.json` and receipts.
 7. Select a stage and specialist, pan, zoom, fit, reload, and change the run checkpoint. Verify the inspector, camera controls, latest-checkpoint integrity state, and live refresh.
 8. `Show the status of my latest Scientist1 study` reopens the local interactive monitor.

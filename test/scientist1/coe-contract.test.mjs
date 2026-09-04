@@ -24,7 +24,7 @@ function read(root, relative) { return JSON.parse(fs.readFileSync(path.join(root
 function copy(root, source, destination) { const target = path.join(root, destination); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.copyFileSync(path.join(root, source), target); }
 function hash(root, relative) { const result = run("hash", root, relative); assert.equal(result.status, 0, result.stderr); return result.stdout.trim(); }
 function fileHash(file) { return createHash("sha256").update(fs.readFileSync(file)).digest("hex"); }
-function approve(root) { const result = run("bind-approval", root, "test-draft", "2026-08-31T00:00:00Z", "Synthetic researcher approval for the regression fixture."); assert.equal(result.status, 0, result.stderr); }
+function approve(root, paperStylePolicySha256 = null) { const args = ["bind-approval", root, "test-draft", "2026-08-31T00:00:00Z", "Synthetic researcher approval for the regression fixture."]; if (paperStylePolicySha256) args.push(paperStylePolicySha256); const result = run(...args); assert.equal(result.status, 0, result.stderr); }
 function canonical(value) { if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; if (value && typeof value === "object") return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`; return JSON.stringify(value); }
 function workKey(role, outputs, contractRevision, charterRevision, repairDocketId = null, repairSemanticDigest = null) { return createHash("sha256").update(canonical({ contract_revision: contractRevision, charter_revision: charterRevision, role, declared_outputs: [...outputs].sort(), ...(repairDocketId ? { repair_docket_id: repairDocketId, repair_semantic_digest: repairSemanticDigest } : {}) })).digest("hex"); }
 function bootstrap(root, mode, source = "existing") {
@@ -99,7 +99,7 @@ const REVIEW_FIXTURES = {
 
 function checkpointResult(root, phase, outputs, roles = [], childEnv = null) {
   const flags = ["--input", "study-plan.md"];
-  if (phase === "contract") { for (const item of ["request.md", "environment/bootstrap.json", "contract/approval.json", "contract/run-config.json", "contract/input-manifest.json"]) flags.push("--input", item); if (fs.existsSync(path.join(root, "contract/source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json"); else for (const item of ["contract/evaluator-contract.md", "contract/evaluator-manifest.json"]) flags.push("--input", item); for (const item of ["contract/i1-verification-policy.json", "contract/control-plane/i1-interpreter.mjs"]) if (fs.existsSync(path.join(root, item))) flags.push("--input", item); }
+  if (phase === "contract") { for (const item of ["request.md", "environment/bootstrap.json", "contract/approval.json", "contract/run-config.json", "contract/input-manifest.json"]) flags.push("--input", item); if (fs.existsSync(path.join(root, "contract/source-bundle-manifest.json"))) flags.push("--input", "contract/source-bundle-manifest.json"); else for (const item of ["contract/evaluator-contract.md", "contract/evaluator-manifest.json"]) flags.push("--input", item); for (const item of ["contract/i1-verification-policy.json", "contract/control-plane/i1-interpreter.mjs", "contract/paper-style-policy.json"]) if (fs.existsSync(path.join(root, item))) flags.push("--input", item); const styleRoot = path.join(root, "inputs/style"); if (fs.existsSync(styleRoot)) for (const name of fs.readdirSync(styleRoot).sort()) flags.push("--input", `inputs/style/${name}`); }
   const roleReceipts = roles.map((item) => role(root, item));
   let record = read(root, "run.json");
   if (record.active_repair?.target_phase === phase) {
@@ -155,7 +155,22 @@ function seedLegacyRepair(root, name, value) {
   record.outcome = null;
   json(root, "run.json", record);
 }
-function newRun(t, mode = "research", environmentSource = "existing", convergent = true) { const root = fs.mkdtempSync(path.join(os.tmpdir(), `scientist1-${mode}-`)); t.after(() => fs.rmSync(root, { recursive: true, force: true })); put(root, "request.md", "Approved request.\n"); put(root, "study-plan.md", "# Approved plan\n"); bootstrap(root, mode, environmentSource); json(root, "contract/custom-profile.json", BUDGETS); assert.equal(run("configure", root, "custom", mode, "contract/custom-profile.json").status, 0); assert.equal(run("init", root).status, 0); json(root, "contract/input-manifest.json", { schema_version: 1, files: [] }); approve(root); if (!convergent) freezeAs14(root); installTestRouting(root); return root; }
+function seedPaperStyle(root) {
+  put(root, "inputs/style/01-reference.txt", "Use short sections and direct prose.\n");
+  const sourceSha256 = fileHash(path.join(root, "inputs/style/01-reference.txt"));
+  json(root, "contract/paper-style-policy.json", {
+    schema_version: 1,
+    source_draft_id: "test-draft",
+    max_reviews: 3,
+    writing_review_limit: 2,
+    notes: "Use short sections and direct prose.",
+    examples: [{ upload_id: "style-1", original_name: "reference.txt", media_type: "text/plain", frozen_path: "inputs/style/01-reference.txt", source_sha256: sourceSha256, frozen_sha256: sourceSha256 }],
+    criteria: ["ai_tells", "prose", "structure", "formatting", "visual_fidelity"],
+    evidence_rule: "Use examples only for prose, structure, and formatting. Never copy their text or treat them as scientific evidence.",
+  });
+  return fileHash(path.join(root, "contract/paper-style-policy.json"));
+}
+function newRun(t, mode = "research", environmentSource = "existing", convergent = true, paperStyle = false) { const root = fs.mkdtempSync(path.join(os.tmpdir(), `scientist1-${mode}-`)); t.after(() => fs.rmSync(root, { recursive: true, force: true })); put(root, "request.md", "Approved request.\n"); put(root, "study-plan.md", "# Approved plan\n"); bootstrap(root, mode, environmentSource); json(root, "contract/custom-profile.json", BUDGETS); assert.equal(run("configure", root, "custom", mode, "contract/custom-profile.json").status, 0); assert.equal(run("init", root).status, 0); json(root, "contract/input-manifest.json", { schema_version: 1, files: [] }); approve(root, paperStyle ? seedPaperStyle(root) : null); if (!convergent) freezeAs14(root); installTestRouting(root); return root; }
 
 function pendingReviewReceipt(root, sourceReview, reviewRole) {
   const pending = read(root, "run.json").pending_adjudication;
@@ -677,9 +692,11 @@ function writeContractArtifacts(root, evaluatorText = "Metric score; unit points
     json(root, "contract/i1-verification-policy.json", invalidPolicy);
   }
   const outputs = ["contract"];
+  const stylePolicy = fs.existsSync(path.join(root, "contract/paper-style-policy.json")) ? read(root, "contract/paper-style-policy.json") : null;
+  const styleInputs = stylePolicy ? ["contract/paper-style-policy.json", ...stylePolicy.examples.map((example) => example.frozen_path)] : [];
   const roles = [
     { role: "i1_verifier_builder", task: builderTask, logical_task_name: "i1_verifier_builder", attempt: contractAttempt, inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs },
-    { role: "contract_auditor", task: auditorTask, logical_task_name: "contract_auditor", attempt: contractAttempt, inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"] },
+    { role: "contract_auditor", task: auditorTask, logical_task_name: "contract_auditor", attempt: contractAttempt, inputs: [...i1Contract.contractAuditorInputs, ...styleInputs], outputs: ["contract/audit.md"] },
   ];
   if (returnFailure) {
     const flags = ["--input", "study-plan.md"];
@@ -690,8 +707,8 @@ function writeContractArtifacts(root, evaluatorText = "Metric score; unit points
   checkpoint(root, "contract", outputs, roles, childEnv);
 }
 
-function contract(t, environmentSource = "existing", convergent = true) {
-  const root = newRun(t, "research", environmentSource, convergent); put(root, "inputs/shared/data.csv", "x\n1\n"); put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
+function contract(t, environmentSource = "existing", convergent = true, paperStyle = false) {
+  const root = newRun(t, "research", environmentSource, convergent, paperStyle); put(root, "inputs/shared/data.csv", "x\n1\n"); put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
   json(root, "contract/input-manifest.json", { schema_version: 1, files: [{ source_path: "data.csv", frozen_path: "inputs/shared/data.csv", sha256: hash(root, "inputs/shared/data.csv"), classification: "shared" }, { source_path: "evaluate.mjs", frozen_path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), classification: "evaluator_only" }] });
   writeContractArtifacts(root);
   return root;
@@ -720,7 +737,31 @@ function select(root, changed = false, defect = null) {
 }
 function ablate(root) { json(root, "ablation/plan.json", { ablations: [{ id: "a1" }] }); put(root, "ablation/variants/a1/method.txt"); const raw = evaluation(root, "ablation/variants/a1", "ablation/evaluations/a1.json", "ablation"); json(root, "ablation/results.json", { ablations: [{ id: "a1", status: "valid" }] }); put(root, "ablation/report.md"); checkpoint(root, "ablation", ["ablation"], [{ role: "ablation_designer", inputs: ["study-plan.md", "selection/selected"], outputs: ["ablation/plan.json"] }, { role: "ablation_implementer", inputs: ["study-plan.md", "selection/selected", "ablation/plan.json"], outputs: ["ablation/variants/a1"] }, { role: "evaluator", task: "ablation_evaluator", inputs: ["study-plan.md", "ablation/variants", ...evaluatorInputs()], outputs: ["ablation/evaluations/a1.json", raw] }, { role: "ablation_analyst", inputs: ["study-plan.md", "ablation/plan.json", "ablation/evaluations", "ablation/results.json"], outputs: ["ablation/results.json", "ablation/report.md"] }]); }
 const tagged = () => ["\\documentclass{article}", "\\newcommand{\\coe}[1]{}", "\\begin{document}", "Study score 1 \\coe{C1}; prior score 2 with \\& escape \\coe{C2}.", "\\caption{Method. \\coe{C3}}", "\\begin{tabular}{c}Conclusion \\coe{C4} \\\\ \\end{tabular}", "\\end{document}", ""].join("\n");
-function write(root, wrong = false) { put(root, "paper/representation.md"); json(root, "paper/grounding-report.json", { status: "PASS", factual_sentence_count: 4, resolvable_tag_count: 4, grounding_ratio: wrong ? 0.8 : 1, unresolved_claim_ids: [] }); put(root, "paper/critic.md", "Overall verdict: PASS\n"); put(root, "paper/paper-tagged.tex", tagged()); put(root, "paper/references.bib", "@article{smith2025,title={Prior},author={Smith},year={2025}}\n"); return checkpointResult(root, "writing", ["paper/representation.md", "paper/grounding-report.json", "paper/critic.md", "paper/paper-tagged.tex", "paper/references.bib"], [{ role: "writer", inputs: ["study-plan.md", "investigation/brief.md", "selection/canonical-evaluation.json", "ablation/results.json"], outputs: ["paper/representation.md", "paper/paper-tagged.tex", "paper/references.bib"] }, { role: "paper_critic", inputs: ["study-plan.md", "paper/representation.md", "paper/paper-tagged.tex"], outputs: ["paper/grounding-report.json", "paper/critic.md"] }]); }
+function styleReview(root, round, stage, paperPath, visualNotAssessed = stage === "writing") {
+  const criteria = Object.fromEntries(["ai_tells", "prose", "structure", "formatting", "visual_fidelity"].map((criterion) => [criterion, { status: criterion === "visual_fidelity" && visualNotAssessed ? "NOT_ASSESSED" : "PASS", evidence: [criterion === "visual_fidelity" && visualNotAssessed ? "No rendered comparison was completed." : `${paperPath} matches the approved ${criterion} instruction.`] }]));
+  const relative = `paper/style-reviews/review-${String(round).padStart(2, "0")}.json`;
+  json(root, relative, { schema_version: 1, round, stage, style_status: "CONFORMANT", policy_sha256: hash(root, "contract/paper-style-policy.json"), paper_path: paperPath, paper_sha256: hash(root, paperPath), criteria, findings: [] });
+  return relative;
+}
+function write(root, wrong = false) {
+  const scientificInputs = ["study-plan.md", "investigation/brief.md", "selection/canonical-evaluation.json", "ablation/results.json"];
+  put(root, "paper/representation.md"); json(root, "paper/grounding-report.json", { status: "PASS", factual_sentence_count: 4, resolvable_tag_count: 4, grounding_ratio: wrong ? 0.8 : 1, unresolved_claim_ids: [] }); put(root, "paper/critic.md", "Overall verdict: PASS\n"); put(root, "paper/paper-tagged.tex", tagged()); put(root, "paper/references.bib", "@article{smith2025,title={Prior},author={Smith},year={2025}}\n");
+  const outputs = ["paper/representation.md", "paper/grounding-report.json", "paper/critic.md", "paper/paper-tagged.tex", "paper/references.bib"];
+  const roles = [{ role: "writer", inputs: scientificInputs, outputs: ["paper/representation.md", "paper/paper-tagged.tex", "paper/references.bib"] }, { role: "paper_critic", inputs: ["study-plan.md", "paper/representation.md", "paper/paper-tagged.tex"], outputs: ["paper/grounding-report.json", "paper/critic.md"] }];
+  if (fs.existsSync(path.join(root, "contract/paper-style-policy.json"))) {
+    const policy = read(root, "contract/paper-style-policy.json");
+    const styleInputs = ["contract/paper-style-policy.json", ...policy.examples.map((example) => example.frozen_path)];
+    put(root, "paper/style-drafts/draft-01-tagged.tex", tagged());
+    const review = styleReview(root, 1, "writing", "paper/style-drafts/draft-01-tagged.tex");
+    outputs.push("paper/style-drafts/draft-01-tagged.tex", review);
+    roles.splice(0, 1,
+      { role: "writer", task: "initial_writer", inputs: [...scientificInputs, ...styleInputs], outputs: ["paper/representation.md", "paper/references.bib", "paper/style-drafts/draft-01-tagged.tex"] },
+      { role: "paper_style_auditor", task: "paper_style_review_1", inputs: [...styleInputs, "paper/style-drafts/draft-01-tagged.tex"], outputs: [review] },
+      { role: "writer", task: "style_finalizer", inputs: [...scientificInputs, "paper/style-drafts/draft-01-tagged.tex", review], outputs: ["paper/paper-tagged.tex"] },
+    );
+  }
+  return checkpointResult(root, "writing", outputs, roles);
+}
 function line(id) { return tagged().split(/\r?\n/).findIndex((value) => value.includes(`\\coe{${id}}`)) + 1; }
 function verifyPhase(root, change = null) {
   put(root, "paper/paper-verified-tagged.tex", tagged()); put(root, "paper/paper.tex", tagged().replaceAll(/\\coe\{[^{}]+\}/g, ""));
@@ -728,7 +769,15 @@ function verifyPhase(root, change = null) {
   const provenance = claims.map((claim) => ({ claim_id: claim.claim_id, paper_location: claim.paper_location, sentence: claim.sentence, claim_type: claim.claim_type, status: "SUPPORTED", evidence: claim.claim_id === "C1" ? [{ kind: "metric", target: "selection/canonical-evaluation.json", locator: "/metric/value", sha256: hash(root, "selection/canonical-evaluation.json") }] : claim.claim_id === "C2" ? [{ kind: "source", target: "bib:smith2025", locator: null, sha256: hash(root, "paper/references.bib") }] : claim.claim_id === "C3" ? [{ kind: "artifact", target: "selection/selected/method.txt", locator: "L1", sha256: hash(root, "selection/selected/method.txt") }] : [{ kind: "inference", target: "C1,C2", locator: null, sha256: null }] }));
   if (change === "missing") claims.pop(); if (change === "extra") claims.push({ claim_id: "CX", paper_location: "paper/paper-verified-tagged.tex:1", sentence: "extra", claim_type: "citation", status: "SUPPORTED" }); if (change === "sentence") claims[0].sentence = "Sentence absent from paper"; if (change === "mapping") provenance[0].sentence = "Different sentence"; if (change === "target") provenance[0].evidence[0] = { kind: "metric", target: "selection/missing.json", locator: "/metric/value", sha256: "0".repeat(64) }; if (change === "cycle") provenance[0].evidence.push({ kind: "inference", target: "C4", locator: null, sha256: null }); if (change === "study_source") provenance[0].evidence = [{ kind: "source", target: "bib:smith2025", locator: null, sha256: hash(root, "paper/references.bib") }];
   put(root, "paper/claims.jsonl", `${claims.map(JSON.stringify).join("\n")}\n`); put(root, "paper/provenance.jsonl", `${provenance.map(JSON.stringify).join("\n")}\n`); put(root, "paper/verification.md", "Overall verdict: PASS\n"); put(root, "paper/paper.pdf", minimalPdf()); json(root, "delivery/visual-inspection.json", { pdf_path: "paper/paper.pdf", pdf_sha256: hash(root, "paper/paper.pdf"), page_count: 1, renderer: "test", timestamp: "2026-08-22T12:00:00Z", checked_pages: change === "visual" ? [] : [1], detected_defects: [], verdict: "PASS" });
-  return checkpointResult(root, "verification", ["paper/claims.jsonl", "paper/verification.md", "paper/paper-verified-tagged.tex", "paper/provenance.jsonl", "paper/paper.tex", "paper/paper.pdf", "delivery/visual-inspection.json"], [{ role: "claim_verifier", inputs: ["study-plan.md", "paper/paper-tagged.tex", "paper/claims.jsonl"], outputs: ["paper/claims.jsonl", "paper/verification.md"] }, { role: "writer", task: "final_writer", inputs: ["paper/claims.jsonl", "paper/verification.md"], outputs: ["paper/paper-verified-tagged.tex", "paper/provenance.jsonl", "paper/paper.tex", "paper/paper.pdf"] }]);
+  const outputs = ["paper/claims.jsonl", "paper/verification.md", "paper/paper-verified-tagged.tex", "paper/provenance.jsonl", "paper/paper.tex", "paper/paper.pdf", "delivery/visual-inspection.json"];
+  const roles = [{ role: "claim_verifier", inputs: ["study-plan.md", "paper/paper-tagged.tex", "paper/claims.jsonl"], outputs: ["paper/claims.jsonl", "paper/verification.md"] }, { role: "writer", task: "final_writer", inputs: ["paper/claims.jsonl", "paper/verification.md"], outputs: ["paper/paper-verified-tagged.tex", "paper/provenance.jsonl", "paper/paper.tex", "paper/paper.pdf"] }];
+  if (fs.existsSync(path.join(root, "contract/paper-style-policy.json"))) {
+    const policy = read(root, "contract/paper-style-policy.json");
+    const review = styleReview(root, 2, "delivery", "paper/paper.tex", change === "style-visual");
+    outputs.push(review);
+    roles.push({ role: "paper_style_auditor", task: "paper_style_delivery_review", inputs: ["contract/paper-style-policy.json", ...policy.examples.map((example) => example.frozen_path), "paper/paper.tex", "paper/paper.pdf"], outputs: [review] });
+  }
+  return checkpointResult(root, "verification", outputs, roles);
 }
 function i3(evidence = "paper/references.bib") { const fields = { title: "Prior", author: "Smith", year: 2025 }; return { verdict: "PASS", entries: [{ bibkey: "smith2025", populated_fields: fields, resolved_primary_record: fields, retrieved_at: "2026-08-22T12:00:00Z", field_comparisons: Object.entries(fields).map(([field, value]) => ({ field, expected: value, actual: value, matches: true })), status: "verified", evidence_path: evidence }], totals: { entries: 1, verified: 1, unresolved: 0, mismatch: 0 } }; }
 const report = (verdict = "PASS") => `Overall verdict: ${verdict}\nI1 verdict: ${verdict}\nI2 verdict: ${verdict}\nI3 verdict: ${verdict}\nI4 verdict: ${verdict}\nclaim_provenance verdict: ${verdict}\n${verdict === "FAIL" ? "Rollback phase: verification\n" : ""}`;
@@ -744,8 +793,73 @@ function audit(root, change = null) {
   return checkpointResult(root, "audit", ["audit", "delivery/reproduction.md"], roles);
 }
 
-function deliver(root) { for (const [source, destination] of [["study-plan.md", "study-plan.md"], ["investigation/brief.md", "investigation-brief.md"], ["paper/paper.tex", "paper.tex"], ["paper/paper.pdf", "paper.pdf"], ["paper/references.bib", "references.bib"], ["paper/provenance.jsonl", "provenance.jsonl"], ["selection/selected/manifest.json", "selected-method/manifest.json"], ["selection/selected/method.txt", "selected-method/method.txt"], ["selection/canonical-evaluation.json", "canonical-evaluation.json"], ["ablation/report.md", "ablation-report.md"], ["paper/verification.md", "verification.md"], ["audit/report.md", "audit-report.md"], ["delivery/reproduction.md", "reproduction.md"], ["delivery/visual-inspection.json", "visual-inspection.json"]]) copy(root, source, `deliverables/${destination}`); assert.equal(run("manifest", root).status, 0); assert.equal(run("set-outcome", root, "positive").status, 0); checkpoint(root, "complete", ["deliverables"]); }
-function through(t, phase = "complete", environmentSource = "existing") { const root = contract(t, environmentSource); if (phase === "contract") return root; investigate(root); if (phase === "investigation") return root; let result = discover(root); assert.equal(result.status, 0, result.stderr); if (phase === "discovery") return root; result = select(root); assert.equal(result.status, 0, result.stderr); if (phase === "selection") return root; ablate(root); if (phase === "ablation") return root; result = write(root); assert.equal(result.status, 0, result.stderr); if (phase === "writing") return root; result = verifyPhase(root); assert.equal(result.status, 0, result.stderr); if (phase === "verification") return root; result = audit(root); assert.equal(result.status, 0, result.stderr); if (phase === "audit") return root; deliver(root); return root; }
+function deliver(root) {
+  for (const [source, destination] of [["study-plan.md", "study-plan.md"], ["investigation/brief.md", "investigation-brief.md"], ["paper/paper.tex", "paper.tex"], ["paper/paper.pdf", "paper.pdf"], ["paper/references.bib", "references.bib"], ["paper/provenance.jsonl", "provenance.jsonl"], ["selection/selected/manifest.json", "selected-method/manifest.json"], ["selection/selected/method.txt", "selected-method/method.txt"], ["selection/canonical-evaluation.json", "canonical-evaluation.json"], ["ablation/report.md", "ablation-report.md"], ["paper/verification.md", "verification.md"], ["audit/report.md", "audit-report.md"], ["delivery/reproduction.md", "reproduction.md"], ["delivery/visual-inspection.json", "visual-inspection.json"]]) copy(root, source, `deliverables/${destination}`);
+  if (fs.existsSync(path.join(root, "contract/paper-style-policy.json"))) {
+    const deliveryReview = fs.readdirSync(path.join(root, "paper/style-reviews")).map((name) => `paper/style-reviews/${name}`).find((relative) => read(root, relative).stage === "delivery");
+    copy(root, deliveryReview, "deliverables/paper-style-review.json");
+  }
+  assert.equal(run("manifest", root).status, 0); assert.equal(run("set-outcome", root, "positive").status, 0); checkpoint(root, "complete", ["deliverables"]);
+}
+function through(t, phase = "complete", environmentSource = "existing", paperStyle = false) { const root = contract(t, environmentSource, true, paperStyle); if (phase === "contract") return root; investigate(root); if (phase === "investigation") return root; let result = discover(root); assert.equal(result.status, 0, result.stderr); if (phase === "discovery") return root; result = select(root); assert.equal(result.status, 0, result.stderr); if (phase === "selection") return root; ablate(root); if (phase === "ablation") return root; result = write(root); assert.equal(result.status, 0, result.stderr); if (phase === "writing") return root; result = verifyPhase(root); assert.equal(result.status, 0, result.stderr); if (phase === "verification") return root; result = audit(root); assert.equal(result.status, 0, result.stderr); if (phase === "audit") return root; deliver(root); return root; }
+
+test("paper style is approval-bound, separately owned, and checked again on the delivered paper", (t) => {
+  const root = through(t, "complete", "existing", true);
+  const approval = read(root, "contract/approval.json");
+  assert.equal(approval.schema_version, 2);
+  assert.equal(approval.paper_style_policy_sha256, fileHash(path.join(root, "contract/paper-style-policy.json")));
+  assert.equal(read(root, "paper/style-reviews/review-01.json").stage, "writing");
+  assert.equal(read(root, "paper/style-reviews/review-02.json").stage, "delivery");
+  assert.equal(fs.readFileSync(path.join(root, "deliverables/paper-style-review.json"), "utf8"), fs.readFileSync(path.join(root, "paper/style-reviews/review-02.json"), "utf8"));
+  assert.equal(fs.readFileSync(path.join(root, "paper/style-drafts/draft-01-tagged.tex"), "utf8"), fs.readFileSync(path.join(root, "paper/paper-tagged.tex"), "utf8"));
+  assert.equal(run("verify", root).status, 0);
+});
+
+test("paper style rejects a fourth review file", (t) => {
+  const root = through(t, "ablation", "existing", true);
+  json(root, "paper/style-reviews/review-04.json", {});
+  assert.match(write(root).stderr, /Unexpected paper-style review entry: review-04\.json/);
+});
+
+test("paper style requires rendered fidelity and denies style inputs to scientific roles", (t) => {
+  const root = through(t, "writing", "existing", true);
+  assert.match(verifyPhase(root, "style-visual").stderr, /must assess visual_fidelity/);
+  put(root, "scratch/forbidden-style-read.jsonl", '{"query":"style"}\n');
+  const receipt = role(root, { role: "literature_mapper", task: "forbidden_style_reader", inputs: ["study-plan.md", "inputs/style/01-reference.txt"], outputs: ["scratch/forbidden-style-read.jsonl"], allowed_external_sources: ["scholarly_web"] });
+  assert.match(run("verify-role", root, receipt).stderr, /restricted or evaluator-only input inputs\/style\/01-reference\.txt/);
+});
+
+test("1.5.2 continues an active 1.5.1 approval and specialist receipt", (t) => {
+  const root = newRun(t);
+  const approval = read(root, "contract/approval.json");
+  approval.schema_version = 1;
+  delete approval.paper_style_policy_sha256;
+  json(root, "contract/approval.json", approval);
+  const record = read(root, "run.json");
+  record.approval_sha256 = hash(root, "contract/approval.json");
+  json(root, "run.json", record);
+  put(root, "inputs/shared/data.csv", "x\n1\n");
+  put(root, "private/evaluator/evaluate.mjs", "export default true;\n");
+  json(root, "contract/input-manifest.json", { schema_version: 1, files: [{ source_path: "data.csv", frozen_path: "inputs/shared/data.csv", sha256: hash(root, "inputs/shared/data.csv"), classification: "shared" }, { source_path: "evaluate.mjs", frozen_path: "private/evaluator/evaluate.mjs", sha256: hash(root, "private/evaluator/evaluate.mjs"), classification: "evaluator_only" }] });
+  writeContractArtifacts(root);
+  put(root, "evidence/search-log.jsonl", '{"query":"legacy"}\n');
+  const receiptPath = role(root, { role: "literature_mapper", task: "legacy_1_5_1_mapper", inputs: ["study-plan.md"], outputs: ["evidence/search-log.jsonl"], allowed_external_sources: ["scholarly_web"] });
+  const receipt = read(root, receiptPath);
+  const launch = read(root, receipt.launch_record);
+  const legacyRoleContractSha256 = "86225dbd5291f424841dfb3ac1d3009503d5de04a66ba067f3e64090a789249e";
+  launch.role_contract_sha256 = legacyRoleContractSha256;
+  json(root, receipt.launch_record, launch);
+  const acceptedPath = `role-attempts/${launch.logical_task_name}/${launch.work_key_sha256}/attempt-${launch.attempt}.json`;
+  const accepted = read(root, acceptedPath);
+  accepted.launch_record_sha256 = hash(root, receipt.launch_record);
+  json(root, acceptedPath, accepted);
+  receipt.role_contract_sha256 = legacyRoleContractSha256;
+  receipt.launch_record_sha256 = hash(root, receipt.launch_record);
+  json(root, receiptPath, receipt);
+  const verified = run("verify-role", root, receiptPath);
+  assert.equal(verified.status, 0, verified.stderr);
+  assert.equal(JSON.parse(verified.stdout).reusable, true);
+});
 
 function bundle(root, unavailable = null) { const values = [["paper.any", "paper", ["I1", "I3", "I4", "claim_provenance"], "shared"], ["method.any", "method", ["I2", "I4"], "shared"], ["evaluation.any", "evaluation", ["I1", "I2", "claim_provenance"], "shared"], ["evaluator.any", "evaluator", ["I2"], "evaluator_only"], ["references.any", "reference", ["I3", "claim_provenance"], "shared"]]; const items = values.map(([name, artifact_type, intended_checks, access_class]) => { const frozen_path = `source-bundle/${name}`; put(root, frozen_path, `${name}\n`); return { supplied_path: `/arbitrary/${name}`, frozen_path, artifact_type, sha256: hash(root, frozen_path), intended_checks, access_class, available: true, missing_reason: null }; }); if (unavailable) items.push({ supplied_path: `/arbitrary/missing-${unavailable}`, frozen_path: `source-bundle/missing-${unavailable}`, artifact_type: "other", sha256: null, intended_checks: [unavailable], access_class: "shared", available: false, missing_reason: `${unavailable} input missing` }); return items; }
 function externalContract(t, unavailable = null) { const root = newRun(t, "external_audit"); json(root, "contract/input-manifest.json", { schema_version: 1, files: [] }); json(root, "contract/source-bundle-manifest.json", { schema_version: 1, items: bundle(root, unavailable) }); put(root, "contract/audit.md", "Overall verdict: PASS\n"); const i1Contract = seedI1Contract({ root, mode: "external_audit", runtime: testRuntime(root, "i1_verifier_builder"), hash, fileHash, json, put }); checkpoint(root, "contract", ["contract"], [{ role: "i1_verifier_builder", inputs: i1Contract.builderInputs, outputs: i1Contract.builderOutputs }, { role: "contract_auditor", inputs: i1Contract.contractAuditorInputs, outputs: ["contract/audit.md"] }]); return root; }

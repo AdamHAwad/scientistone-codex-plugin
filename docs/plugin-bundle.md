@@ -23,6 +23,7 @@ hooks/enforce-study-completion.mjs
 hooks/hooks.json
 licenses/NEWSREADER-LICENSE
 licenses/PHOSPHOR-LICENSE
+licenses/PSTACK-UNSLOP-LICENSE
 mcp/model-routing.mjs
 mcp/server.mjs
 mcp/ui/app.css
@@ -43,6 +44,7 @@ skills/scientist1/references/intake.md
 skills/scientist1/references/legacy-model-policy-1.2.0.json
 skills/scientist1/references/legacy-roles-1.2.0.md
 skills/scientist1/references/model-policy.json
+skills/scientist1/references/paper-unslop.md
 skills/scientist1/references/protocol.md
 skills/scientist1/references/roles.md
 skills/scientist1/scripts/capacity-preflight.mjs

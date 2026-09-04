@@ -124,8 +124,8 @@ for (const [relative, pattern] of livenessRequirements) {
 
 const manifestPath = path.join(root, "plugins/scientist1/.codex-plugin/plugin.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-if (manifest.version !== "1.5.1" || manifest.license !== "Apache-2.0") {
-  findings.push({ file: "plugins/scientist1/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.5.1 and Apache-2.0" });
+if (manifest.version !== "1.5.2" || manifest.license !== "Apache-2.0") {
+  findings.push({ file: "plugins/scientist1/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.5.2 and Apache-2.0" });
 }
 
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
@@ -154,6 +154,7 @@ const requiredRuntimeFiles = [
   "plugins/scientist1/hooks/enforce-study-completion.mjs",
   "plugins/scientist1/skills/scientist1/references/legacy-model-policy-1.2.0.json",
   "plugins/scientist1/skills/scientist1/references/legacy-roles-1.2.0.md",
+  "plugins/scientist1/skills/scientist1/references/paper-unslop.md",
   "plugins/scientist1/skills/scientist1/references/gate-checklists.json",
   "plugins/scientist1/skills/scientist1/scripts/capacity-preflight.mjs",
   "plugins/scientist1/skills/scientist1/scripts/i1-interpreter.mjs",
@@ -165,6 +166,7 @@ const requiredRuntimeFiles = [
   "plugins/scientist1/ATTRIBUTIONS.md",
   "plugins/scientist1/licenses/NEWSREADER-LICENSE",
   "plugins/scientist1/licenses/PHOSPHOR-LICENSE",
+  "plugins/scientist1/licenses/PSTACK-UNSLOP-LICENSE",
 ];
 for (const relative of requiredRuntimeFiles) {
   try {

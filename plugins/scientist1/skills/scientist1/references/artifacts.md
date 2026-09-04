@@ -26,6 +26,7 @@ scientist1-runs/<UTC>-<slug>/
     evaluator-contract.md           candidate-visible frozen evaluation rules
     evaluator-manifest.json         hashes/access classes, no private contents
     i1-verification-policy.json      result-blind structured I1 decision policy
+    paper-style-policy.json          optional approved writing policy, research only
     control-plane/
       i1-interpreter.mjs             release-tested policy interpreter snapshot
     drafts/                         superseded contract drafts
@@ -35,6 +36,7 @@ scientist1-runs/<UTC>-<slug>/
   role-attempts/<logical-task>/<work-key>/ immutable accepted launch attempts
   repairs/incidents/               immutable operational repair diagnoses
   inputs/shared/                    frozen candidate-visible inputs
+  inputs/style/                     optional prose, structure, and format examples
   evidence/
     sources.jsonl                  one Source Record per scholarly/web source
     search-log.jsonl               queries and unfiltered result ids
@@ -78,6 +80,13 @@ scientist1-runs/<UTC>-<slug>/
     report.md
   paper/
     representation.md              factual sentences still carry evidence tags
+    style-drafts/                   one or two immutable tagged drafts when requested
+      draft-01-tagged.tex
+      draft-02-tagged.tex           only after review 1 is nonconformant
+    style-reviews/                  at most three Paper Style Auditor reports
+      review-01.json
+      review-02.json
+      review-03.json                possible only as the delivery review
     grounding-report.json
     critic.md
     paper-tagged.tex
@@ -111,6 +120,7 @@ scientist1-runs/<UTC>-<slug>/
     paper.pdf                       only when the approved plan requires PDF
     references.bib
     provenance.jsonl
+    paper-style-review.json         only when paper-writing preferences were approved
     audit-report.md
     reproduction.md
     visual-inspection.json          only when a rendered document is required
@@ -124,7 +134,8 @@ scientist1-runs/<UTC>-<slug>/
 A completed research manifest must include the study plan, investigation brief,
 paper TeX, bibliography, provenance, selected-method manifest plus selected
 artifacts, canonical evaluation, ablation report, verification, audit report,
-and non-empty reproduction guide. Include paper PDF and visual inspection only
+and non-empty reproduction guide. Include the final delivery-stage style review
+when paper-writing preferences were approved. Include paper PDF and visual inspection only
 when the approved plan requires PDF and a compiler is available. External
 audit mode instead requires the frozen source-bundle manifest, audit report,
 visual inspection when a PDF is supplied, and reproduction guide; include each
@@ -532,13 +543,13 @@ Each phase checkpoint must also include the individual `role-receipts/<agent-tas
 
 | Phase | Minimum promoted outputs |
 | --- | --- |
-| contract | `contract/run-config.json`, `contract/input-manifest.json`, `contract/evaluator-contract.md` and `contract/evaluator-manifest.json` (research mode), `contract/source-bundle-manifest.json` (external-audit mode), `contract/i1-verification-policy.json`, `contract/control-plane/i1-interpreter.mjs`, the I1 Policy Author receipt, and `contract/audit.md` |
+| contract | `contract/run-config.json`, `contract/input-manifest.json`, `contract/evaluator-contract.md` and `contract/evaluator-manifest.json` (research mode), `contract/source-bundle-manifest.json` (external-audit mode), optional `contract/paper-style-policy.json` and its exact `inputs/style/` files, `contract/i1-verification-policy.json`, `contract/control-plane/i1-interpreter.mjs`, the I1 Policy Author receipt, and `contract/audit.md` |
 | investigation | `evidence/search-log.jsonl`, `evidence/sources.jsonl`, non-empty `investigation/notes` and `directions`, `investigation/protocol-audit.md`, `investigation/brief.md`, `investigation/references.bib`, `investigation/critic.md` |
 | discovery | `discovery/ideas.jsonl`, `discovery/idea-critique.jsonl`, `discovery/index.json`, all indexed node ideas, shared manifests, sealed snapshots, experimental logs, evaluation records, reports, and legitimacy audits |
 | selection | `selection/selection.md`, `selection/selection-audit.md`, `selection/lineage.json`, `selection/selected/manifest.json` plus every selected artifact, `selection/canonical-evaluation.json` |
 | ablation | `ablation/plan.json`, non-empty `ablation/variants` and `evaluations`, `ablation/results.json`, `ablation/report.md` |
-| writing | `paper/representation.md`, `paper/grounding-report.json`, `paper/critic.md`, `paper/paper-tagged.tex`, `paper/references.bib` |
-| verification | `paper/claims.jsonl`, `paper/verification.md`, `paper/paper-verified-tagged.tex`, `paper/provenance.jsonl`, `paper/paper.tex`; add `paper/paper.pdf` when the plan requires PDF |
+| writing | `paper/representation.md`, `paper/grounding-report.json`, `paper/critic.md`, `paper/paper-tagged.tex`, `paper/references.bib`; when style was requested, add one or two immutable style drafts and their contiguous writing reviews |
+| verification | `paper/claims.jsonl`, `paper/verification.md`, `paper/paper-verified-tagged.tex`, `paper/provenance.jsonl`, `paper/paper.tex`; add `paper/paper.pdf` when the plan requires PDF and add one final delivery-stage style review when a paper-style policy exists |
 | audit | `audit/i1.json`, every required file under `audit/i1/`, the referenced private `i1-runs/<execution-id>/` evidence, `audit/i2/aggregate.json` plus every judge vote, `audit/i3.json`, `audit/i4/aggregate.json` plus every judge vote, `audit/claim-provenance.json`, `audit/report.md` |
 | complete | `delivery/reproduction.md` and `deliverables` including `manifest.json`; add `delivery/visual-inspection.json` when the plan requires a rendered document |
 
@@ -551,6 +562,7 @@ specialist's scientific content.
 | Artifact | Owner | Reviewer/validator |
 | --- | --- | --- |
 | `environment/bootstrap.json`, `contract/run-config.json`, input manifest, evaluator contract/manifest, source-bundle manifest | Lead/configure command | Contract Auditor and CoE |
+| optional paper-style policy and `inputs/style/` copies | Local MCP attach operation | Contract Auditor and CoE |
 | `contract/i1-verification-policy.json` | I1 Policy Author (compatibility key `i1_verifier_builder`) | Contract Auditor and CoE |
 | `contract/control-plane/i1-interpreter.mjs` | CoE `configure` command from the release-tested bundle | Contract Auditor and CoE |
 | `contract/audit.md` | Contract Auditor | CoE receipt/checkpoint |
@@ -575,6 +587,9 @@ specialist's scientific content.
 | `ablation/evaluations/` | Evaluator | Ablation Analyst |
 | `ablation/results.json`, report | Ablation Analyst | CoE gate |
 | `paper/representation.md`, tagged TeX, references | Writer | Paper Critic |
+| `paper/style-drafts/draft-<NN>-tagged.tex` | Writer | Paper Style Auditor and CoE |
+| `paper/style-reviews/review-<NN>.json` | Paper Style Auditor | CoE schema and hash checks |
+| `deliverables/paper-style-review.json` when requested | Lead, copied from the final delivery-stage review | CoE canonical-source hash check |
 | `paper/grounding-report.json`, critic | Paper Critic | CoE gate |
 | `paper/claims.jsonl`, verification | Claim Verifier | CoE resolver |
 | `paper/paper-verified-tagged.tex`, paper TeX, and any required PDF | Writer | Visual reviewer when applicable and CoE |
@@ -604,6 +619,7 @@ Machine-readable gate minima:
 - `selection/selected/manifest.json`: non-empty unique files that all exist and are promoted; `canonical-evaluation.json`: `status: "valid"`, `snapshot_path: "selection/selected"`, a recomputed matching snapshot SHA-256, the frozen repetition count, and finite metric name/value/unit/direction.
 - `ablation/plan.json` and `results.json`: no more than the ablation ceiling and at least the minimum valid ablations when valid variants exist, with corresponding variants/evaluations or a recorded stop reason.
 - `paper/grounding-report.json`: `status: "PASS"` and `grounding_ratio >= 0.8`.
+- Optional paper-style reviews: contiguous rounds from 1, one or two writing reviews, one delivery review, and no review 4. Each report binds the approved policy and exact paper hash. `CONFORMANT` requires every assessable criterion to pass. A writing-stage `NONCONFORMANT` must use review 2 when available. The canonical tagged paper must be byte-identical to the last writing-stage draft.
 - `paper/claims.jsonl` and `paper/provenance.jsonl`: unique, identical claim-id sets, all `SUPPORTED`, with one of the four claim types and source-identifying evidence. When the plan requires PDF, `paper.pdf` must have a PDF header, catalog/page tree, root, resolvable `startxref`, and EOF marker before visual inspection.
 - `audit/i1.json`: hash-binds the frozen policy, common interpreter, selected snapshot,
   execution receipt, and three component reports. Its verdict is

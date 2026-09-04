@@ -53,7 +53,7 @@ The MCP launches it with Codex's bundled runtime and fixed purpose; never run
 it through the agent terminal or edit `config.toml` by hand as a substitute.
 
 - In the Codex desktop app, the bundled local browser is the only full browser experience. For a new study or external audit, call `start_study_setup` with the active project root, the requested mode, and `resume_latest: false`. Immediately open the returned `url` in Codex's built-in browser. Do not render or substitute an inline MCP form, and do not use a remote setup page.
-- Let the researcher complete the seven-step full-page wizard, including its large file-upload field. Call `wait_for_researcher` once with the returned project root and draft ID; do not poll. When the researcher responds, call `read_study_setup` and treat the saved answers as researcher-authored intake.
+- Let the researcher complete the full-page wizard. Research mode has eight steps, including separate upload fields for study files and optional paper-writing examples. External-audit mode has seven steps and omits paper style. Call `wait_for_researcher` once with the returned project root and draft ID; do not poll. When the researcher responds, call `read_study_setup` and treat the saved answers as researcher-authored intake.
 - If `wait_for_researcher` returns `wait_timed_out: true`, close the same built-in browser tab, send the returned `researcher_message` to the researcher, and end the turn. Do not keep reasoning, poll, discard the draft, or continue the study. The browser saves intake answers, the current wizard step, plan edits, and the pending change note as they are entered; it saves uploads immediately. When the researcher later asks to continue, call `start_study_setup` with the same project root and mode and `resume_latest: true`, reopen its returned URL, and call `wait_for_researcher` once again.
 - Uploaded files are copied directly by the bundled local MCP into the active project's `.scientist1/intake/<draft-id>/files/` tree. Verify each returned `stored_path` remains inside that draft, is a regular file, matches its declared byte size and SHA-256, and is not a symbolic link. Use only those project-local copies. Do not upload them to any remote service. Do not begin scientific work yet.
 - If the current surface cannot start the bundled MCP or show the built-in browser, use the conversational fallback. Never substitute a remote Scientist1 MCP or setup page.
@@ -61,11 +61,11 @@ it through the agent terminal or edit `config.toml` by hand as a substitute.
 - For findings from a verified complete run, use `scientist1-results`.
 - For resume, verify the saved run and continue from its first invalid or unfinished phase.
 
-The browser wizard asks seven questions: research question, purpose, files, prior work, evaluation, limits, and final review. Its local server writes answers and selected files only under the active project. Scientist1 has no remote MCP in this plugin.
+The research wizard asks eight questions: research question, purpose, files, prior work, writing style, evaluation, limits, and final review. Writing style is optional and accepts notes, example papers, or a template. Its local server writes answers and selected files only under the active project. Scientist1 has no remote MCP in this plugin.
 
 ## Conversational fallback
 
-If the current Codex surface has no built-in browser or site tools, ask one compact question for the same substance: research question, purpose, local materials, prior work, evaluation rule, requirements and limits, and desired deliverables. Use files already attached to the task or project-relative paths. Tell the researcher not to paste secrets or absolute paths. Do not make them troubleshoot the MCP.
+If the current Codex surface has no built-in browser or site tools, ask one compact question for the same substance: research question, purpose, local materials, prior work, optional paper-writing notes or examples, evaluation rule, requirements and limits, and desired deliverables. Use files already attached to the task or project-relative paths. Tell the researcher not to paste secrets or absolute paths. Do not make them troubleshoot the MCP.
 
 After intake arrives, read `references/doctrine.md` and `references/intake.md` completely. Inspect only the named relative paths and the minimum project files needed to understand them. Never inspect `.env*`, credential stores, private keys, browser data, dependency caches, old runs, unrelated projects, or another user's files.
 
@@ -80,11 +80,12 @@ Turn the intake into:
 - required and forbidden methods;
 - search and compute limits;
 - limits on interpretation;
+- optional paper prose, structure, and formatting preferences;
 - exact deliverables.
 
 Propose a concrete default when the researcher left an execution choice open. Ask a follow-up only when no safe default can preserve the scientific meaning.
 
-In Codex desktop, send the complete plain-language plan to `publish_study_review`. Classify every uploaded file exactly once as study material or prior work and as shared or evaluator-only. The same browser tab must change from its waiting view to the editable study review. Call `wait_for_researcher` once and apply the same one-hour saved-pause behavior above if it times out. If the researcher requests changes, read the edited review and change note, revise the plan, republish it, and wait again. If they approve, use the approved browser fields as the binding plan. Do not create run files or install study dependencies before that approval.
+In Codex desktop, send the complete plain-language plan to `publish_study_review`. Classify every study upload exactly once as study material or prior work and as shared or evaluator-only. Do not put writing examples in `file_assignments`; their upload context keeps them separate from scientific evidence. The same browser tab must change from its waiting view to the editable study review. Call `wait_for_researcher` once and apply the same one-hour saved-pause behavior above if it times out. If the researcher requests changes, read the edited review and change note, revise the plan, republish it, and wait again. If they approve, use the approved browser fields as the binding plan. Do not create run files or install study dependencies before that approval.
 
 Only on a surface without the bundled browser MCP should you show the plan in chat and ask: `Is this the study you want me to run?`
 
@@ -175,7 +176,7 @@ references.
 2. Copy each approved input into the run once, or bind it by a stable project-relative path when copying would violate the plan. Compute SHA-256 and write `contract/input-manifest.json`. Put answer keys, held-out outcomes, private checks, and evaluator code under `private/`. Candidate roles must never read them.
 3. Prepare the smallest project-local environment needed by the approved study. Reuse compatible tools. Install from an official source only when needed. Record the exact path, version, source, and hash in `environment/bootstrap.json`. Do not install globally or ask the researcher to install a plugin prerequisite.
 4. Run `coe.mjs configure`, then `coe.mjs init`. This snapshots the release-tested I1 interpreter under `contract/control-plane/` and creates the contract-state ledger.
-5. Call `attach_run_monitor` immediately with the project root, draft ID, and initialized run path. It binds the browser approval into `contract/approval.json` before any specialist launch. The open browser must switch into the original interactive study flowchart. If the tab cannot navigate automatically, open the returned `url` in Codex's built-in browser.
+5. Call `attach_run_monitor` immediately with the project root, draft ID, and initialized run path. It binds the browser approval into `contract/approval.json` before any specialist launch. When the approved intake has writing notes or examples, it also freezes them under `inputs/style/` and creates `contract/paper-style-policy.json`. When the field is blank and has no files, it creates neither and the style specialist does not appear. The open browser must switch into the original interactive study flowchart. If the tab cannot navigate automatically, open the returned `url` in Codex's built-in browser.
 6. Freeze the run profile, evaluator contract, evaluator manifest, and declarative task-specific I1 policy. A fresh Contract Auditor must pass the closed essential checklist before candidate work.
 
 ## Use native Codex agents
@@ -230,6 +231,12 @@ Use these dependency barriers:
 - Ablation Designer is a barrier. Then run independent per-variant
   `Implementer -> Evaluator` chains concurrently when the evaluator resource
   permits. Ablation Analyst waits for all variants.
+- When `contract/paper-style-policy.json` exists, run the bounded Paper Style
+  Auditor sequence in `references/protocol.md`. Use at most two writing-stage
+  reviews, stop early on conformance, and reserve the last review for the
+  delivered paper. The style specialist uses a separate status and never opens
+  the scientific convergence controller. Without the policy, skip the role and
+  all style artifacts.
 - After the final verified paper and selected artifact freeze, launch I1, every
   I2 vote, I3, every I4 vote, and claim provenance together. Audit Reporter
   waits for all independent reports and votes. Selection, paper resolution,

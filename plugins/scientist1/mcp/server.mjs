@@ -26,7 +26,8 @@ const RESEARCHER_WAIT_TIMEOUT_MS = 60 * 60 * 1000;
 const RESEARCHER_TIMEOUT_MESSAGE = "I see it's been an hour. I've saved everything—don't worry. When you're ready to get back into things, send me a message and I'll open it again.";
 const APPROVAL_AUTHORITY = "The researcher approved this study once and authorized autonomous safe, reversible, in-scope execution through a freshly verified final paper and delivery package. Operational failures, rejected gates, unavailable routes, and repeated repairs remain active same-run work. The lead must keep orchestrating repairs and independent rechecks. Do not request another approval. The lead cannot stop before final verification succeeds.";
 const ACTIVE_DRAFT_STATES = new Set(["draft", "submitted", "review_ready", "changes_requested", "approved"]);
-const EDITABLE_REVIEW_FIELDS = ["question", "objective", "materials", "prior_work", "evaluation", "requirements", "deliverables", "study_plan_markdown"];
+const UPLOAD_DRAFT_STATES = new Set(["draft", "submitted", "review_ready", "changes_requested"]);
+const EDITABLE_REVIEW_FIELDS = ["question", "objective", "materials", "prior_work", "paper_style", "evaluation", "requirements", "deliverables", "study_plan_markdown"];
 const REQUIRED_REVIEW_FIELDS = new Set(["question", "objective", "evaluation", "deliverables", "study_plan_markdown"]);
 const draftLocks = new Map();
 const draftEvents = new EventEmitter();
@@ -82,6 +83,7 @@ const roleLabels = {
   ablation_implementer: "Component test researcher",
   ablation_analyst: "Component test analyst",
   writer: "Paper writer",
+  paper_style_auditor: "Paper style auditor",
   paper_critic: "Paper reviewer",
   claim_verifier: "Claim reviewer",
   i1_score_auditor: "Result checker",
@@ -115,6 +117,7 @@ const roleDescriptions = {
   ablation_implementer: "Runs one approved component test and saves the changed method.",
   ablation_analyst: "Explains which parts of the method affected the measured result.",
   writer: "Drafts the paper from the verified study record.",
+  paper_style_auditor: "Compares the paper's prose, structure, and formatting with the researcher's approved notes and examples.",
   paper_critic: "Checks the draft for unsupported or overstated claims.",
   claim_verifier: "Links each paper claim to its exact saved source or result.",
   i1_score_auditor: "Checks that the paper reports the same result as the canonical evaluation.",
@@ -222,8 +225,9 @@ function createDraft(projectRootArg, modeArg = "research") {
   fs.mkdirSync(path.join(root, "files", "shared"), { recursive: true, mode: 0o700 });
   fs.mkdirSync(path.join(root, "files", "evaluator-only"), { recursive: true, mode: 0o700 });
   fs.mkdirSync(path.join(root, "files", "unclassified"), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(path.join(root, "files", "paper-style"), { recursive: true, mode: 0o700 });
   const state = {
-    schema_version: 1,
+    schema_version: 2,
     id,
     project_root: projectRoot,
     mode,
@@ -237,6 +241,7 @@ function createDraft(projectRootArg, modeArg = "research") {
       objective: "",
       materials_note: "",
       papers: "",
+      paper_style: "",
       evaluation: "",
       constraints: "",
     },
@@ -254,13 +259,30 @@ function createDraft(projectRootArg, modeArg = "research") {
   return state;
 }
 
+function normalizeDraft(state) {
+  if (state.schema_version === 1) {
+    state.schema_version = 2;
+    state.answers ??= {};
+    state.answers.paper_style ??= "";
+    if (state.mode === "research" && Number.isInteger(state.wizard_step) && state.wizard_step >= 4) state.wizard_step += 1;
+    for (const upload of state.uploads ?? []) upload.context ??= "study";
+    if (state.review) state.review.paper_style ??= "";
+    if (state.review_draft) state.review_draft.paper_style ??= "";
+  }
+  if (state.schema_version !== 2) throw new Error(`Unsupported intake schema version: ${state.schema_version}.`);
+  state.answers ??= {};
+  state.answers.paper_style ??= "";
+  for (const upload of state.uploads ?? []) upload.context ??= "study";
+  return state;
+}
+
 function readDraft(projectRootArg, draftId) {
   const projectRoot = safeProjectRoot(projectRootArg);
   const file = stateFile(projectRoot, draftId);
   if (!fs.existsSync(file)) throw new Error("The intake draft was not found.");
   const root = draftRoot(projectRoot, draftId);
   if (fs.lstatSync(root).isSymbolicLink()) throw new Error("The intake draft cannot be a symbolic link.");
-  const state = readJson(file);
+  const state = normalizeDraft(readJson(file));
   if (state.project_root !== projectRoot || state.id !== draftId) throw new Error("The intake draft does not match this project.");
   return state;
 }
@@ -366,13 +388,17 @@ function decodeFilename(header) {
   }
 }
 
-async function saveUpload(req, projectRoot, draftId) {
+async function saveUpload(req, projectRoot, draftId, contextArg) {
   const existing = readDraft(projectRoot, draftId);
-  if (!ACTIVE_DRAFT_STATES.has(existing.status)) throw new Error("This intake no longer accepts files.");
+  if (!UPLOAD_DRAFT_STATES.has(existing.status)) throw new Error("This intake no longer accepts files.");
   const declared = Number(req.headers["content-length"] ?? 0);
   if (declared > MAX_UPLOAD_BYTES) throw new Error("The file is larger than the 2 GB intake limit.");
+  const context = contextArg || "study";
+  if (!new Set(["study", "paper_style"]).has(context)) throw new Error("Upload context must be study or paper_style.");
+  if (context === "paper_style" && existing.mode !== "research") throw new Error("Paper-writing examples are available only for research studies.");
   const name = decodeFilename(req.headers["x-scientist1-filename"]);
-  const directory = path.join(draftRoot(projectRoot, draftId), "files", "unclassified");
+  const directory = path.join(draftRoot(projectRoot, draftId), "files", context === "paper_style" ? "paper-style" : "unclassified");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   if (fs.lstatSync(directory).isSymbolicLink()) throw new Error("The upload directory cannot be a symbolic link.");
   const destination = uniqueDestination(directory, name);
   const temporary = `${destination}.${randomBytes(5).toString("hex")}.part`;
@@ -395,16 +421,17 @@ async function saveUpload(req, projectRoot, draftId) {
   const sha256 = digest.digest("hex");
   try {
     return await updateDraft(projectRoot, draftId, (state) => {
-      if (!ACTIVE_DRAFT_STATES.has(state.status)) throw new Error("This intake no longer accepts files.");
+      if (!UPLOAD_DRAFT_STATES.has(state.status)) throw new Error("This intake no longer accepts files.");
       const relative = path.relative(projectRoot, destination).split(path.sep).join("/");
       state.uploads.push({
         id: randomUUID(),
         name: path.basename(destination),
         size,
         media_type: String(req.headers["content-type"] || "application/octet-stream"),
-        kind: "unclassified",
-        classification: "unclassified",
-        purpose: "",
+        context,
+        kind: context === "paper_style" ? "style_example" : "unclassified",
+        classification: context === "paper_style" ? "writing_only" : "unclassified",
+        purpose: context === "paper_style" ? "Writing, structure, and formatting reference only. Not scientific evidence." : "",
         stored_path: relative,
         sha256,
         uploaded_at: now(),
@@ -427,8 +454,11 @@ function classifyUploads(draft, assignments) {
     if (typeof assignment.purpose !== "string" || !assignment.purpose.trim()) throw new Error("Each file assignment needs a plain-language purpose.");
     byId.set(assignment.upload_id, assignment);
   }
-  if (byId.size !== draft.uploads.length || draft.uploads.some((upload) => !byId.has(upload.id))) throw new Error("review.file_assignments must classify every uploaded file exactly once.");
-  for (const upload of draft.uploads) {
+  const studyUploads = draft.uploads.filter((upload) => upload.context === "study");
+  const styleUploadIds = new Set(draft.uploads.filter((upload) => upload.context === "paper_style").map((upload) => upload.id));
+  if ([...byId.keys()].some((id) => styleUploadIds.has(id))) throw new Error("Writing examples are style-only and must not appear in review.file_assignments.");
+  if (byId.size !== studyUploads.length || studyUploads.some((upload) => !byId.has(upload.id))) throw new Error("review.file_assignments must classify every study upload exactly once.");
+  for (const upload of studyUploads) {
     const assignment = byId.get(upload.id);
     upload.kind = assignment.kind;
     upload.classification = assignment.classification;
@@ -461,6 +491,101 @@ function applyReviewEdits(draft, value) {
 
 function editableReviewDraft(value) {
   return Object.fromEntries(EDITABLE_REVIEW_FIELDS.map((field) => [field, String(value?.[field] ?? "").slice(0, 200000)]));
+}
+
+function rawFileSha256(file) {
+  return createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+}
+
+function checkedStyleUpload(projectRoot, draftId, upload) {
+  const intakeDirectory = fs.realpathSync(draftRoot(projectRoot, draftId));
+  const target = path.resolve(projectRoot, upload.stored_path);
+  const relative = path.relative(intakeDirectory, target);
+  if (relative.startsWith("..") || path.isAbsolute(relative) || !fs.existsSync(target)) throw new Error(`Writing example path is invalid: ${upload.name}.`);
+  const info = fs.lstatSync(target);
+  if (!info.isFile() || info.isSymbolicLink() || fs.realpathSync(target) !== target) throw new Error(`Writing example must be a regular project-local file: ${upload.name}.`);
+  if (info.size !== upload.size || rawFileSha256(target) !== upload.sha256) throw new Error(`Writing example bytes changed after upload: ${upload.name}.`);
+  return target;
+}
+
+function ensureSafeRunDirectory(runPath, relative) {
+  let current = runPath;
+  for (const segment of relative.split("/")) {
+    current = path.join(current, segment);
+    if (!fs.existsSync(current)) fs.mkdirSync(current, { mode: 0o700 });
+    const info = fs.lstatSync(current);
+    if (!info.isDirectory() || info.isSymbolicLink() || fs.realpathSync(current) !== current) throw new Error(`Run directory cannot be a symbolic link: ${relative}.`);
+  }
+  return current;
+}
+
+function copyStyleInput(source, destination, expectedSha256) {
+  const parent = path.dirname(destination);
+  const parentInfo = fs.lstatSync(parent);
+  if (!parentInfo.isDirectory() || parentInfo.isSymbolicLink()) throw new Error(`Run writing-example directory is unsafe: ${parent}.`);
+  if (fs.existsSync(destination)) {
+    const info = fs.lstatSync(destination);
+    if (!info.isFile() || info.isSymbolicLink() || rawFileSha256(destination) !== expectedSha256) throw new Error(`Existing run writing example differs from the approved upload: ${path.basename(destination)}.`);
+    return;
+  }
+  const temporary = `${destination}.${randomBytes(5).toString("hex")}.part`;
+  try {
+    fs.copyFileSync(source, temporary, fs.constants.COPYFILE_EXCL);
+    fs.chmodSync(temporary, 0o600);
+    if (rawFileSha256(temporary) !== expectedSha256) throw new Error(`Writing example copy failed verification: ${path.basename(destination)}.`);
+    fs.renameSync(temporary, destination);
+  } catch (error) {
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+function materializePaperStyle(approved, projectRoot, runPath) {
+  const notes = String(approved.review?.paper_style ?? "").trim();
+  const uploads = (approved.uploads ?? []).filter((upload) => upload.context === "paper_style");
+  const policyPath = path.join(runPath, "contract", "paper-style-policy.json");
+  const styleDirectory = path.join(runPath, "inputs", "style");
+  if (!notes && !uploads.length) {
+    if (fs.existsSync(policyPath) || fs.existsSync(styleDirectory)) throw new Error("This approved intake has no paper-style request, but the run already contains paper-style inputs.");
+    return null;
+  }
+  if (approved.mode !== "research") throw new Error("Paper-writing preferences cannot be attached to an external-audit run.");
+  ensureSafeRunDirectory(runPath, "contract");
+  ensureSafeRunDirectory(runPath, "inputs/style");
+  if (fs.existsSync(policyPath)) {
+    const info = fs.lstatSync(policyPath);
+    if (!info.isFile() || info.isSymbolicLink()) throw new Error("Existing paper-style policy must be a regular run-local file.");
+  }
+  const examples = uploads.map((upload, index) => {
+    const source = checkedStyleUpload(projectRoot, approved.id, upload);
+    const stableName = `${String(index + 1).padStart(2, "0")}-${cleanFilename(upload.name)}`;
+    const frozenPath = `inputs/style/${stableName}`;
+    copyStyleInput(source, path.join(runPath, frozenPath), upload.sha256);
+    return {
+      upload_id: upload.id,
+      original_name: upload.name,
+      media_type: upload.media_type,
+      frozen_path: frozenPath,
+      source_sha256: upload.sha256,
+      frozen_sha256: rawFileSha256(path.join(runPath, frozenPath)),
+    };
+  });
+  const policy = {
+    schema_version: 1,
+    source_draft_id: approved.id,
+    max_reviews: 3,
+    writing_review_limit: 2,
+    notes,
+    examples,
+    criteria: ["ai_tells", "prose", "structure", "formatting", "visual_fidelity"],
+    evidence_rule: "Use examples only for prose, structure, and formatting. Never copy their text or treat them as scientific evidence.",
+  };
+  if (fs.existsSync(policyPath)) {
+    if (JSON.stringify(readJson(policyPath)) !== JSON.stringify(policy)) throw new Error("Existing paper-style policy differs from the approved intake.");
+  } else {
+    atomicJson(policyPath, policy);
+  }
+  return rawFileSha256(policyPath);
 }
 
 async function parseJsonBody(req) {
@@ -557,10 +682,11 @@ function readJsonDirectory(directory) {
 
 function inferRolePhase(record) {
   const outputs = Array.isArray(record.declared_outputs) ? record.declared_outputs : Array.isArray(record.outputs) ? record.outputs : [];
+  const inputs = Array.isArray(record.declared_inputs) ? record.declared_inputs : [];
   const has = (prefix) => outputs.some((item) => typeof item === "string" && item.startsWith(prefix));
   if (has("deliverables/")) return "complete";
   if (has("audit/") || has("delivery/")) return "audit";
-  if (has("paper/")) return record.role === "claim_verifier" ? "verification" : "writing";
+  if (has("paper/")) return record.role === "claim_verifier" || (record.role === "paper_style_auditor" && inputs.includes("paper/paper.tex")) ? "verification" : "writing";
   if (has("ablation/")) return "ablation";
   if (has("selection/")) return "selection";
   if (has("discovery/")) return "discovery";
@@ -740,12 +866,13 @@ async function handleWeb(req, res) {
       const state = await updateDraft(requestUrl.searchParams.get("project"), requestUrl.searchParams.get("draft"), (draft) => {
         if (!["draft", "changes_requested"].includes(draft.status)) throw new Error("This intake has already been submitted.");
         for (const key of Object.keys(draft.answers)) if (typeof body[key] === "string") draft.answers[key] = body[key].slice(0, 20000);
-        if (Number.isInteger(body.wizard_step)) draft.wizard_step = Math.max(0, Math.min(6, body.wizard_step));
+        const lastStep = draft.mode === "research" ? 7 : 6;
+        if (Number.isInteger(body.wizard_step)) draft.wizard_step = Math.max(0, Math.min(lastStep, body.wizard_step));
       });
       return sendJson(res, 200, publicDraft(state));
     }
     if (requestUrl.pathname === "/api/intake/upload" && req.method === "POST") {
-      const state = await saveUpload(req, safeProjectRoot(requestUrl.searchParams.get("project")), requestUrl.searchParams.get("draft"));
+      const state = await saveUpload(req, safeProjectRoot(requestUrl.searchParams.get("project")), requestUrl.searchParams.get("draft"), requestUrl.searchParams.get("context"));
       return sendJson(res, 201, publicDraft(state));
     }
     if (requestUrl.pathname === "/api/intake/upload" && req.method === "DELETE") {
@@ -753,6 +880,7 @@ async function handleWeb(req, res) {
       const projectRoot = safeProjectRoot(requestUrl.searchParams.get("project"));
       const draftId = requestUrl.searchParams.get("draft");
       const state = await updateDraft(projectRoot, draftId, (draft) => {
+        if (!UPLOAD_DRAFT_STATES.has(draft.status)) throw new Error("This intake no longer accepts file changes.");
         const item = draft.uploads.find((upload) => upload.id === uploadId);
         if (!item) throw new Error("The uploaded file was not found.");
         const target = path.resolve(projectRoot, item.stored_path);
@@ -939,12 +1067,13 @@ const tools = [
         review: {
           type: "object",
           additionalProperties: false,
-          required: ["question", "objective", "materials", "prior_work", "evaluation", "requirements", "deliverables", "study_plan_markdown", "request_markdown", "file_assignments"],
+          required: ["question", "objective", "materials", "prior_work", "paper_style", "evaluation", "requirements", "deliverables", "study_plan_markdown", "request_markdown", "file_assignments"],
           properties: {
             question: { type: "string" },
             objective: { type: "string" },
             materials: { type: "string" },
             prior_work: { type: "string" },
+            paper_style: { type: "string", description: "Optional approved prose, structure, and formatting preferences. Keep blank when none were supplied." },
             evaluation: { type: "string" },
             requirements: { type: "string" },
             deliverables: { type: "string" },
@@ -952,7 +1081,7 @@ const tools = [
             request_markdown: { type: "string" },
             file_assignments: {
               type: "array",
-              description: "One assignment for every upload returned by read_study_setup. Use evaluator_only for answer keys, held-out outcomes, and private checks.",
+              description: "One assignment for every study-context upload returned by read_study_setup. Do not include paper_style uploads. Use evaluator_only for answer keys, held-out outcomes, and private checks.",
               items: {
                 type: "object",
                 additionalProperties: false,
@@ -1068,12 +1197,14 @@ async function callTool(name, args = {}, options = {}) {
   }
   if (name === "publish_study_review") {
     const review = assertObject(args.review, "review");
-    for (const field of [...EDITABLE_REVIEW_FIELDS, "request_markdown"]) {
+    for (const field of [...REQUIRED_REVIEW_FIELDS, "request_markdown"]) {
       if (typeof review[field] !== "string" || !review[field].trim()) throw new Error(`review.${field} is required.`);
     }
+    for (const field of EDITABLE_REVIEW_FIELDS) if (typeof review[field] !== "string") throw new Error(`review.${field} must be text.`);
     const state = await updateDraft(args.project_root, args.draft_id, (draft) => {
       if (new Set(["approved", "started"]).has(draft.status)) throw new Error("Study approval is final. Continue the approved run and attach its monitor; do not publish another review.");
       if (!new Set(["submitted", "changes_requested", "review_ready"]).has(draft.status)) throw new Error("The intake is not ready for a study summary.");
+      if (draft.mode === "external_audit" && review.paper_style.trim()) throw new Error("External-audit reviews cannot contain paper-writing preferences.");
       classifyUploads(draft, review.file_assignments);
       draft.review = { ...review };
       draft.review_draft = editableReviewDraft(review);
@@ -1093,8 +1224,9 @@ async function callTool(name, args = {}, options = {}) {
     const approved = readDraft(projectRoot, args.draft_id);
     if (!new Set(["approved", "started"]).has(approved.status) || !approved.approved_at || approved.execution_authority !== APPROVAL_AUTHORITY) throw new Error("The researcher has not approved this intake with the current Scientist1 execution authority.");
     if (approved.status === "started" && fs.realpathSync(approved.run_path) !== runPath) throw new Error("This approved intake is already bound to a different Scientist1 run.");
+    const paperStylePolicySha256 = materializePaperStyle(approved, projectRoot, runPath);
     try {
-      await execFileAsync(process.execPath, [COE, "bind-approval", runPath, approved.id, approved.approved_at, approved.execution_authority], { timeout: 120_000, windowsHide: true });
+      await execFileAsync(process.execPath, [COE, "bind-approval", runPath, approved.id, approved.approved_at, approved.execution_authority, paperStylePolicySha256 ?? "-"], { timeout: 120_000, windowsHide: true });
     } catch (error) {
       throw new Error(`Scientist1 could not bind durable approval to the run: ${String(error.stderr || error.message).trim()}`);
     }

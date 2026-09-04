@@ -2,6 +2,22 @@
 
 This project follows Semantic Versioning.
 
+## 1.5.2 - 2026-09-04
+
+- Added an optional eighth research-intake step for paper prose, structure, and
+  formatting preferences, with separate uploads for example papers and
+  templates. Style examples remain outside the scientific evidence manifest.
+- Added a fresh Paper Style Auditor only when the approved intake includes
+  writing notes or examples. Its reports compare AI-writing tells, prose,
+  structure, source formatting, and rendered appearance within a hard limit of
+  three reviews.
+- Added the academic adaptation of P-stack's Unslop rules to Writer, Paper
+  Critic, and Paper Style Auditor assignments, with the upstream MIT license and
+  revision-pinned attribution.
+- Preserved schema-1 intake and Scientist1 1.5.1 role-receipt compatibility.
+  Increased the CI timeout so the existing full suite can finish before the
+  package and release audits run.
+
 ## 1.5.1 - 2026-09-02
 
 - Restored retry and recovery compatibility for accepted Scientist1 1.5.0 work

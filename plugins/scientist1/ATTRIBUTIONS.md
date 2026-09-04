@@ -17,6 +17,17 @@ OpenAI image generation created `docs/images/scientist1-for-codex-hero.png` for 
 
 ## Public generated artifacts
 
-The paper's authors publish evaluated papers and solution code at <https://github.com/scientistone/generated-artifacts> under Apache-2.0. We reviewed commit `721f1fbe3b39a558dff13386c50621a357e6f9a7` for provenance. Version 1.5.1 of this repository does not copy that solution code. The link is here so readers can inspect the research artifacts that accompany the paper.
+The paper's authors publish evaluated papers and solution code at <https://github.com/scientistone/generated-artifacts> under Apache-2.0. We reviewed commit `721f1fbe3b39a558dff13386c50621a357e6f9a7` for provenance. Version 1.5.2 of this repository does not copy that solution code. The link is here so readers can inspect the research artifacts that accompany the paper.
+
+## P-stack Unslop rules
+
+The academic paper agents include an adapted copy of Lauren Tan's P-stack
+Unslop skill from
+<https://github.com/cursor/plugins/blob/73f8be4873ea4ba2b7378243a036d3360c69e04d/pstack/skills/unslop/SKILL.md>.
+The adaptation deletes the phrase about adding human voice, the process step
+that invokes the personal-voice section, and that complete section. It
+renumbers the following self-audit step. The remaining language is unchanged.
+P-stack is licensed under the MIT License. See
+`licenses/PSTACK-UNSLOP-LICENSE`.
 
 The release bundle includes Scientist1's Codex-native local browser and monitor. It does not include `@tintinweb/pi-subagents` or the deprecated predecessor harness.
