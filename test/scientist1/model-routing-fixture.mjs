@@ -5,8 +5,8 @@ import { createRoutingRecord, expectedRoleRuntime, loadModelPolicy } from "../..
 const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const TEST_CATALOG = {
   models: [
-    { slug: "test-strong", description: "Frontier agentic test model", priority: 1, visibility: "list", supported_in_api: true, supported_reasoning_levels: efforts },
-    { slug: "test-efficient", description: "Fast and affordable agentic test model", priority: 2, visibility: "list", supported_in_api: true, supported_reasoning_levels: efforts },
+    { slug: "gpt-6-astra", description: "Frontier agentic test model", priority: 1, visibility: "list", supported_in_api: true, supported_reasoning_levels: efforts },
+    { slug: "gpt-5.6-luna", description: "Fast and affordable agentic test model", priority: 2, visibility: "list", supported_in_api: true, supported_reasoning_levels: efforts },
   ],
 };
 

@@ -54,6 +54,13 @@ trace, and result. Save a screen recording when visual behavior matters.
     exact absence proof, one PASS receipt satisfies both regeneration and
     review, and closure archives the absent post-state without deadlock.
 
+20. Start a new study and inspect the saved model routing. Confirm strong roles
+    use `gpt-6-astra` and efficient roles use `gpt-5.6-luna`. Protocol Auditor,
+    Ideator, and Candidate Developer use high reasoning; other strong roles
+    use low. Adding newer catalog entries must not change these assignments.
+    Removing a configured model must fail the launch without creating a
+    replacement routing record.
+
 ## Negative cases
 
 1. Reject a forged draft ID, a run path outside the selected run, a symbolic-link intake directory, a bad token, or a non-loopback browser request.

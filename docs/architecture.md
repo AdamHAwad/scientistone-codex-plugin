@@ -134,9 +134,8 @@ per-phase frontier queue. Each frozen frontier must verify as exactly one of
 queued, pending, adjudicated, or superseded by an immutable rollback archive;
 new runs use 1.5 directly.
 
-Codex model catalogs can change between sessions. If the active semantic route
-disappears, Scientist1 preserves the original record and activates a currently
-available content-addressed route for future launches. This execution-routing change
-does not revise the scientific contract or invalidate a valid completed role
-receipt. Result-aware scientific-contract changes still archive and rerun every
-affected successor.
+Model names are fixed in the release's model policy. The strong tier uses
+`gpt-6-astra`; the efficient tier uses `gpt-5.6-luna`. Catalog checks validate
+availability and reasoning support only. They never choose or replace a model.
+Saved runs retain their hash-bound assignments, including historical routing
+records. New model assignments ship through plugin releases.

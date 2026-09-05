@@ -1102,7 +1102,7 @@ const tools = [
   },
   {
     name: "prepare_role_launch",
-    description: "Resolve Scientist1's semantic model policy, then authorize one native Codex specialist launch. Call immediately before every specialist spawn and use the returned task_name, fork_turns, model, reasoning_effort, and assignment exactly. Keep logical_task_name stable. A grant or dispatch failure before authorization may reuse the same attempt with a fresh task_name; after a specialist launch is accepted, use the next attempt.",
+    description: "Validate Scientist1's fixed model policy, then authorize one native Codex specialist launch. Call immediately before every specialist spawn and use the returned task_name, fork_turns, model, reasoning_effort, and assignment exactly. Keep logical_task_name stable. A grant or dispatch failure before authorization may reuse the same attempt with a fresh task_name; after a specialist launch is accepted, use the next attempt.",
     inputSchema: {
       type: "object",
       additionalProperties: false,

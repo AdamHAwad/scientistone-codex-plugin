@@ -829,7 +829,7 @@ test("paper style requires rendered fidelity and denies style inputs to scientif
   assert.match(run("verify-role", root, receipt).stderr, /restricted or evaluator-only input inputs\/style\/01-reference\.txt/);
 });
 
-test("1.5.2 continues an active 1.5.1 approval and specialist receipt", (t) => {
+test("1.5.3 continues an active 1.5.1 approval and specialist receipt", (t) => {
   const root = newRun(t);
   const approval = read(root, "contract/approval.json");
   approval.schema_version = 1;
@@ -1046,12 +1046,11 @@ test("scientific stop reasons cannot waive frozen discovery minima", (t) => {
   investigate(root);
   assert.match(discover(root, "stop-below-min").stderr, /too few eligible ideas/);
 });
-test("future model routing changes preserve the verified contract and original route", async (t) => {
+test("unavailable models preserve the verified contract and original route", async (t) => {
   const root = contract(t);
   const original = fs.readFileSync(path.join(root, "environment/model-routing.json"));
   const newer = { models: TEST_CATALOG.models.map((item) => ({ ...item, slug: `${item.slug}-next` })) };
-  const active = await ensureRunRouting(root, { catalog: newer });
-  assert.match(active.tiers.strong.model, /-next$/);
+  await assert.rejects(ensureRunRouting(root, { catalog: newer }), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
   assert.deepEqual(fs.readFileSync(path.join(root, "environment/model-routing.json")), original);
   assert.equal(run("verify", root).status, 0);
 });

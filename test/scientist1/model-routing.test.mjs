@@ -16,7 +16,7 @@ after(() => fs.rmSync(STATE_HOME, { recursive: true, force: true }));
 const efforts = ["low", "medium", "high", "xhigh", "max", "ultra"];
 const model = (slug, description, priority, extra = {}) => ({ slug, description, priority, visibility: "list", supported_in_api: true, supported_reasoning_levels: efforts, ...extra });
 
-function catalog(strong = "gpt-6-astra", efficient = "gpt-6-luna", offset = 0) {
+function catalog(strong = "gpt-6-astra", efficient = "gpt-5.6-luna", offset = 0) {
   return { models: [model(strong, "Latest frontier agentic model", 1 + offset), model(efficient, "Fast and affordable agentic model", 2 + offset), model("balanced", "Balanced everyday agentic model", 3 + offset)] };
 }
 
@@ -145,22 +145,22 @@ function runHook(input, env = {}) {
   return spawnSync(HOOK_COMMAND, { shell: true, env: { ...process.env, SCIENTIST1_STATE_HOME: STATE_HOME, PLUGIN_ROOT: ROOT, ...env }, input: `${JSON.stringify(input)}\n`, encoding: "utf8" });
 }
 
-test("semantic routing follows future catalog meaning instead of model names", () => {
-  const resolved = resolveModelCatalog(catalog());
+test("release model names ignore catalog descriptions, priorities, and new models", () => {
+  const live = catalog();
+  live.models.forEach((item) => { item.description = "Changed description"; item.priority = 99; });
+  live.models[0].visibility = "hide";
+  live.models.unshift(model("new-flagship", "Most capable frontier model", 0), model("new-fast", "Fast and affordable model", 0));
+  const resolved = resolveModelCatalog(live);
   assert.equal(resolved.tiers.strong.model, "gpt-6-astra");
-  assert.equal(resolved.tiers.efficient.model, "gpt-6-luna");
-
-  const arbitrary = resolveModelCatalog({ models: [
-    model("model-alpha", "General fast model", 1, { model_tier: "strong" }),
-    model("model-beta", "General strong model", 2, { model_tier: "efficient" }),
-  ] });
-  assert.equal(arbitrary.tiers.strong.model, "model-alpha");
-  assert.equal(arbitrary.tiers.efficient.model, "model-beta");
+  assert.equal(resolved.tiers.efficient.model, "gpt-5.6-luna");
 });
 
-test("the bundled policy reserves deep reasoning for judgment and lowers mechanical roles", () => {
+test("release reasoning changes only former strong roles", () => {
   const policy = loadModelPolicy();
-  assert.deepEqual(policy.roles.i1_verifier_builder, { tier: "strong", reasoning_effort: "high" });
+  const high = ["protocol_auditor", "ideator", "candidate_developer"];
+  for (const [role, setting] of Object.entries(policy.roles)) {
+    if (setting.tier === "strong") assert.equal(setting.reasoning_effort, high.includes(role) ? "high" : "low", role);
+  }
   assert.equal(policy.roles.evaluator.reasoning_effort, "low");
   assert.equal(policy.roles.audit_reporter.reasoning_effort, "low");
   assert.equal(policy.roles.i3_reference_auditor.reasoning_effort, "high");
@@ -235,16 +235,11 @@ test("every frozen 1.2 policy role resolves without changing the released role a
   }
 });
 
-test("semantic routing fails closed on ambiguity or unsupported effort", () => {
-  assert.throws(() => resolveModelCatalog({ models: [
-    model("strong-a", "Frontier model", 1),
-    model("strong-b", "Flagship model", 1),
-    model("efficient", "Fast and affordable model", 2),
-  ] }), /ambiguous strong model priority tie/);
-  assert.throws(() => resolveModelCatalog({ models: [
-    model("strong", "Frontier model", 1),
-    model("efficient", "Fast and affordable model", 2, { supported_reasoning_levels: ["low", "medium"] }),
-  ] }), /does not support required reasoning effort high/);
+test("fixed routing rejects missing models and unsupported effort without substitution", () => {
+  assert.throws(() => resolveModelCatalog(catalog("new-strong")), /configured strong model gpt-6-astra is unavailable/);
+  const live = catalog();
+  live.models[1].supported_reasoning_levels = ["low", "medium"];
+  assert.throws(() => resolveModelCatalog(live), /does not support required reasoning effort high/);
 });
 
 test("saved routing records reject unknown fields before launch matching", () => {
@@ -263,7 +258,7 @@ test("a mechanical efficient launch resolves to low effort", async (t) => {
     allowed_external_sources: [],
     task_brief: brief("selection/selected"),
   }, { catalog: catalog(), stateHome: STATE_HOME });
-  assert.equal(prepared.model, "gpt-6-luna");
+  assert.equal(prepared.model, "gpt-5.6-luna");
   assert.equal(prepared.reasoning_effort, "low");
   const launch = JSON.parse(fs.readFileSync(path.join(run, prepared.launch_record), "utf8"));
   assert.equal(launch.reasoning_effort, "low");
@@ -375,35 +370,44 @@ test("unmigrated 1.3 and 1.4 runs cannot prepare or consume specialist launches"
   await assert.rejects(() => prepareRoleLaunch({ run_path: blockedRun, task_name: "blocked_before_migration", role: "literature_mapper", declared_inputs: ["study-plan.md"], declared_outputs: ["evidence/search-log.jsonl"], allowed_external_sources: [], task_brief: brief() }, { catalog: catalog(), stateHome: STATE_HOME }), (error) => error.code === "S1_CONVERGENCE_MIGRATION_REQUIRED");
 });
 
-test("a run freezes its resolution while a new run resolves a newer catalog", async (t) => {
+test("new and resumed runs retain release model names when newer models appear", async (t) => {
   const first = runRoot(t, "frozen");
-  const initial = await ensureRunRouting(first, { catalog: catalog("generation-a-strong", "generation-a-efficient") });
-  const newerCatalog = { models: [
-    model("generation-b-strong", "Latest frontier agentic model", 1),
-    model("generation-b-efficient", "Fast and affordable agentic model", 2),
-    model("generation-a-strong", "Prior frontier agentic model", 10),
-    model("generation-a-efficient", "Prior fast and affordable agentic model", 11),
-  ] };
-  const resumed = await ensureRunRouting(first, { catalog: newerCatalog });
+  const initial = await ensureRunRouting(first, { catalog: catalog() });
+  const newer = catalog();
+  newer.models.unshift(model("new-strong", "Frontier model", 0), model("new-efficient", "Fast model", 0));
+  const resumed = await ensureRunRouting(first, { catalog: newer });
   assert.equal(resumed.routing_sha256, initial.routing_sha256);
-  assert.equal(resumed.tiers.strong.model, "generation-a-strong");
-
-  const second = runRoot(t, "new");
-  const fresh = await ensureRunRouting(second, { catalog: newerCatalog });
-  assert.equal(fresh.tiers.strong.model, "generation-b-strong");
-  assert.equal(fresh.tiers.efficient.model, "generation-b-efficient");
+  const fresh = await ensureRunRouting(runRoot(t, "new"), { catalog: newer });
+  assert.equal(fresh.tiers.strong.model, "gpt-6-astra");
+  assert.equal(fresh.tiers.efficient.model, "gpt-5.6-luna");
 });
 
-test("an unavailable frozen route is archived and replaced for future launches", async (t) => {
+test("unavailable frozen models never create replacement routes", async (t) => {
   const run = runRoot(t, "unavailable");
-  const first = await ensureRunRouting(run, { catalog: catalog("generation-a-strong", "generation-a-efficient") });
-  const original = fs.readFileSync(path.join(run, "environment", "model-routing.json"));
-  const next = await ensureRunRouting(run, { catalog: catalog("generation-b-strong", "generation-b-efficient") });
-  assert.notEqual(next.routing_sha256, first.routing_sha256);
-  assert.equal(next.tiers.strong.model, "generation-b-strong");
-  assert.deepEqual(fs.readFileSync(path.join(run, "environment", "model-routing.json")), original);
-  assert.ok(fs.existsSync(path.join(run, "environment", "routing-history", `${next.routing_sha256}.json`)));
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(run, "environment", "model-routing-active.json"), "utf8")), { schema_version: 1, routing_sha256: next.routing_sha256, path: `environment/routing-history/${next.routing_sha256}.json` });
+  await ensureRunRouting(run, { catalog: catalog() });
+  const original = fs.readFileSync(path.join(run, "environment/model-routing.json"));
+  await assert.rejects(ensureRunRouting(run, { catalog: catalog("new-strong", "new-efficient") }), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
+  assert.deepEqual(fs.readFileSync(path.join(run, "environment/model-routing.json")), original);
+  assert.equal(fs.existsSync(path.join(run, "environment/model-routing-active.json")), false);
+  assert.equal(fs.existsSync(path.join(run, "environment/routing-history")), false);
+});
+
+test("historical policies retain their saved model names and reasoning", async (t) => {
+  const run = runRoot(t, "historical");
+  const policy = loadModelPolicy();
+  policy.models = { strong: "old-strong", efficient: "old-efficient" };
+  policy.roles.contract_auditor.reasoning_effort = "high";
+  const record = createRoutingRecord(catalog("old-strong", "old-efficient"), policy);
+  delete record.policy.models;
+  record.policy_sha256 = valueHash(record.policy);
+  const core = { ...record }; delete core.routing_sha256;
+  record.routing_sha256 = valueHash(core);
+  fs.mkdirSync(path.join(run, "environment"));
+  fs.writeFileSync(path.join(run, "environment/model-routing.json"), JSON.stringify(record));
+  const resumed = await ensureRunRouting(run, { catalog: catalog("old-strong", "old-efficient") });
+  assert.equal(resumed.routing_sha256, record.routing_sha256);
+  assert.equal(resumed.tiers.strong.model, "old-strong");
+  assert.equal(resumed.policy.roles.contract_auditor.reasoning_effort, "high");
 });
 
 test("live catalog probes are single-flight, bounded, bypassable, and recover after failure", async (t) => {
@@ -449,7 +453,7 @@ test("the bundled hook rewrites an authorized spawn exactly once and leaves unre
   assert.equal(first.status, 0, first.stderr);
   const output = JSON.parse(first.stdout);
   const updated = output.hookSpecificOutput.updatedInput;
-  assert.deepEqual(updated, { task_name: "contract_check", message, fork_turns: "none", model: "gpt-6-astra", reasoning_effort: "high" });
+  assert.deepEqual(updated, { task_name: "contract_check", message, fork_turns: "none", model: "gpt-6-astra", reasoning_effort: "low" });
 
   const reused = runHook({ hook_event_name: "PreToolUse", tool_name: "spawn_agent", tool_input: { task_name: prepared.task_name, message } });
   assert.equal(JSON.parse(reused.stdout).hookSpecificOutput.permissionDecision, "deny");

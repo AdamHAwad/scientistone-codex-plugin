@@ -534,10 +534,9 @@ The checkpoint command accepts domain-specific extra artifacts, but these minimu
 
 The contract receipt binds `environment/bootstrap.json`; execution routing is
 bound per specialist launch rather than treated as a scientific contract input.
-The original `environment/model-routing.json` remains immutable. A compatible
-future route is stored content-addressed under `environment/routing-history/`
-and selected by `environment/model-routing-active.json`; prior launch hashes
-continue to resolve to their original validated record.
+The `environment/model-routing.json` record remains immutable. Model names come
+from the release's fixed policy. Historical routing records remain readable for
+prior launch verification; the MCP never creates replacement routes.
 
 Each phase checkpoint must also include the individual `role-receipts/<agent-task>.json` files for every specialist whose work it promotes. Pass the individual files, not the whole growing `role-receipts/` directory.
 

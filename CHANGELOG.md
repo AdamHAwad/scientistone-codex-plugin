@@ -2,6 +2,12 @@
 
 This project follows Semantic Versioning.
 
+## 1.5.3 - 2026-09-05
+
+- Pin the strong tier to GPT-6 Astra and the efficient tier to GPT-5.6 Luna.
+- Set former strong-tier high roles to low reasoning and former xhigh roles to high. Efficient-role reasoning stays unchanged.
+- Remove catalog-based model selection and automatic model replacement. Model assignments change through plugin releases; saved runs retain their assignments.
+
 ## 1.5.2 - 2026-09-04
 
 - Added an optional eighth research-intake step for paper prose, structure, and

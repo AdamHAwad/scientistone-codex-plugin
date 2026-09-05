@@ -249,7 +249,10 @@ grant; launch only missing or rejected logical tasks. Never reuse a prior
 sample as a new repetition or vote, and preserve every failed or duplicate
 attempt.
 
-Use the model and reasoning policy in `references/model-policy.json` when the current Codex runtime offers those choices. If it does not, use the best available native specialist and record the actual runtime. Do not invent a model name or enforcement result.
+Use the exact model names and reasoning efforts in `references/model-policy.json`.
+The strong tier uses `gpt-6-astra`; the efficient tier uses `gpt-5.6-luna`.
+Do not substitute models based on catalog descriptions, priority, or new releases.
+Existing runs keep their saved assignments.
 
 ## Rules that do not change
 
@@ -302,10 +305,9 @@ guess it from the seriousness of a finding.
 
 Operational launch errors with codes such as `S1_LAUNCH_GRANT_NOT_FOUND`, `S1_LAUNCH_GRANT_EXPIRED`, or `S1_LAUNCH_GRANT_MISMATCH` are recoverable: prepare a new one-use grant, retain the logical task name and attempt, and redispatch. Do not require a Codex restart, global installation, or manually copied runtime.
 
-If a model route becomes unavailable, the MCP preserves the original route,
-saves a content-addressed compatible route, and activates it only for future launches. Existing receipts remain bound
-to their saved launches; route availability alone is not a scientific-contract
-revision and does not invalidate unrelated scientific evidence.
+If a configured model becomes unavailable, preserve the saved route and report
+the unavailable model. Do not select a replacement or rewrite the routing record.
+Model configuration changes require a plugin release.
 
 ## Completion
 

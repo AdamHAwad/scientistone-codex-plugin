@@ -39,10 +39,6 @@ const REPAIR_REVIEW_OUTPUTS = Object.freeze({
   i4_judge: ["audit/i4"],
   claim_provenance_auditor: ["audit/claim-provenance.json"],
 });
-const TIER_WORDS = {
-  strong: ["strong", "frontier", "flagship", "most capable", "most advanced", "state of the art", "state-of-the-art"],
-  efficient: ["efficient", "affordable", "fast", "low cost", "low-cost", "cost effective", "cost-effective", "lightweight", "high volume", "high-volume"],
-};
 const liveCatalogCache = new Map();
 const liveCatalogInflight = new Map();
 
@@ -168,6 +164,10 @@ function assertObject(value, label) {
 function validatePolicy(policy) {
   assertObject(policy, "model policy");
   if (policy.schema_version !== 1) throw new Error("Unsupported Scientist1 model-policy schema.");
+  if (policy.models !== undefined) {
+    assertObject(policy.models, "model policy models");
+    for (const tier of TIERS) if (typeof policy.models[tier] !== "string" || !policy.models[tier]) throw new Error(`Missing configured ${tier} model.`);
+  }
   assertObject(policy.roles, "model policy roles");
   for (const [role, setting] of Object.entries(policy.roles)) {
     if (!/^[a-z0-9_]+$/.test(role)) throw new Error(`Invalid role in model policy: ${role}.`);
@@ -207,41 +207,16 @@ function normalizeCatalog(catalog) {
       semantic_fields: semanticFields,
       tags: Array.isArray(model?.tags) ? model.tags.filter((tag) => typeof tag === "string") : [],
     };
-  }).filter((model) => typeof model.slug === "string" && model.slug && model.supported_in_api && (model.visibility === null || model.visibility === "list"));
-}
-
-function semanticText(model) {
-  return model.description.toLowerCase();
-}
-
-function declaredTier(model) {
-  const values = [...Object.values(model.semantic_fields), ...model.tags].map((value) => value.toLowerCase().trim());
-  const matches = [...TIERS].filter((tier) => values.some((value) => value === tier || TIER_WORDS[tier].includes(value)));
-  return matches.length === 1 ? matches[0] : null;
-}
-
-function matchesTier(model, tier) {
-  const declared = declaredTier(model);
-  if (declared) return declared === tier;
-  const text = semanticText(model);
-  const own = TIER_WORDS[tier].some((word) => text.includes(word));
-  const otherTier = tier === "strong" ? "efficient" : "strong";
-  const other = TIER_WORDS[otherTier].some((word) => text.includes(word));
-  return own && !other;
-}
-
-function chooseTier(models, tier) {
-  const candidates = models.filter((model) => matchesTier(model, tier)).sort((left, right) => left.priority - right.priority || left.slug.localeCompare(right.slug));
-  if (!candidates.length) throw new Error(`The live Codex catalog does not unambiguously identify an eligible ${tier} model.`);
-  if (candidates.length > 1 && candidates[0].priority === candidates[1].priority) throw new Error(`The live Codex catalog has an ambiguous ${tier} model priority tie.`);
-  return candidates[0];
+  }).filter((model) => typeof model.slug === "string" && model.slug && model.supported_in_api);
 }
 
 function resolveModelCatalog(catalog, policy = loadModelPolicy()) {
   validatePolicy(policy);
   const models = normalizeCatalog(catalog);
+  const configured = policy.models ?? loadModelPolicy().models;
   const tiers = Object.fromEntries([...TIERS].map((tier) => {
-    const selected = chooseTier(models, tier);
+    const selected = models.find((model) => model.slug === configured[tier]);
+    if (!selected) throw new Error(`The configured ${tier} model ${configured[tier]} is unavailable. Model changes require a plugin release.`);
     const required = [...new Set(Object.values(policy.roles).filter((setting) => setting.tier === tier).map((setting) => setting.reasoning_effort))];
     for (const effort of required) {
       if (!selected.supported_reasoning_levels.includes(effort)) throw new Error(`The resolved ${tier} model does not support required reasoning effort ${effort}.`);
@@ -273,7 +248,9 @@ function validateRoutingRecord(record) {
   if (record.schema_version !== 1 || typeof record.resolved_at !== "string" || !Number.isFinite(Date.parse(record.resolved_at))) throw new Error("Invalid Scientist1 model-routing record.");
   validatePolicy(record.policy);
   if (record.policy_sha256 !== sha256(record.policy) || record.catalog_sha256 !== sha256(record.catalog)) throw new Error("Scientist1 model-routing policy or catalog hash mismatch.");
-  const { tiers } = resolveModelCatalog(record.catalog, record.policy);
+  // Older runs retain their hash-bound model names without catalog-based reselection.
+  const models = record.policy.models ?? Object.fromEntries([...TIERS].map((tier) => [tier, record.tiers?.[tier]?.model]));
+  const { tiers } = resolveModelCatalog(record.catalog, { ...record.policy, models });
   if (canonical(record.tiers) !== canonical(tiers)) throw new Error("Scientist1 model-routing resolution is inconsistent with its frozen catalog.");
   const core = { ...record };
   delete core.routing_sha256;
@@ -339,9 +316,9 @@ function validateCurrentAvailability(record, catalog) {
   const current = normalizeCatalog(catalog);
   for (const [tier, selected] of Object.entries(record.tiers)) {
     const model = current.find((candidate) => candidate.slug === selected.model);
-    if (!model) throw Object.assign(new Error(`The ${tier} model selected for future launches is no longer available. Activate a currently supported semantic route for future specialists while preserving every prior launch binding. Do not silently downgrade or ask the researcher.`), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
+    if (!model) throw Object.assign(new Error(`The ${tier} model selected for future launches is no longer available. Model changes require a plugin release; preserve the saved route.`), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
     const required = [...new Set(Object.values(record.policy.roles).filter((setting) => setting.tier === tier).map((setting) => setting.reasoning_effort))];
-    if (required.some((effort) => !model.supported_reasoning_levels.includes(effort))) throw Object.assign(new Error(`The ${tier} model selected for future launches no longer supports every required reasoning effort. Activate a currently compatible semantic route for future specialists while preserving every prior launch binding. Do not silently downgrade or ask the researcher.`), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
+    if (required.some((effort) => !model.supported_reasoning_levels.includes(effort))) throw Object.assign(new Error(`The ${tier} model selected for future launches no longer supports every required reasoning effort. Model changes require a plugin release; preserve the saved route.`), { code: "S1_FROZEN_ROUTE_UNAVAILABLE" });
   }
 }
 
@@ -366,18 +343,8 @@ async function ensureRunRouting(runPath, options = {}) {
   const liveCatalog = await cachedLiveCatalog(options);
   if (fs.existsSync(file)) {
     const record = validateRoutingRecord(readJson(activeRoutingPath(run)));
-    try {
-      validateCurrentAvailability(record, liveCatalog);
-      return record;
-    } catch (error) {
-      if (error.code !== "S1_FROZEN_ROUTE_UNAVAILABLE") throw error;
-      const replacement = createRoutingRecord(liveCatalog, validatePolicy(record.policy));
-      const relative = path.join("environment", "routing-history", `${replacement.routing_sha256}.json`).split(path.sep).join("/");
-      const history = path.join(run, relative);
-      if (!fs.existsSync(history)) atomicJson(history, replacement, true);
-      atomicJson(path.join(run, ACTIVE_ROUTING_FILE), { schema_version: 1, routing_sha256: replacement.routing_sha256, path: relative });
-      return validateRoutingRecord(readJson(activeRoutingPath(run)));
-    }
+    validateCurrentAvailability(record, liveCatalog);
+    return record;
   }
   const policyFile = options.policyFile ?? (legacyRun(run) ? LEGACY_POLICY_FILE : POLICY_FILE);
   const record = createRoutingRecord(liveCatalog, loadModelPolicy(policyFile));
