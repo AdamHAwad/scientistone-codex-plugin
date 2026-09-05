@@ -52,7 +52,7 @@ grant; verified complete runs cannot start more specialists.
 
 Codex starts the bundled MCP automatically from `.mcp.json` with the Node.js runtime included with Codex. The launcher checks Codex-provided runtime paths before falling back to a compatible `node` already on `PATH`; the user does not install Node or another package. The server speaks MCP over stdio and opens an HTTP server on a random `127.0.0.1` port.
 
-The browser provides the complete eight-step research intake, direct project-local file upload, editable study-plan review, and interactive study flowchart. The optional writing-style step keeps example papers and templates separate from scientific evidence. External-audit mode omits that step. Drafts live under `.scientist1/intake/` in the active project. Attaching an approved run writes a hash-bound `contract/approval.json` and freezes approved style examples separately when present. The monitor reads `run.json`, receipts, role launches, repair incidents, and delivery files from the selected run. A random token protects its local API, and paths are canonicalized and constrained to the active project or selected run.
+The browser provides the complete seven-step intake, direct project-local file upload, editable study-plan review, and interactive study flowchart. Drafts live under `.scientist1/intake/` in the active project. Attaching an approved run writes a hash-bound `contract/approval.json`. The monitor reads `run.json`, receipts, role launches, repair incidents, and delivery files from the selected run. A random token protects its local API, and paths are canonicalized and constrained to the active project or selected run.
 
 The publisher operates no remote Scientist1 service. Any Codex surface that cannot start the bundled MCP or show the built-in browser uses the text intake. There is no application database, object store, queue, telemetry service, update service, or plugin-owned model API.
 
@@ -139,3 +139,14 @@ Model names are fixed in the release's model policy. The strong tier uses
 availability and reasoning support only. They never choose or replace a model.
 Saved runs retain their hash-bound assignments, including historical routing
 records. New model assignments ship through plugin releases.
+
+## Scientific writing
+
+Relevant specialist launches include the full scientific writing instructions,
+the example guide, and paths and checksums for the three bundled documents.
+The assignment hash covers this context. Each launch verifies the example bytes
+at its installed location, so a relocated installation needs no remote download.
+The Writer and Paper Critic read the matching examples and apply the guidance
+through their existing reports, handoffs, and revision. Other writing and
+analysis roles receive the same scientific standards within their own scope.
+The examples are presentation references and never become study evidence.

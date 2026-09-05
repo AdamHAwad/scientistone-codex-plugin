@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
@@ -10,7 +11,7 @@ async function text(relative) {
 
 test("public manifest ships one complete local Codex experience", async () => {
   const manifest = JSON.parse(await text(".codex-plugin/plugin.json"));
-  assert.equal(manifest.version, "1.5.3");
+  assert.equal(manifest.version, "1.5.4");
   assert.equal(manifest.license, "Apache-2.0");
   assert.equal(manifest.skills, "./skills/");
   assert.equal(manifest.mcpServers, "./.mcp.json");
@@ -127,8 +128,7 @@ test("setup doctrine requires the bundled local server", async () => {
   assert.match(skill, /Do not render or substitute an inline MCP form/i);
   assert.match(skill, /read_study_setup/);
   assert.match(skill, /wait_for_researcher/);
-  assert.match(skill, /Research mode has eight steps/i);
-  assert.match(skill, /External-audit mode has seven steps and omits paper style/i);
+  assert.match(skill, /seven-step full-page wizard/i);
   assert.match(skill, /copied directly by the bundled local MCP/i);
   assert.match(skill, /Do not upload them to any remote service/i);
   assert.match(intake, /bind only to loopback/i);
@@ -141,7 +141,7 @@ test("sparse intake and generated-contract defects use minimal staged recovery",
   const protocol = await text("skills/scientist1/references/protocol.md");
   const roles = await text("skills/scientist1/references/roles.md");
   assert.match(intake, /Only the research question is required/i);
-  assert.match(intake, /Blank purpose, prior-work, paper-style, evaluation, limit, or deliverable fields are valid intake/i);
+  assert.match(intake, /Blank purpose, prior-work, evaluation, limit, or deliverable fields are valid intake/i);
   assert.match(skill, /result-blind defect[\s\S]+same run/i);
   assert.match(skill, /result-aware defect[\s\S]+invalidate_and_rerun/i);
   assert.match(skill, /Pre-result contract stabilization stays a short closed-checklist pass/i);
@@ -164,23 +164,6 @@ test("public protocol retains the paper-compatible pilot default", async () => {
   assert.match(protocol, /standard profile only when the\s+researcher explicitly approves those larger budgets/i);
   assert.match(artifacts, /Pilot remains the paper-compatible default/i);
   assert.match(artifacts, /Standard is available only when the researcher explicitly approves/i);
-});
-
-test("paper roles receive the exact academic Unslop adaptation and bounded style contract", async () => {
-  const unslop = await text("skills/scientist1/references/paper-unslop.md");
-  const roles = await text("skills/scientist1/references/roles.md");
-  const protocol = await text("skills/scientist1/references/protocol.md");
-  const routing = await text("mcp/model-routing.mjs");
-  const attribution = await text("ATTRIBUTIONS.md");
-  assert.match(unslop, /^---\nname: unslop\ndescription: Cut AI tells from any writing\. Must always apply\.\ndisable-model-invocation: true\n---/);
-  assert.match(unslop, /31\. \*\*Prefer the plain word\.\*\*/);
-  assert.doesNotMatch(unslop, /Adding soul|add human voice|Use "I" when it fits/);
-  assert.match(routing, /PAPER_UNSLOP_ROLES = new Set\(\["writer", "paper_critic", "paper_style_auditor"\]\)/);
-  assert.match(roles, /## Paper style auditor/);
-  assert.match(roles, /Does this sound obviously AI-written\?/);
-  assert.match(roles, /No run may create review 4/);
-  assert.match(protocol, /Review 3 is forbidden at this stage because it is\s+reserved for the delivered paper/i);
-  assert.match(attribution, /73f8be4873ea4ba2b7378243a036d3360c69e04d/);
 });
 
 test("the optimized scheduler preserves causal barriers while filling independent slots", async () => {
@@ -263,4 +246,23 @@ test("the public 1.5 repair frontier is finite and release-owned", async () => {
   assert.ok(checklist.review_roles.brief_critic.includes("citation_identity_and_support"));
   assert.equal(new Set(checklist.blocker_classes).size, checklist.blocker_classes.length);
   assert.deepEqual(checklist.dispositions, ["CONFIRMED_DEFECT", "REVIEWER_FALSE_POSITIVE", "REPAIR_REGRESSION", "MECHANICAL_FAILURE"]);
+});
+
+
+test("writing guidance and original examples are bundled without a separate style workflow", async () => {
+  const guidance = await text("skills/scientist1/references/scientific-writing.md");
+  assert.match(guidance, /IMRD or IRDM/);
+  assert.match(guidance, /Specific Aims, Background/);
+  assert.match(guidance, /PA-25-301/);
+  const policy = JSON.parse(await text("skills/scientist1/references/model-policy.json"));
+  assert.equal(policy.roles.paper_style_auditor, undefined);
+  for (const relative of ["SKILL.md", "references/protocol.md", "references/roles.md", "references/artifacts.md", "references/intake.md", "scripts/coe.mjs"]) {
+    assert.doesNotMatch(await text(`skills/scientist1/${relative}`), /paper_style_auditor|paper-style-policy|style-reviews|paper-unslop/);
+  }
+  const manifest = JSON.parse(await text("skills/scientist1/references/writing-examples/manifest.json"));
+  assert.deepEqual(manifest.map((item) => item.kind), ["manuscript", "manuscript", "proposal"]);
+  for (const item of manifest) {
+    const bytes = await readFile(new URL(`skills/scientist1/references/writing-examples/${item.file}`, root));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), item.sha256);
+  }
 });

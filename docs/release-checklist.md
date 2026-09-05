@@ -25,7 +25,9 @@ marketplace version.
 
 - [ ] Fresh install starts the stdio MCP without a user-installed runtime
 - [ ] Local browser binds only to `127.0.0.1` with a random token
-- [ ] Eight-step research intake, separate style-example upload, editable plan review, and same-tab transition to the live flowchart all pass; external-audit mode still omits paper style
+- [ ] Seven-step intake, large file upload, editable plan review, and same-tab transition to the live flowchart all pass
+- [ ] Writing and critique launches include the full scientific writing guidance
+      and verified bundled examples, including retries and relocated installs
 - [ ] Uploaded files land only under the active project's `.scientist1/intake/` tree and match recorded hashes
 - [ ] Monitor reads verified local run files and supports pan, zoom, fit, stage selection, specialist details, and live refresh
 - [ ] Approval is hash-bound before the first launch, repair incidents remain

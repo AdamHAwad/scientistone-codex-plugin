@@ -23,7 +23,6 @@ hooks/enforce-study-completion.mjs
 hooks/hooks.json
 licenses/NEWSREADER-LICENSE
 licenses/PHOSPHOR-LICENSE
-licenses/PSTACK-UNSLOP-LICENSE
 mcp/model-routing.mjs
 mcp/server.mjs
 mcp/ui/app.css
@@ -44,9 +43,14 @@ skills/scientist1/references/intake.md
 skills/scientist1/references/legacy-model-policy-1.2.0.json
 skills/scientist1/references/legacy-roles-1.2.0.md
 skills/scientist1/references/model-policy.json
-skills/scientist1/references/paper-unslop.md
 skills/scientist1/references/protocol.md
 skills/scientist1/references/roles.md
+skills/scientist1/references/scientific-writing.md
+skills/scientist1/references/writing-examples/README.md
+skills/scientist1/references/writing-examples/aims-and-research-strategy.docx
+skills/scientist1/references/writing-examples/manifest.json
+skills/scientist1/references/writing-examples/mechano-metabolic-manuscript.pdf
+skills/scientist1/references/writing-examples/syntoc-manuscript.docx
 skills/scientist1/scripts/capacity-preflight.mjs
 skills/scientist1/scripts/coe.mjs
 skills/scientist1/scripts/i1-interpreter.mjs
@@ -84,3 +88,8 @@ contract and model policy are also bundled so genuine in-progress 1.2 runs can
 launch remaining specialists without being reinterpreted by later schemas;
 active 1.3/1.4 runs can add the separate 1.5 convergence docket without
 rewriting prior evidence, and every new run uses the 1.5 control plane.
+
+Writing instructions, the example guide, and verified example paths are included
+in relevant specialist assignments. The three original example documents ship
+inside the installable directory, with a checksum manifest and source notices.
+They require no separate download or researcher upload.

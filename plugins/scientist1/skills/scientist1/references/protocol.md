@@ -14,10 +14,7 @@ identify distinct machine objects.
 Inputs are `request.md`, approved `study-plan.md`, durable
 `contract/approval.json`, frozen `environment/bootstrap.json`, `contract/run-config.json`, and
 `contract/input-manifest.json`. External-audit mode also requires
-`contract/source-bundle-manifest.json`. A research intake with approved writing
-notes or examples also requires `contract/paper-style-policy.json` and every
-file it binds under `inputs/style/`. Those files are presentation references,
-not scientific inputs, and they do not appear in `contract/input-manifest.json`.
+`contract/source-bundle-manifest.json`.
 
 Before review, freeze the nine execution budgets in `run-config.json` and the
 scientific investigation limits in `study-plan.md`: search stop rule and
@@ -89,9 +86,7 @@ Evaluator source, held-out material, and private raw outputs live under
 
 Run `coe.mjs configure` and `coe.mjs init`, then call `attach_run_monitor` to
 bind `contract/approval.json`, before a contract specialist so the ledger and
-frozen common interpreter exist. The attach call creates and binds the optional
-paper-style policy and its local copies. A run without approved writing notes
-or examples has no such policy or directory. Before candidate generation or any
+frozen common interpreter exist. Before candidate generation or any
 candidate result exists, dispatch a fresh result-blind I1 policy author (compatibility
 role key `i1_verifier_builder`). It writes only
 `contract/i1-verification-policy.json` according to `i1-verification.md` and
@@ -109,12 +104,6 @@ Suggestions are nonblocking. The auditor reports all observable blockers in
 one pass and cannot broaden the checklist on re-audit; a later re-audit may add
 only a defect directly introduced by the repair delta. A later scientific
 surprise cannot silently change the policy.
-
-When present, the Contract Auditor also checks that the paper-style policy
-matches the approved review, binds every style example by path and hash, caps
-reviews at three, and states that examples cannot support claims or supply text
-to copy. This check concerns request fidelity and file boundaries. It does not
-judge the requested writing style.
 
 Separate the approved researcher charter from the generated execution
 contract. The charter is the approved question, named inputs, constraints,
@@ -458,31 +447,9 @@ the stripping command and clean-output check belong in the reproduction guide.
 The headline result equals the selected canonical evaluation. Distinguish
 evaluated method, ablation, post-hoc idea, failure, and speculation.
 
-When `contract/paper-style-policy.json` exists, the Writer also reads the
-approved notes and frozen style examples. These affect prose, organization,
-LaTeX conventions, and visible formatting only. The Writer must not copy their
-text or import their claims and citations. The first tagged draft goes to
-`paper/style-drafts/draft-01-tagged.tex`. Without the policy, write the normal
-canonical `paper/paper-tagged.tex` and skip every style-only artifact and role.
-
 ### 5.2 Check and write the paper
 
-With a paper-style policy, launch a fresh Paper Style Auditor on draft 1. It
-writes `paper/style-reviews/review-01.json` and records separate results for AI
-writing tells, prose, structure, formatting, and visual fidelity. Its
-`style_status` is `CONFORMANT` or `NONCONFORMANT`; its role receipt is
-`COMPLETE/PASS` when the comparison is correctly recorded. It never writes an
-overall scientific verdict.
-
-Stop the writing review at the first conformant result. If review 1 is
-nonconformant, give its atomic findings to a fresh Writer, preserve scientific
-meaning and claim IDs, and create `draft-02-tagged.tex`. Launch a fresh Paper
-Style Auditor for `review-02.json`, then stop the writing loop regardless of
-status. One Writer copies the selected immutable draft byte for byte to
-`paper/paper-tagged.tex`. Review 3 is forbidden at this stage because it is
-reserved for the delivered paper.
-
-Perform deterministic tag and path checks on the canonical draft. A Paper Critic writes
+Perform deterministic tag and path checks first. A Paper Critic writes
 `paper/grounding-report.json` before `paper/critic.md`:
 
 ```json
@@ -502,14 +469,28 @@ when its artifact and locator exist. A ratio below 0.8 after the frozen repair
 limit returns to the earliest missing evidence. The critic writes one overall
 verdict line and does not rewrite prose or create evidence.
 
-The Writer resolves scientific findings without inventing evidence, then
-composes the paper from verified bibliography keys. Apply the approved style
-policy while preserving the scientific repair. Distinguish evaluated method,
-ablation, post-hoc idea, failure, and speculation.
+The Writer resolves findings without inventing evidence, then composes the
+paper from verified bibliography keys. Distinguish evaluated method, ablation,
+post-hoc idea, failure, and speculation.
 
-Compose conventional scientific LaTeX: Abstract, Introduction, Related Work, Method, Experiments/Results, Discussion and Limitations, Conclusion, and References. Use only verified bibliography keys. Write for a domain researcher unfamiliar with the run internals.
+Compose the approved deliverable using `references/scientific-writing.md`.
+For a manuscript, use IMRD or IRDM with an Abstract, References, and applicable
+declarations. For a proposal, use the specified proposal sections and distinguish
+planned work from completed results. Keep Problem, Gap, Approach, Results, and
+Limitations in the internal representation rather than forcing that outline on
+the final document. Use only verified bibliography keys. Write connected prose
+for a domain researcher unfamiliar with the run internals.
 
-Gate: tagged representation, grounding report, critic PASS, tagged LaTeX, bibliography, and figures/tables with source links are checkpointed. When the style policy exists, every immutable writing draft and review is also checkpointed, and the canonical tagged LaTeX is byte-identical to the last reviewed draft.
+The launch message includes the full writing instructions and the local bundled
+example paths. The Writer and Paper Critic read the examples for the approved
+deliverable type and name the conventions applied or checked in their existing
+handoffs. The critic puts concrete editorial notes in its existing report; the
+Writer addresses them during the existing revision. No additional intake,
+specialist, policy artifact, or review loop is required. Statistical plots come
+from saved data and reproducible analysis, not image generation. Request missing
+plots or statistics from the assigned analyst without changing the frozen plan.
+
+Gate: tagged representation, grounding report, critic PASS, tagged LaTeX, bibliography, and figures/tables with source links are checkpointed.
 
 ## 6. Claim verification
 
@@ -543,17 +524,7 @@ per ID. Produce presentation `paper/paper.tex` with tags removed.
 
 When the approved plan requires PDF and the frozen environment contains a verified compiler, compile the PDF and visually inspect it before this gate passes. Otherwise preserve the verified source document and do not install a compiler merely to satisfy the plugin.
 
-When the paper-style policy exists, launch one final fresh Paper Style Auditor
-after claim verification and rendering. It reads `paper/paper.tex`, the PDF
-when present, and the approved style references. It writes the next contiguous
-numbered review with `stage: "delivery"` and binds the exact final paper hash.
-This is review 2 when the writing draft passed on review 1, or review 3 when the
-writing stage used both reviews. A delivery-stage nonconformance records the
-remaining differences in the final package. It does not reopen scientific work
-or permit review 4. Unsupported claims still follow the ordinary Paper Critic
-and Claim Verifier repair path.
-
-Gate: no unsupported headline claim, all numeric claims traced, references compile, final TeX and PDF agree, and the verification report passes. When requested, the final paper-style review must exist, bind the delivered paper, and keep the total review count at three or fewer.
+Gate: no unsupported headline claim, all numeric claims traced, references compile, final TeX and PDF agree, and the verification report passes.
 
 ## 7. Integrity audit
 

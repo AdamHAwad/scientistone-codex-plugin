@@ -62,15 +62,6 @@ async function request(context, route, options = {}, extra = {}) {
   return body;
 }
 
-async function rejectedRequest(context, route, options = {}, extra = {}) {
-  const headers = new Headers(options.headers || {});
-  headers.set("X-Scientist1-Token", context.token);
-  const response = await fetch(apiUrl(context, route, extra), { ...options, headers });
-  const body = await response.json();
-  assert.equal(response.ok, false, JSON.stringify(body));
-  return { status: response.status, body };
-}
-
 test("the bundled MCP exposes the intake and monitor tools", async () => {
   const initialized = await handleMessage({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25" } });
   assert.equal(initialized.protocolVersion, "2025-11-25");
@@ -91,8 +82,6 @@ test("the bundled MCP exposes the intake and monitor tools", async () => {
   });
   assert.equal(listed.tools.find((item) => item.name === "start_study_setup")._meta.ui, undefined);
   assert.ok(listed.tools.find((item) => item.name === "publish_study_review").inputSchema.properties.review.required.includes("file_assignments"));
-  assert.ok(listed.tools.find((item) => item.name === "publish_study_review").inputSchema.properties.review.required.includes("paper_style"));
-  assert.ok(listed.tools.find((item) => item.name === "prepare_role_launch").inputSchema.properties.role.enum.includes("paper_style_auditor"));
 });
 
 test("the fixed-purpose capacity tools persist a decision without project or study input", async (t) => {
@@ -303,54 +292,6 @@ test("a researcher wait pauses after one hour with a saved, resumable draft", as
   assert.equal(reviewTimedOut.change_request_draft, "Keep the saved edit for later.");
 });
 
-test("schema-1 research drafts resume on the same logical screen and migrate once", async (t) => {
-  const project = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-mcp-migration-"));
-  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
-  for (let oldStep = 0; oldStep <= 6; oldStep += 1) {
-    const id = `00000000-0000-4000-8000-${String(oldStep).padStart(12, "0")}`;
-    const storedPath = `.scientist1/intake/${id}/files/unclassified/input-${oldStep}.txt`;
-    const statePath = path.join(project, ".scientist1", "intake", id, "state.json");
-    put(project, storedPath, `input ${oldStep}\n`);
-    put(project, path.relative(project, statePath), `${JSON.stringify({
-      schema_version: 1,
-      id,
-      project_root: fs.realpathSync(project),
-      mode: "research",
-      status: "review_ready",
-      revision: 7,
-      created_at: "2026-09-01T00:00:00.000Z",
-      updated_at: "2026-09-01T00:00:01.000Z",
-      wizard_step: oldStep,
-      answers: { question: "Q", objective: "O", materials_note: "M", papers: "P", evaluation: "E", constraints: "C" },
-      uploads: [{ id: `upload-${oldStep}`, name: `input-${oldStep}.txt`, size: 8, media_type: "text/plain", kind: "unclassified", classification: "unclassified", purpose: "", stored_path: storedPath, sha256: "a".repeat(64), uploaded_at: "2026-09-01T00:00:00.000Z" }],
-      review: { question: "Q", objective: "O", materials: "M", prior_work: "P", evaluation: "E", requirements: "R", deliverables: "D", study_plan_markdown: "# Plan\n" },
-      review_draft: { question: "Edited Q", study_plan_markdown: "# Edited plan\n" },
-      change_request: "keep",
-      change_request_draft: "keep draft",
-      review_edits: [{ fields: ["question"] }],
-      approved_at: null,
-      execution_authority: null,
-      run_path: null,
-    })}\n`);
-    const first = await callTool("read_study_setup", { project_root: project, draft_id: id });
-    const second = await callTool("read_study_setup", { project_root: project, draft_id: id });
-    assert.equal(first.schema_version, 2);
-    assert.equal(first.wizard_step, oldStep >= 4 ? oldStep + 1 : oldStep);
-    assert.equal(first.answers.paper_style, "");
-    assert.equal(first.uploads[0].context, "study");
-    assert.deepEqual(second, first);
-    assert.equal(JSON.parse(fs.readFileSync(statePath, "utf8")).schema_version, 1, "read-only migration must not rewrite the draft");
-    await updateDraft(project, id, () => {});
-    const persisted = JSON.parse(fs.readFileSync(statePath, "utf8"));
-    assert.equal(persisted.schema_version, 2);
-    assert.equal(persisted.wizard_step, oldStep >= 4 ? oldStep + 1 : oldStep);
-    assert.equal(persisted.revision, 8);
-    assert.equal(persisted.review.question, "Q");
-    assert.equal(persisted.review_draft.question, "Edited Q");
-    assert.equal(persisted.change_request_draft, "keep draft");
-  }
-});
-
 test("intake files persist, approval attaches a verified run, and discard removes only its draft", async (t) => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-mcp-"));
   t.after(() => {
@@ -375,10 +316,10 @@ test("intake files persist, approval attaches a verified run, and discard remove
   assert.match(bundledUi, /src="\.\/app\.js"/);
   const bundledJs = await fetch(`${context.origin}/app.js`).then((response) => response.text());
   assert.equal(bundledJs.match(/<input[^>]+type="file"/g)?.length, 1);
-  assert.match(bundledJs, /data-upload-context/);
   assert.match(bundledJs, /What should S1 investigate\?/);
-  assert.match(bundledJs, /How should the paper be written\?/);
-  assert.match(bundledJs, /use them only as writing references/i);
+  const stepDefinition = bundledJs.slice(bundledJs.indexOf("const steps = ["), bundledJs.indexOf("function escapeHtml"));
+  assert.equal([...stepDefinition.matchAll(/label: /g)].length, 7);
+  assert.doesNotMatch(bundledJs, /paper_style|writing style|paper-writing examples/i);
   assert.match(bundledJs, /Choose files or drop them here\. S1 will sort them\./);
   assert.match(bundledJs, /Send to S1/);
   assert.match(bundledJs, /S1 is drafting your study plan/);
@@ -403,7 +344,7 @@ test("intake files persist, approval attaches a verified run, and discard remove
   });
   await new Promise((resolve) => setImmediate(resolve));
 
-  state = await request(context, "/answers", { method: "POST", body: JSON.stringify({ question: "Which method performs best?", objective: "Choose a method.", paper_style: "Use the supplied paper's compact section structure and table style.", wizard_step: 4 }) });
+  state = await request(context, "/answers", { method: "POST", body: JSON.stringify({ question: "Which method performs best?", objective: "Choose a method.", wizard_step: 4 }) });
   assert.equal(state.answers.question, "Which method performs best?");
   assert.equal(state.wizard_step, 4);
   await new Promise((resolve) => setImmediate(resolve));
@@ -420,23 +361,8 @@ test("intake files persist, approval attaches a verified run, and discard remove
   assert.equal(state.uploads.length, 1);
   assert.equal(state.uploads[0].kind, "unclassified");
   assert.equal(state.uploads[0].classification, "unclassified");
-  assert.equal(state.uploads[0].context, "study");
   assert.match(state.uploads[0].stored_path, /files\/unclassified\/observations\.csv$/);
   assert.equal(fs.readFileSync(path.join(project, state.uploads[0].stored_path), "utf8"), "value\n1\n");
-
-  state = await request(context, "/upload", {
-    method: "POST",
-    body: Buffer.from("Example paper layout\n"),
-    headers: {
-      "Content-Type": "text/plain",
-      "X-Scientist1-Filename": Buffer.from("example-paper.txt").toString("base64url"),
-    },
-  }, { context: "paper_style" });
-  assert.equal(state.uploads.length, 2);
-  assert.equal(state.uploads[1].context, "paper_style");
-  assert.equal(state.uploads[1].kind, "style_example");
-  assert.equal(state.uploads[1].classification, "writing_only");
-  assert.match(state.uploads[1].stored_path, /files\/paper-style\/example-paper\.txt$/);
 
   state = await request(context, "/submit", { method: "POST", body: "{}" });
   assert.equal(state.status, "submitted");
@@ -446,7 +372,6 @@ test("intake files persist, approval attaches a verified run, and discard remove
     objective: "Choose a method.",
     materials: "Use observations.csv.",
     prior_work: "Search and read relevant comparisons.",
-    paper_style: "Use the supplied paper's compact section structure and table style.",
     evaluation: "Compare eligible methods on the same held-out records.",
     requirements: "Keep evaluator-only files private.",
     deliverables: "Paper, method, audit, and evidence files.",
@@ -456,19 +381,13 @@ test("intake files persist, approval attaches a verified run, and discard remove
   };
   await assert.rejects(
     callTool("publish_study_review", { project_root: project, draft_id: context.draft, review: { ...review, file_assignments: [] } }),
-    /classify every study upload exactly once/,
-  );
-  await assert.rejects(
-    callTool("publish_study_review", { project_root: project, draft_id: context.draft, review: { ...review, file_assignments: [...review.file_assignments, { upload_id: state.uploads[1].id, kind: "papers", classification: "shared", purpose: "Style reference." }] } }),
-    /Writing examples are style-only/,
+    /classify every uploaded file exactly once/,
   );
   state = await callTool("publish_study_review", { project_root: project, draft_id: context.draft, review });
   assert.equal(state.status, "review_ready");
   assert.equal(state.review_draft.question, review.question);
   assert.equal(state.uploads[0].classification, "shared");
   assert.equal(state.uploads[0].purpose, "Candidate observations.");
-  assert.equal(state.uploads[1].classification, "writing_only");
-  assert.equal(state.review.paper_style, review.paper_style);
   state = await request(context, "/review-draft", { method: "POST", body: JSON.stringify({ review: { objective: "Choose a dependable method." }, note: "Please use the stricter comparison." }) });
   assert.equal(state.review.objective, "Choose a method.");
   assert.equal(state.review_draft.objective, "Choose a dependable method.");
@@ -497,11 +416,6 @@ test("intake files persist, approval attaches a verified run, and discard remove
     /Study approval is final.*attach its monitor/,
   );
   assert.equal((await callTool("read_study_setup", { project_root: project, draft_id: context.draft })).status, "approved");
-  const styleUpload = state.uploads.find((upload) => upload.context === "paper_style");
-  let rejectedDelete = await rejectedRequest(context, "/upload", { method: "DELETE" }, { upload: styleUpload.id });
-  assert.equal(rejectedDelete.status, 400);
-  assert.match(rejectedDelete.body.error, /no longer accepts file changes/);
-  assert.equal(fs.existsSync(path.join(project, styleUpload.stored_path)), true);
 
   const run = path.join(project, "scientist1-runs", "test-run");
   fs.mkdirSync(run, { recursive: true });
@@ -512,28 +426,11 @@ test("intake files persist, approval attaches a verified run, and discard remove
   result = spawnSync(process.execPath, [COE, "init", run], { encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 
-  const escaped = fs.mkdtempSync(path.join(os.tmpdir(), "scientist1-style-escape-"));
-  t.after(() => fs.rmSync(escaped, { recursive: true, force: true }));
-  fs.symlinkSync(escaped, path.join(run, "inputs"), "dir");
-  await assert.rejects(callTool("attach_run_monitor", { project_root: project, draft_id: context.draft, run_path: run }), /Run directory cannot be a symbolic link/);
-  assert.deepEqual(fs.readdirSync(escaped), []);
-  fs.unlinkSync(path.join(run, "inputs"));
-
   const attached = await callTool("attach_run_monitor", { project_root: project, draft_id: context.draft, run_path: run });
   assert.equal(attached.status, "started");
-  const stylePolicy = JSON.parse(fs.readFileSync(path.join(run, "contract", "paper-style-policy.json"), "utf8"));
-  assert.equal(stylePolicy.max_reviews, 3);
-  assert.equal(stylePolicy.writing_review_limit, 2);
-  assert.equal(stylePolicy.examples.length, 1);
-  assert.equal(fs.readFileSync(path.join(run, stylePolicy.examples[0].frozen_path), "utf8"), "Example paper layout\n");
-  assert.equal(JSON.parse(fs.readFileSync(path.join(run, "contract", "approval.json"), "utf8")).paper_style_policy_sha256.length, 64);
   const reattached = await callTool("attach_run_monitor", { project_root: project, draft_id: context.draft, run_path: run });
   assert.equal(reattached.status, "started");
   assert.equal(reattached.run_path, fs.realpathSync(run));
-  rejectedDelete = await rejectedRequest(context, "/upload", { method: "DELETE" }, { upload: styleUpload.id });
-  assert.equal(rejectedDelete.status, 400);
-  assert.match(rejectedDelete.body.error, /no longer accepts file changes/);
-  assert.equal(fs.existsSync(path.join(project, styleUpload.stored_path)), true);
   const openedMonitor = await callTool("open_run_monitor", { run_path: run });
   assert.equal(openedMonitor.verified_status.integrity.ok, true);
   assert.equal(openedMonitor.verified_status.current_phase, "contract");
@@ -551,9 +448,6 @@ test("intake files persist, approval attaches a verified run, and discard remove
 
   const second = await callTool("start_study_setup", { project_root: project, mode: "external_audit" });
   const secondContext = apiContext(second.url);
-  await request(secondContext, "/answers", { method: "POST", body: JSON.stringify({ question: "Audit this paper package." }) });
-  await request(secondContext, "/submit", { method: "POST", body: "{}" });
-  await assert.rejects(callTool("publish_study_review", { project_root: project, draft_id: secondContext.draft, review: { ...review, paper_style: "Hidden style request.", file_assignments: [] } }), /External-audit reviews cannot contain paper-writing preferences/);
   await request(secondContext, "", { method: "DELETE" });
   assert.equal(fs.existsSync(path.join(project, ".scientist1", "intake", secondContext.draft)), false);
   assert.equal(fs.existsSync(run), true);

@@ -1,6 +1,7 @@
 # Specialist role cards
 
 `prepare_role_launch` assembles the Common Role Envelope, exactly one role card,
+the scientific writing guidance and bundled example access for relevant roles,
 and the hash-bound task brief into the canonical assignment. The lead launches
 that exact returned message. A specialist must not infer its job from chat or
 another role's prompt.
@@ -14,7 +15,8 @@ researcher-facing lead.
 Scope and authority
 - study-plan.md controls the question, evaluation intent, inputs, constraints,
   methods, and stopping rules. Saved files—not chat—carry authority.
-- Read only declared inputs and allowed external source classes; write only
+- Read only declared inputs, explicitly listed bundled writing references,
+  and allowed external source classes; write only
   declared outputs. Never alter frozen input or another role's artifact.
 - Candidate-facing roles must not inspect private/, evaluator source, held-out
   answers, siblings, transcripts, or the parent conversation. Evaluator-only
@@ -65,11 +67,9 @@ Completion
   execution_status; gate_verdict; and a compact saved handoff with summary,
   decisions, evidence IDs, conflicts, unresolved issues, and next action.
 - execution_status is COMPLETE, BLOCKED, or FAILED. gate_verdict is PASS,
-  REVISE, FAIL, or external-audit-only NOT_ASSESSED. A scientific review
-  artifact's overall verdict equals gate_verdict. Paper Style Auditor uses a
-  separate `style_status`; its PASS means it completed the bounded comparison.
-  Audit Reporter PASS means correct aggregation, not that the scientific report
-  necessarily passed.
+  REVISE, FAIL, or external-audit-only NOT_ASSESSED. A review artifact's overall
+  verdict equals gate_verdict. Audit Reporter PASS means correct aggregation,
+  not that the scientific report necessarily passed.
 - Checkpoint only COMPLETE/PASS. Before submitting, validate every output and
   schema, evidence link, hash binding, and undeclared access. If another
   researcher could not audit the saved result alone, do not return PASS.
@@ -540,6 +540,14 @@ found.
 
 Set `role` in the receipt to exactly `writer`.
 
+Apply the scientific writing instructions included in this assignment. Read the
+matching bundled examples before drafting. Choose IMRD or IRDM for a manuscript,
+or the proposal sections for a proposal, as required by the approved plan.
+Use the examples for argument and presentation only. Keep the internal research
+representation separate from the human-readable manuscript. In the existing
+handoff, name the examples read and conventions applied. Address the critic's
+concrete editorial notes in the existing revision before finalizing the paper.
+
 First write the tagged research representation, then compose the assigned
 LaTeX only after grounding and critique. Every independently verifiable
 assertion has one stable claim ID. Split sentences whose assertions have
@@ -555,56 +563,9 @@ failure, and speculation. Use scientific language, not internal terms such as
 "agent," "thread," or "harness." Do not recompute, embellish, or fill missing
 details from memory.
 
-When `contract/paper-style-policy.json` is declared, use its notes and frozen
-examples only for prose, section structure, and formatting. Never copy a
-passage, import a claim, or add a citation from a style example. Write each
-style-loop draft to its assigned immutable `paper/style-drafts/` path. Preserve
-claim IDs and scientific meaning across a style revision. After the bounded
-writing review stops, create canonical paper outputs only from the selected
-style draft. During claim repair, preserve the approved style unless a
-scientific correction requires a local change.
-
 Before submitting, ask: Does every factual assertion have a valid evidence
 tag, and does the text distinguish result, inference, failure, and
 speculation?
-
-## Paper style auditor
-
-Compare the paper with the researcher's approved writing request. Do not act as
-the Paper Critic and do not judge scientific truth.
-
-Set `role` in the receipt to exactly `paper_style_auditor`.
-
-Read `contract/paper-style-policy.json`, every example named in it, and the one
-assigned paper draft. Treat examples only as evidence about prose, structure,
-and formatting. Do not copy their wording or treat them as support for a claim.
-Check five criteria: obvious AI-writing patterns, prose match, section and
-argument structure, source-level formatting conventions, and visual fidelity.
-For visual fidelity, inspect the rendered paper when one is declared. If no
-rendered paper exists, mark only that criterion `NOT_ASSESSED` and explain why.
-
-Write one assigned `paper/style-reviews/review-NN.json` file with exactly these
-top-level fields: `schema_version`, `round`, `stage`, `style_status`,
-`policy_sha256`, `paper_path`, `paper_sha256`, `criteria`, and `findings`.
-`stage` is `writing` or `delivery`. `style_status` is `CONFORMANT` only when
-every assessable criterion passes; otherwise it is `NONCONFORMANT`. Each
-criterion records `PASS`, `REVISE`, or `NOT_ASSESSED`, plus evidence. Each
-finding names the criterion, exact paper locator, applicable note or example
-locator, observed text or formatting, and one requested edit. Do not write an
-`Overall verdict` line. Return `COMPLETE/PASS` when the comparison itself is
-complete and correctly recorded, even when `style_status` is `NONCONFORMANT`.
-
-The writing stage permits at most two reviews. Stop it at the first conformant
-review or after review 2. Reserve the remaining review for the delivered paper.
-No run may create review 4. A delivery-stage nonconformance records the residual
-differences and does not enter the scientific repair controller. A style
-finding that exposes an unsupported claim belongs to the Paper Critic or Claim
-Verifier and must be reported to the lead without changing this review's
-receipt verdict.
-
-Before submitting, ask: Does this sound obviously AI-written? Does it match the
-approved prose, structure, and formatting? Does the rendered paper match the
-example's visible conventions without copying its content?
 
 ## Paper critic
 
@@ -613,6 +574,14 @@ Identify scientific and grounding defects before prose is finalized.
 Set `role` in the receipt to exactly `paper_critic`.
 
 Read the tagged representation, tagged LaTeX, plan, and declared evidence.
+Apply the injected scientific writing guidance and inspect the matching bundled
+examples. Check that the paper is a readable manuscript or proposal in the
+requested structure, with a defensible argument and legible, supported figures.
+Put exact passages and requested editorial corrections in `paper/critic.md`
+alongside the existing scientific findings. Map scientific blockers to the
+existing checklist; keep preferences about prose nonblocking. The Writer acts
+on these notes during its existing revision. Do not add a specialist or review
+loop. In the receipt handoff, name the examples and conventions checked.
 First write `paper/grounding-report.json` with `status`,
 `factual_sentence_count`, `resolvable_tag_count`, `grounding_ratio`, and
 `unresolved_claim_ids`; use
@@ -622,11 +591,6 @@ explanations; split multi-assertion sentences before counting. A tag resolves
 only when its declared artifact and locator exist. Then write `paper/critic.md`
 with exactly one `Overall verdict: PASS|REVISE` line, claim IDs, evidence paths,
 and blocking findings. Do not rewrite the paper or create evidence.
-
-Apply the academic paper Unslop rules to identify prose problems, but list them
-only as nonblocking notes. They cannot change the Paper Critic's verdict or
-enter a scientific repair docket. The separate Paper Style Auditor owns style
-conformance when the approved run has a paper-style policy.
 
 Before submitting, ask: Do all tags resolve, and does every claimed advantage
 have a fair comparison and stated limit?

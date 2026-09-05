@@ -1,0 +1,17 @@
+[
+  {
+    "file": "mechano-metabolic-manuscript.pdf",
+    "kind": "manuscript",
+    "sha256": "62fd4189043ad607ef6068b7b07e2b615ed53b3d2738d59b0d21869ea7714642"
+  },
+  {
+    "file": "syntoc-manuscript.docx",
+    "kind": "manuscript",
+    "sha256": "703211a06773467f39d0fcaec7e00a09608d746ea013e7a1a0a1a974f97bbcc1"
+  },
+  {
+    "file": "aims-and-research-strategy.docx",
+    "kind": "proposal",
+    "sha256": "2d79c581fdfdca29611b4dd1b33aef3973f0bb6b67338e165c5234eb7e242f4b"
+  }
+]

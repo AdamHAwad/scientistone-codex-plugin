@@ -22,7 +22,6 @@
     "ablation_implementer": { "tier": "efficient", "reasoning_effort": "medium" },
     "ablation_analyst": { "tier": "strong", "reasoning_effort": "low" },
     "writer": { "tier": "strong", "reasoning_effort": "low" },
-    "paper_style_auditor": { "tier": "strong", "reasoning_effort": "low" },
     "paper_critic": { "tier": "strong", "reasoning_effort": "low" },
     "claim_verifier": { "tier": "efficient", "reasoning_effort": "high" },
     "i1_verifier_builder": { "tier": "strong", "reasoning_effort": "low" },

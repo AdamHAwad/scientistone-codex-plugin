@@ -18,15 +18,7 @@ Turn the researcher's setup into a study plan that states the question, inputs, 
 
 ## Request fidelity
 
-Keep the researcher's exact request beside the normalized plan. Only the research question is required in the browser. Blank purpose, prior-work, paper-style, evaluation, limit, or deliverable fields are valid intake, not an error. Infer useful defaults from the question, approved files, and allowed project context, show those defaults in the editable plan, and let the researcher approve or change them before work begins.
-
-Paper-style notes and uploads are writing references only. They may guide prose,
-section order, heading depth, citations, tables, figures, page layout, and other
-presentation choices. They never support a scientific claim and never enter
-`review.file_assignments` or `contract/input-manifest.json`. The local MCP
-freezes approved examples separately under `inputs/style/` when it attaches the
-run. It creates a hash-bound `contract/paper-style-policy.json` only when the
-approved notes are nonblank or at least one style example remains.
+Keep the researcher's exact request beside the normalized plan. Only the research question is required in the browser. Blank purpose, prior-work, evaluation, limit, or deliverable fields are valid intake, not an error. Infer useful defaults from the question, approved files, and allowed project context, show those defaults in the editable plan, and let the researcher approve or change them before work begins.
 
 The approved question, named inputs, constraints, exclusions, data boundaries, and limits on interpretation form the researcher charter. The outcome operationalization, evaluator, declarative I1 policy, schemas, hashes, paths, seeds, method details, and other scientific implementation choices form a versioned execution contract. Selecting `Approve and start study` grants durable authorization for safe, reversible, in-scope execution through a freshly verified paper package. Attempts and repair cycles are evidence history, not stopping budgets. Before candidate evidence exists, contract stabilization applies only minimal result-blind corrections from the closed checklist. After results exist, every material contract repair archives and invalidates affected successors before rerunning them. Rejected gates, unavailable paths, and scheduler drains remain same-run repair work. If a direct repair would exceed a fixed charter boundary, preserve the boundary, choose the strongest safe in-scope design that still answers the question, and disclose the limitation in the paper. Record an amendment only when the researcher independently supplies one.
 
@@ -44,7 +36,6 @@ Resolve these items from the intake and named project files:
 8. Compute, time, ethics, safety, license, privacy, and domain limits.
 9. The search profile and hard ceilings.
 10. Any required interpretation limits; Scientist1 handles null findings and failed checks autonomously within the approved study.
-11. Optional paper prose, structure, formatting, and visual-template preferences.
 
 If the main outcome is missing, propose one measurable outcome, comparison, and decision rule. Explain why it answers the question. Include it in the ordinary plan review; do not treat the missing intake field as a blocker.
 
@@ -127,12 +118,6 @@ pilot | standard | custom: <ceilings, minimum valid work, and reason>
 - PDF when a compatible compiler is available and the approved delivery requires it
 - selected method, code, or protocol
 - evidence and integrity audit
-
-## Paper writing and formatting
-- Notes: <approved preference, or none>
-- Example papers or templates: <style-only files, or none>
-- Match: prose, structure, source formatting, and rendered appearance where assessable
-- Never use a style example as scientific evidence or copy its wording
 
 ## Out of scope
 - <items>

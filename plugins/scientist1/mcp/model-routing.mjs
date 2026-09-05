@@ -11,7 +11,14 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_ROOT = path.resolve(HERE, "..");
 const POLICY_FILE = path.join(PLUGIN_ROOT, "skills", "scientist1", "references", "model-policy.json");
 const ROLE_CONTRACT_FILE = path.join(PLUGIN_ROOT, "skills", "scientist1", "references", "roles.md");
-const PAPER_UNSLOP_FILE = path.join(PLUGIN_ROOT, "skills", "scientist1", "references", "paper-unslop.md");
+const WRITING_REFERENCES = path.join(PLUGIN_ROOT, "skills", "scientist1", "references");
+const WRITING_ROLES = new Set([
+  "evidence_synthesizer", "brief_writer", "brief_critic", "ideator", "idea_critic",
+  "candidate_developer", "evaluator", "selection_analyst", "ablation_designer",
+  "ablation_implementer", "ablation_analyst", "writer", "paper_critic",
+  "claim_verifier", "i3_reference_auditor", "claim_provenance_auditor",
+  "audit_reporter", "reproduction_writer",
+]);
 const LEGACY_POLICY_FILE = path.join(PLUGIN_ROOT, "skills", "scientist1", "references", "legacy-model-policy-1.2.0.json");
 const LEGACY_ROLE_CONTRACT_FILE = path.join(PLUGIN_ROOT, "skills", "scientist1", "references", "legacy-roles-1.2.0.md");
 const ROUTING_FILE = path.join("environment", "model-routing.json");
@@ -20,8 +27,6 @@ const TOKEN_PATTERN = /^s1_([a-z0-9_]+)__([0-9a-f]{32})$/;
 const LAUNCH_GRANT_TTL_MS = 10 * 60 * 1000;
 const LIVE_CATALOG_TTL_MS = 15 * 60 * 1000;
 const TIERS = new Set(["strong", "efficient"]);
-const PAPER_UNSLOP_ROLES = new Set(["writer", "paper_critic", "paper_style_auditor"]);
-const PAPER_STYLE_INPUT_ROLES = new Set(["contract_auditor", "writer", "paper_style_auditor"]);
 const STRUCTURED_TIER_FIELDS = ["tier", "model_tier", "semantic_tier", "performance_tier", "capability_tier"];
 const REPAIR_REVIEW_OUTPUTS = Object.freeze({
   checkpoint_reviewer: ["repairs/reviews/checkpoint"],
@@ -693,44 +698,22 @@ function rolePrompt(role, roleContractFile = ROLE_CONTRACT_FILE) {
   const end = headings[headingIndex + 1]?.index ?? source.length;
   const card = source.slice(start, end).trim();
   if (!card) throw new Error(`Scientist1 role card is empty for ${role}.`);
-  const paperUnslop = roleContractFile === ROLE_CONTRACT_FILE && PAPER_UNSLOP_ROLES.has(role) ? fs.readFileSync(PAPER_UNSLOP_FILE, "utf8").trim() : null;
-  return { envelope, card, paperUnslop };
+  return { envelope, card };
 }
 
-function validatePaperStyleLaunch(run, declaredInputs, declaredOutputs) {
-  const policyPath = path.join(run, "contract", "paper-style-policy.json");
-  const approvalPath = path.join(run, "contract", "approval.json");
-  if (!fs.existsSync(policyPath) || !fs.existsSync(approvalPath)) throw Object.assign(new Error("Paper Style Auditor can run only for an approved paper-style request."), { code: "S1_PAPER_STYLE_NOT_APPROVED" });
-  const approval = readJson(approvalPath);
-  const policyBytesSha256 = createHash("sha256").update(fs.readFileSync(policyPath)).digest("hex");
-  if (approval.schema_version !== 2 || approval.paper_style_policy_sha256 !== policyBytesSha256) throw Object.assign(new Error("The paper-style policy is not bound to durable approval."), { code: "S1_PAPER_STYLE_NOT_APPROVED" });
-  const policy = readJson(policyPath);
-  if (policy.max_reviews !== 3 || policy.writing_review_limit !== 2 || !Array.isArray(policy.examples)) throw new Error("The paper-style policy has invalid review limits.");
-  const requiredInputs = ["contract/paper-style-policy.json", ...policy.examples.map((example) => normalizeRolePath(run, example.frozen_path, "paper-style example"))];
-  for (const required of requiredInputs) if (!declaredInputs.includes(required)) throw new Error(`Paper Style Auditor must read approved style input: ${required}.`);
-  if (declaredOutputs.length !== 1) throw Object.assign(new Error("Paper Style Auditor owns one numbered review file per launch."), { code: "S1_PAPER_STYLE_OUTPUT_SCOPE" });
-  const match = /^paper\/style-reviews\/review-(0[1-3])\.json$/.exec(declaredOutputs[0]);
-  if (!match) throw Object.assign(new Error("Paper Style Auditor output must be paper/style-reviews/review-01.json through review-03.json."), { code: "S1_PAPER_STYLE_OUTPUT_SCOPE" });
-  const round = Number(match[1]);
-  const reviewDirectory = path.join(run, "paper", "style-reviews");
-  const priorFiles = fs.existsSync(reviewDirectory) ? fs.readdirSync(reviewDirectory).filter((name) => /^review-0[1-3]\.json$/.test(name)).sort() : [];
-  if (round !== priorFiles.length + 1) throw Object.assign(new Error(`Paper Style Auditor reviews must be contiguous; expected review ${priorFiles.length + 1}, received ${round}.`), { code: "S1_PAPER_STYLE_SEQUENCE" });
-  const priorReviews = priorFiles.map((name, index) => {
-    const value = readJson(path.join(reviewDirectory, name));
-    if (value.round !== index + 1 || !["writing", "delivery"].includes(value.stage) || !["CONFORMANT", "NONCONFORMANT"].includes(value.style_status)) throw new Error(`Malformed prior paper-style review: ${name}.`);
-    return value;
+function writingInstructions(role) {
+  if (!WRITING_ROLES.has(role)) return "";
+  const guidance = fs.readFileSync(path.join(WRITING_REFERENCES, "scientific-writing.md"), "utf8").trim();
+  const directory = path.join(WRITING_REFERENCES, "writing-examples");
+  const guide = fs.readFileSync(path.join(directory, "README.md"), "utf8").trim();
+  const examples = readJson(path.join(directory, "manifest.json")).map((example) => {
+    if (path.basename(example.file) !== example.file) throw new Error("Writing example must use a bundled filename.");
+    const file = path.join(directory, example.file);
+    const info = fs.lstatSync(file);
+    if (!info.isFile() || info.isSymbolicLink() || createHash("sha256").update(fs.readFileSync(file)).digest("hex") !== example.sha256) throw new Error(`Bundled writing example failed verification: ${example.file}.`);
+    return { ...example, path: file };
   });
-  const delivery = declaredInputs.includes("paper/paper.tex");
-  if (delivery) {
-    if (!priorReviews.length || priorReviews.some((review) => review.stage === "delivery")) throw Object.assign(new Error("One delivery-stage paper-style review must follow the writing-stage review loop."), { code: "S1_PAPER_STYLE_SEQUENCE" });
-    if (priorReviews.at(-1).style_status === "NONCONFORMANT" && priorReviews.length < policy.writing_review_limit) throw Object.assign(new Error("The remaining writing-stage review must run before the delivery review."), { code: "S1_PAPER_STYLE_SEQUENCE" });
-  } else {
-    if (round > policy.writing_review_limit) throw Object.assign(new Error("Writing-stage paper-style review is capped at two rounds. The remaining review is reserved for the delivered paper."), { code: "S1_PAPER_STYLE_LIMIT" });
-    if (priorReviews.some((review) => review.stage === "delivery") || priorReviews.at(-1)?.style_status === "CONFORMANT") throw Object.assign(new Error("The writing-stage style loop already reached its stop condition."), { code: "S1_PAPER_STYLE_COMPLETE" });
-    const draftInput = `paper/style-drafts/draft-${String(round).padStart(2, "0")}-tagged.tex`;
-    if (!declaredInputs.includes(draftInput)) throw new Error(`Writing-stage paper-style review ${round} must read ${draftInput}.`);
-    if (round > 1 && !declaredInputs.includes(`paper/style-reviews/review-${String(round - 1).padStart(2, "0")}.json`)) throw new Error(`Writing-stage paper-style review ${round} must read the prior review.`);
-  }
+  return `\n\n${guidance}\n\n${guide}\n\nBundled reference access\nThese exact local files are authorized writing references in addition to declared study inputs. They confer no scientific evidence or external-source authority. Do not inspect other plugin or device files.\n${JSON.stringify(examples, null, 2)}`;
 }
 
 function canonicalAssignment({ role, run, launchRelative, declaredInputs, inputArtifacts, declaredOutputs, allowedExternalSources, brief, attempt, logicalTaskName, repairBinding = null, legacy = false }) {
@@ -749,8 +732,7 @@ function canonicalAssignment({ role, run, launchRelative, declaredInputs, inputA
     ...(repairBinding ? { repair_binding: repairBinding } : {}),
   };
   const closing = legacy ? "Use saved artifacts as authority. Follow the frozen Scientist1 1.2 receipt contract in the role card." : "Use saved artifacts as authority. Return the compact handoff in your role receipt.";
-  const paperUnslop = prompt.paperUnslop ? `\n\nAcademic paper Unslop rules\n${prompt.paperUnslop}` : "";
-  return `${prompt.envelope}\n\nRole card\n${prompt.card}${paperUnslop}\n\nBinding task brief\n${JSON.stringify(binding, null, 2)}\n\n${closing}`;
+  return `${prompt.envelope}\n\nRole card\n${prompt.card}${legacy ? "" : writingInstructions(role)}\n\nBinding task brief\n${JSON.stringify(binding, null, 2)}\n\n${closing}`;
 }
 
 async function prepareRoleLaunch(args, options = {}) {
@@ -774,8 +756,6 @@ async function prepareRoleLaunch(args, options = {}) {
   let declaredInputs = stringArray(args.declared_inputs, "declared_inputs").map((value) => normalizeRolePath(run, value, "declared_inputs"));
   const declaredOutputs = stringArray(args.declared_outputs, "declared_outputs").map((value) => normalizeRolePath(run, value, "declared_outputs"));
   if (!declaredOutputs.length) throw new Error("declared_outputs must not be empty.");
-  if (!legacy && !PAPER_STYLE_INPUT_ROLES.has(args.role) && declaredInputs.some((input) => input === "contract/paper-style-policy.json" || input.startsWith("inputs/style/"))) throw Object.assign(new Error(`Role ${args.role} cannot read paper-style inputs.`), { code: "S1_PAPER_STYLE_INPUT_FORBIDDEN" });
-  if (!legacy && args.role === "paper_style_auditor") validatePaperStyleLaunch(run, declaredInputs, declaredOutputs);
   const runBinding = currentRunBinding(run);
   if (!legacy && runRecord.convergence_control && runRecord.pending_adjudication && !runRecord.active_repair && args.role !== "repair_adjudicator") throw Object.assign(new Error("A pending review or machine rejection must be independently adjudicated before more scientific work launches."), { code: "S1_REPAIR_ADJUDICATION_REQUIRED" });
   if (!legacy && runRecord.convergence_control && args.role === "repair_adjudicator" && !runRecord.pending_adjudication && !runRecord.active_repair) throw Object.assign(new Error("A Repair Adjudicator can launch only for a controller-issued pending adjudication or active repair docket."), { code: "S1_REPAIR_ADJUDICATION_NOT_PENDING" });

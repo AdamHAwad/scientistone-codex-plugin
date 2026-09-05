@@ -22,7 +22,7 @@ let latestMonitorData;
 let inspectorTrackingFrame;
 const canvasCamera = { x: 0, y: 0, zoom: 1, initialized: false };
 
-const allSteps = [
+const steps = [
   {
     label: "Research question",
     title: "What should S1 investigate?",
@@ -58,16 +58,6 @@ const allSteps = [
     placeholder: "Enter one paper, DOI, URL, title, or citation per line.",
   },
   {
-    label: "Writing style",
-    title: "How should the paper be written?",
-    intro: "Describe the prose, structure, or formatting you want. You can also add example papers or a template for S1 to study.",
-    help: "S1 will use these files only as writing references. It will compare prose, section structure, citations, figures, tables, and page formatting without copying text or treating an example as scientific evidence.",
-    key: "paper_style",
-    placeholder: "Describe the paper's voice, organization, formatting, or publication style. Leave this blank to use S1's standard scientific format.",
-    uploadContext: "paper_style",
-    researchOnly: true,
-  },
-  {
     label: "Evaluation",
     title: "What evidence would answer the question?",
     intro: "Name the comparison, measure, or decision rule you want to use. Leave this blank if you want S1 to propose one.",
@@ -91,7 +81,6 @@ const allSteps = [
     key: null,
   },
 ];
-let steps = allSteps;
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -164,21 +153,18 @@ function textField(item) {
     </div>`;
 }
 
-function dropZone(context) {
-  const id = context === "paper_style" ? "style" : "files";
-  const copy = context === "paper_style" ? "Add example papers or a template" : "Add files";
-  const detail = context === "paper_style" ? "Choose files or drop them here. S1 will use them only as writing references." : "Choose files or drop them here. S1 will sort them.";
+function dropZone() {
   return `
     <section class="drop-group">
-      <label class="drop-zone" id="drop-${id}" for="file-${id}">
-        <span><strong>${copy}</strong><small>${detail}</small></span>
+      <label class="drop-zone" id="drop-files" for="file-files">
+        <span><strong>Add files</strong><small>Choose files or drop them here. S1 will sort them.</small></span>
       </label>
-      <input class="sr-only" id="file-${id}" type="file" multiple data-upload-context="${escapeHtml(context)}">
+      <input class="sr-only" id="file-files" type="file" multiple>
     </section>`;
 }
 
-function fileList(context) {
-  const files = intake.uploads.filter((file) => file.context === context);
+function fileList() {
+  const files = intake.uploads;
   if (!files.length) return "";
   return `
     <ul class="file-list" aria-label="Uploaded files">
@@ -191,16 +177,14 @@ function fileList(context) {
 }
 
 function filesField(item) {
-  const context = item.uploadContext || "study";
-  const label = context === "paper_style" ? "Writing and formatting notes" : "About these files";
   return `
     <div class="field-stack">
-      <label for="answer">${label}</label>
+      <label for="answer">About these files</label>
       <textarea id="answer" name="${item.key}" placeholder="${escapeHtml(item.placeholder)}">${escapeHtml(intake.answers[item.key])}</textarea>
     </div>
-    ${dropZone(context)}
+    ${dropZone()}
     ${busy ? '<p class="upload-progress" role="status">Uploading files...</p>' : ""}
-    ${fileList(context)}`;
+    ${fileList()}`;
 }
 
 function intakeSummary() {
@@ -209,22 +193,20 @@ function intakeSummary() {
     ["Purpose", intake.answers.objective || "Not provided. S1 will propose one."],
     ["File notes", intake.answers.materials_note || "No notes added."],
     ["Papers", intake.answers.papers || "No papers named. S1 will search the literature."],
-    ...(intake.mode === "research" ? [["Writing style", intake.answers.paper_style || "No preference provided. S1 will use its standard scientific format."]] : []),
     ["Evaluation", intake.answers.evaluation || "Not provided. S1 will propose one."],
     ["Limits", intake.answers.constraints || "No additional limits added."],
   ];
   return `
     <div class="review-sections">
       ${rows.map(([label, value]) => `<section class="review-section"><h2>${escapeHtml(label)}</h2><p>${escapeHtml(value)}</p></section>`).join("")}
-      <section class="review-section"><h2>Study files</h2><p>${intake.uploads.filter((file) => file.context === "study").length ? `${intake.uploads.filter((file) => file.context === "study").length} file${intake.uploads.filter((file) => file.context === "study").length === 1 ? "" : "s"} added.` : "No study files uploaded."}</p></section>
-      ${intake.mode === "research" ? `<section class="review-section"><h2>Writing examples</h2><p>${intake.uploads.filter((file) => file.context === "paper_style").length ? `${intake.uploads.filter((file) => file.context === "paper_style").length} file${intake.uploads.filter((file) => file.context === "paper_style").length === 1 ? "" : "s"} added.` : "No writing examples uploaded."}</p></section>` : ""}
+      <section class="review-section"><h2>Uploaded files</h2><p>${intake.uploads.length ? `${intake.uploads.length} file${intake.uploads.length === 1 ? "" : "s"} added.` : "No files uploaded."}</p></section>
     </div>`;
 }
 
 function renderWizard() {
   const item = steps[step];
   let field = item.key ? textField(item) : intakeSummary();
-  if (item.key === "materials_note" || item.key === "paper_style") field = filesField(item);
+  if (item.key === "materials_note") field = filesField(item);
   const nextLabel = step === steps.length - 1 ? "Send to S1" : "Continue";
   app.innerHTML = appShell(`
     <div class="intake-layout">
@@ -298,7 +280,7 @@ async function goNext() {
 
 function bindDropZone(input) {
   const zone = document.querySelector(`#drop-${input.id.replace("file-", "")}`);
-  const upload = (files) => uploadFiles([...files], input.dataset.uploadContext);
+  const upload = (files) => uploadFiles([...files]);
   input.addEventListener("change", () => upload(input.files));
   for (const eventName of ["dragenter", "dragover"]) zone.addEventListener(eventName, (event) => {
     event.preventDefault();
@@ -311,7 +293,7 @@ function bindDropZone(input) {
   zone.addEventListener("drop", (event) => upload(event.dataTransfer.files));
 }
 
-async function uploadFiles(files, context) {
+async function uploadFiles(files) {
   if (!files.length || busy) return;
   collectAnswer();
   busy = true;
@@ -320,7 +302,7 @@ async function uploadFiles(files, context) {
   try {
     await saveAnswers(true);
     for (const file of files) {
-      const query = new URLSearchParams({ project, draft: draftId, context });
+      const query = new URLSearchParams({ project, draft: draftId });
       intake = await api(`/api/intake/upload?${query}`, {
         method: "POST",
         headers: { "Content-Type": file.type || "application/octet-stream", "X-Scientist1-Filename": filenameHeader(file.name) },
@@ -419,14 +401,14 @@ function renderWaiting() {
   pollTimer = setTimeout(loadIntake, 1400);
 }
 
-const editableReviewFields = ["question", "objective", "materials", "prior_work", "paper_style", "evaluation", "requirements", "deliverables", "study_plan_markdown"];
+const editableReviewFields = ["question", "objective", "materials", "prior_work", "evaluation", "requirements", "deliverables", "study_plan_markdown"];
 
 function reviewSection(field, label, value) {
   return `<section class="review-section"><label for="review-${field}">${escapeHtml(label)}</label><textarea class="review-field" id="review-${field}" data-review-field="${field}" aria-label="${escapeHtml(label)}">${escapeHtml(value)}</textarea></section>`;
 }
 
 function collectReviewEdits() {
-  return Object.fromEntries(editableReviewFields.map((field) => [field, document.querySelector(`[data-review-field="${field}"]`)?.value || ""]));
+  return Object.fromEntries(editableReviewFields.map((field) => [field, document.querySelector(`[data-review-field="${field}"]`).value]));
 }
 
 function bindReviewFields() {
@@ -452,7 +434,6 @@ function renderReview() {
           ${reviewSection("objective", "Purpose", review.objective)}
           ${reviewSection("materials", "Materials", review.materials)}
           ${reviewSection("prior_work", "Prior work", review.prior_work)}
-          ${intake.mode === "research" ? reviewSection("paper_style", "Paper writing and formatting", review.paper_style) : ""}
           ${reviewSection("evaluation", "Evidence needed to answer the question", review.evaluation)}
           ${reviewSection("requirements", "Requirements and limits", review.requirements)}
           ${reviewSection("deliverables", "What the study will produce", review.deliverables)}
@@ -545,7 +526,6 @@ function renderIntakeState() {
 async function loadIntake() {
   try {
     intake = await api(intakeQuery(""));
-    steps = allSteps.filter((item) => intake.mode === "research" || !item.researchOnly);
     if (intake.status === "draft" && Number.isInteger(intake.wizard_step)) step = Math.max(0, Math.min(steps.length - 1, intake.wizard_step));
     errorMessage = "";
     renderIntakeState();

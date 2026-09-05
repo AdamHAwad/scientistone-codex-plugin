@@ -2,6 +2,17 @@
 
 This project follows Semantic Versioning.
 
+## 1.5.4 - 2026-09-05
+
+- Remove the optional writing-style intake step, upload path, Paper Style Auditor,
+  and separate style policy and review loop introduced in 1.5.2.
+- Preserve the fixed model names and reasoning assignments from 1.5.3.
+- Include scientific writing instructions in relevant specialist launch messages,
+  including repairs. Use IMRD or IRDM manuscripts and request-appropriate proposals,
+  evidence-based arguments, reproducible plots, and justified statistics.
+- Bundle two manuscript examples and one proposal example with checksums and
+  source notices. Writers and critics read them through the existing workflow.
+
 ## 1.5.3 - 2026-09-05
 
 - Pin the strong tier to GPT-6 Astra and the efficient tier to GPT-5.6 Luna.

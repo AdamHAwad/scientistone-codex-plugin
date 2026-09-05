@@ -124,8 +124,8 @@ for (const [relative, pattern] of livenessRequirements) {
 
 const manifestPath = path.join(root, "plugins/scientist1/.codex-plugin/plugin.json");
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-if (manifest.version !== "1.5.3" || manifest.license !== "Apache-2.0") {
-  findings.push({ file: "plugins/scientist1/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.5.3 and Apache-2.0" });
+if (manifest.version !== "1.5.4" || manifest.license !== "Apache-2.0") {
+  findings.push({ file: "plugins/scientist1/.codex-plugin/plugin.json", type: "release metadata", remediation: "use version 1.5.4 and Apache-2.0" });
 }
 
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
@@ -154,8 +154,13 @@ const requiredRuntimeFiles = [
   "plugins/scientist1/hooks/enforce-study-completion.mjs",
   "plugins/scientist1/skills/scientist1/references/legacy-model-policy-1.2.0.json",
   "plugins/scientist1/skills/scientist1/references/legacy-roles-1.2.0.md",
-  "plugins/scientist1/skills/scientist1/references/paper-unslop.md",
   "plugins/scientist1/skills/scientist1/references/gate-checklists.json",
+  "plugins/scientist1/skills/scientist1/references/scientific-writing.md",
+  "plugins/scientist1/skills/scientist1/references/writing-examples/README.md",
+  "plugins/scientist1/skills/scientist1/references/writing-examples/manifest.json",
+  "plugins/scientist1/skills/scientist1/references/writing-examples/mechano-metabolic-manuscript.pdf",
+  "plugins/scientist1/skills/scientist1/references/writing-examples/syntoc-manuscript.docx",
+  "plugins/scientist1/skills/scientist1/references/writing-examples/aims-and-research-strategy.docx",
   "plugins/scientist1/skills/scientist1/scripts/capacity-preflight.mjs",
   "plugins/scientist1/skills/scientist1/scripts/i1-interpreter.mjs",
   "plugins/scientist1/skills/scientist1/scripts/legacy-coe-1.2.0.mjs",
@@ -166,7 +171,6 @@ const requiredRuntimeFiles = [
   "plugins/scientist1/ATTRIBUTIONS.md",
   "plugins/scientist1/licenses/NEWSREADER-LICENSE",
   "plugins/scientist1/licenses/PHOSPHOR-LICENSE",
-  "plugins/scientist1/licenses/PSTACK-UNSLOP-LICENSE",
 ];
 for (const relative of requiredRuntimeFiles) {
   try {

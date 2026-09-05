@@ -27,7 +27,7 @@ trace, and result. Save a screen recording when visual behavior matters.
    above 16 is never lowered.
 3. In Codex desktop, `Scientist1` starts the bundled MCP and opens the full-page setup guide in the built-in browser, with no inline form or remote page.
 4. Upload a file with the large drop field. Verify its bytes and SHA-256 under the active project's `.scientist1/intake/` tree.
-5. Submit the eight-step research intake. Verify that writing notes and style-only uploads appear in the editable study plan, that no run exists before approval, and that external-audit mode omits this step.
+5. Submit the seven-step intake. Verify that the same tab shows the editable study plan and that no run exists before approval.
 6. Approve a smoke-test plan, initialize its run, and attach it. Verify that `contract/approval.json` is hash-bound before any specialist launch and that the same tab becomes the interactive flowchart and reads status from local `run.json` and receipts.
 7. Select a stage and specialist, pan, zoom, fit, reload, and change the run checkpoint. Verify the inspector, camera controls, latest-checkpoint integrity state, and live refresh.
 8. `Show the status of my latest Scientist1 study` reopens the local interactive monitor.
@@ -60,6 +60,20 @@ trace, and result. Save a screen recording when visual behavior matters.
     use low. Adding newer catalog entries must not change these assignments.
     Removing a configured model must fail the launch without creating a
     replacement routing record.
+
+21. Prepare Writer and Paper Critic launches for a manuscript and a proposal.
+    Verify each saved assignment contains the full scientific writing guidance,
+    example guide, and local paths and hashes. Repeat an accepted failed launch
+    and a docket-bound repair. Both must retain the guidance without another
+    role or upload step. Inspect the resulting prose and existing handoffs for
+    the examples read, scientific argument, requested structure, and revisions.
+22. Copy the installable plugin to another directory and launch a writer there.
+    Verify example paths resolve to that copy. A missing or changed example must
+    fail launch preparation rather than claim a complete reference package.
+23. For a computational manuscript, verify figures come from saved data and
+    reproducible plotting code. Check the unit of analysis, uncertainty, and
+    justification for statistics. Explanatory image generation must not replace
+    data plots or experimental images.
 
 ## Negative cases
 
